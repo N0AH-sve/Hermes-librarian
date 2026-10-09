@@ -79,7 +79,7 @@ Requirements: Python 3.11 or later, and a Hermes Agent version with plugin hooks
 Start the server and index the skills:
 
 ```bash
-git clone https://github.com/<owner>/greenknowledge
+git clone git@github.com:N0AH-sve/Hermes-librarian.git
 cd greenknowledge
 pip install -e .
 gk index ~/.hermes/skills
@@ -143,7 +143,3 @@ These tools focus on finding skills. GreenKnowledge combines skill routing with 
 ## Contributing
 
 Issues and pull requests are welcome. For larger changes, please open an issue first to discuss the approach.
-
-## License
-
-See [LICENSE](LICENSE).
