@@ -10,7 +10,10 @@ requires-python = ">=3.11"
 # Volontairement court. Chaque dependance est une dette de mise a jour sur un
 # serveur cense tourner sans surveillance, et le chemin de service n'appelle
 # aucune API externe.
-dependencies = ["mcp==2.3.0"]
+# uvicorn est epingle explicitement : le serveur l'appelle directement pour
+# pouvoir intercaler la verification du jeton, donc en dependre transitivement
+# serait fragile.
+dependencies = ["mcp==2.3.0", "uvicorn==0.54.0"]
 
 [project.optional-dependencies]
 # snowballstemmer arrive en phase 2, avec la recherche.

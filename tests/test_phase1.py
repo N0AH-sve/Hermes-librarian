@@ -293,3 +293,42 @@ def test_config_illisible_ne_bloque_pas_le_demarrage(tmp_path):
     f = tmp_path / "config.yaml"
     f.write_text("\x00\x01 pas du yaml", encoding="utf-8")
     assert Config.load(f).port == 8765
+
+
+# -- authentification -----------------------------------------------------
+
+
+def test_le_garde_refuse_sans_jeton():
+    """Le jeton etait configurable et `gk check` se plaignait de son absence,
+    alors que rien ne le verifiait. Ce test existe pour que ca ne reparte pas."""
+    import asyncio
+
+    from gk.server import BearerGuard
+
+    async def faux_app(scope, receive, send):
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"passe"})
+
+    async def essayer(headers, chemin="/mcp/bridge"):
+        envoyes = []
+        scope = {"type": "http", "path": chemin, "headers": headers, "method": "POST"}
+        await BearerGuard(faux_app, "secret", "/mcp/bridge")(
+            scope, lambda: None, lambda m: envoyes.append(m) or asyncio.sleep(0)
+        )
+        return next(m["status"] for m in envoyes if m["type"] == "http.response.start")
+
+    assert asyncio.run(essayer([])) == 401, "sans en-tete"
+    assert asyncio.run(essayer([(b"authorization", b"Bearer faux")])) == 401, "mauvais jeton"
+    assert asyncio.run(essayer([(b"authorization", b"secret")])) == 401, "sans le prefixe Bearer"
+    assert asyncio.run(essayer([(b"authorization", b"Bearer secret")])) == 200, "bon jeton"
+    # /health reste ouvert : c'est le healthcheck du conteneur qui l'interroge
+    assert asyncio.run(essayer([], chemin="/health")) == 200
+
+
+def test_health_dit_la_verite_sur_le_jeton(tmp_path):
+    sans = Service.open(tmp_path / "a.db", MOTIFS, require_token=False)
+    assert sans.health()["jeton_exige"] is False
+    sans.close()
+    avec = Service.open(tmp_path / "b.db", MOTIFS, require_token=True)
+    assert avec.health()["jeton_exige"] is True
+    avec.close()
