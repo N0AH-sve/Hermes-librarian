@@ -2,16 +2,17 @@
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <style>
-  /* Colonne de lecture unique, un seul accent vert profond, et la fiche
-     rendue en monospace pour qu'on la reconnaisse comme un objet technique. */
+  /* Note technique : colonne de lecture dense, tableaux de decision, un schema
+     d'architecture qui porte le chemin de service en accent. */
   :root {
     --bg: #fbfaf7;
     --surface: #ffffff;
-    --fg: #1a1f1c;
-    --muted: #5e6862;
-    --line: #e2e3dd;
+    --sunk: #f3f2ed;
+    --fg: #161a17;
+    --muted: #5c655e;
+    --line: #dfe0da;
     --accent: #1f6b45;
-    --accent-soft: #e8f1ea;
+    --accent-soft: #e7f0ea;
     --warn: #8a4a1f;
     --warn-soft: #f8ede3;
 
@@ -21,235 +22,382 @@
   }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
-      --bg: #12150f;
-      --surface: #1b1f19;
-      --fg: #eceee8;
-      --muted: #9ba59d;
-      --line: #2d332b;
-      --accent: #6fcf9a;
-      --accent-soft: #1d2d24;
-      --warn: #e0a677;
-      --warn-soft: #2d2218;
-      color-scheme: dark;
+      --bg: #111410; --surface: #1a1e18; --sunk: #232820; --fg: #eceee8;
+      --muted: #9aa49c; --line: #2c322a; --accent: #74d29e; --accent-soft: #1c2c23;
+      --warn: #e2a877; --warn-soft: #2c2117; color-scheme: dark;
     }
   }
   :root[data-theme="dark"] {
-    --bg: #12150f;
-    --surface: #1b1f19;
-    --fg: #eceee8;
-    --muted: #9ba59d;
-    --line: #2d332b;
-    --accent: #6fcf9a;
-    --accent-soft: #1d2d24;
-    --warn: #e0a677;
-    --warn-soft: #2d2218;
-    color-scheme: dark;
+    --bg: #111410; --surface: #1a1e18; --sunk: #232820; --fg: #eceee8;
+    --muted: #9aa49c; --line: #2c322a; --accent: #74d29e; --accent-soft: #1c2c23;
+    --warn: #e2a877; --warn-soft: #2c2117; color-scheme: dark;
   }
 
   body {
-    background: var(--bg);
-    color: var(--fg);
-    font-family: var(--body);
-    font-size: 1rem;
-    line-height: 1.65;
+    background: var(--bg); color: var(--fg); font-family: var(--body);
+    font-size: 0.97rem; line-height: 1.62;
     padding-left: max(16px, env(safe-area-inset-left, 0px));
     padding-right: max(16px, env(safe-area-inset-right, 0px));
-    padding-block: 3.5rem 4rem;
+    padding-block: 3rem 4rem;
   }
-  main { max-width: 46rem; margin: 0 auto; display: flex; flex-direction: column; gap: 3.25rem; }
+  main { max-width: 52rem; margin: 0 auto; display: flex; flex-direction: column; gap: 3rem; }
+  section { display: flex; flex-direction: column; gap: 0.9rem; }
 
-  h1, h2, h3 { font-family: var(--display); text-wrap: balance; margin: 0; line-height: 1.15; }
-  h1 { font-size: clamp(2.1rem, 7vw, 3rem); font-weight: 600; letter-spacing: -0.02em; }
-  h2 { font-size: clamp(1.35rem, 4vw, 1.6rem); font-weight: 600; }
-  h3 { font-size: 1rem; font-weight: 600; }
-  p { margin: 0; }
-  section { display: flex; flex-direction: column; gap: 1rem; }
-
+  h1, h2, h3 { font-family: var(--display); text-wrap: balance; margin: 0; line-height: 1.16; }
+  h1 { font-size: clamp(1.95rem, 6vw, 2.7rem); font-weight: 600; letter-spacing: -0.02em; }
+  h2 { font-size: clamp(1.25rem, 3.6vw, 1.5rem); font-weight: 600; }
+  h3 { font-size: 0.95rem; font-weight: 600; }
+  p { margin: 0; max-width: 42rem; }
   .eyebrow {
-    font-family: var(--body); font-size: 0.72rem; font-weight: 600;
+    font-family: var(--body); font-size: 0.7rem; font-weight: 600;
     letter-spacing: 0.1em; text-transform: uppercase; color: var(--accent);
   }
-  .lede { font-size: 1.12rem; color: var(--muted); max-width: 34rem; }
+  .lede { font-size: 1.08rem; color: var(--muted); max-width: 38rem; }
+  .statut {
+    display: inline-flex; gap: 0.5rem; align-items: baseline; align-self: flex-start;
+    font-family: var(--mono); font-size: 0.74rem; background: var(--accent-soft);
+    color: var(--accent); padding: 0.3rem 0.6rem; border-radius: 2px;
+  }
 
-  /* -- la fiche, telle que l'agent la reçoit -- */
+  /* -- schema -- */
+  figure { margin: 0; display: flex; flex-direction: column; gap: 0.6rem; }
+  .scroll { overflow-x: auto; }
+  svg.schema { max-width: 100%; height: auto; min-width: 640px; display: block; }
+  svg.schema text { font-family: "IBM Plex Sans", sans-serif; fill: currentColor; }
+  svg.schema .zone { fill: none; stroke: currentColor; stroke-opacity: 0.35; stroke-dasharray: 4 3; }
+  svg.schema .bloc { fill: var(--surface); stroke: currentColor; stroke-opacity: 0.45; }
+  svg.schema .nom { font-size: 13px; font-weight: 600; }
+  svg.schema .sous { font-size: 11px; fill: var(--muted); }
+  svg.schema .zonenom { font-size: 10.5px; letter-spacing: 0.08em; fill: var(--muted); }
+  svg.schema .lien { stroke: currentColor; stroke-opacity: 0.5; fill: none; }
+  svg.schema .chaud { stroke: var(--accent); stroke-width: 1.8; fill: none; }
+  svg.schema .sortie { stroke: currentColor; stroke-opacity: 0.4; stroke-dasharray: 5 4; fill: none; }
+  svg.schema .etiq { font-family: "IBM Plex Mono", monospace; font-size: 10.5px; fill: var(--muted); }
+  svg.schema .etiqchaud { font-family: "IBM Plex Mono", monospace; font-size: 10.5px; fill: var(--accent); }
+  figcaption { font-size: 0.85rem; color: var(--muted); max-width: 42rem; }
+
   .fiche {
-    font-family: var(--mono); font-size: 0.82rem; line-height: 1.75;
+    font-family: var(--mono); font-size: 0.78rem; line-height: 1.7;
     background: var(--surface); border: 1px solid var(--line);
     border-left: 3px solid var(--accent); border-radius: 3px;
-    padding: 1rem 1.1rem; overflow-x: auto; white-space: pre;
+    padding: 0.9rem 1rem; overflow-x: auto; white-space: pre;
   }
   .fiche b { color: var(--accent); font-weight: 500; }
 
-  /* -- les quatre temps -- */
-  .temps { display: grid; gap: 0.75rem; grid-template-columns: repeat(4, 1fr); }
-  .temps li {
-    list-style: none; background: var(--surface); border: 1px solid var(--line);
-    border-radius: 4px; padding: 1rem; display: flex; flex-direction: column; gap: 0.45rem;
-    min-width: 0;
-  }
-  .temps .n {
-    font-family: var(--mono); font-size: 0.7rem; color: var(--accent);
-    background: var(--accent-soft); border-radius: 2px;
-    width: 1.5rem; height: 1.5rem; display: grid; place-items: center; font-weight: 500;
-  }
-  .temps p { font-size: 0.88rem; color: var(--muted); }
-  @media (max-width: 760px) { .temps { grid-template-columns: 1fr 1fr; } }
-  @media (max-width: 430px) { .temps { grid-template-columns: 1fr; } }
+  table { border-collapse: collapse; width: 100%; font-size: 0.88rem; }
+  .scroll table { min-width: 36rem; }
+  th, td { text-align: left; vertical-align: top; padding: 0.55rem 0.7rem; border-bottom: 1px solid var(--line); }
+  th { font-size: 0.72rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+  td code, p code, li code { font-family: var(--mono); font-size: 0.85em; background: var(--sunk); padding: 0.1em 0.3em; border-radius: 2px; }
+  td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
 
-  .boucle {
-    display: flex; align-items: baseline; gap: 0.75rem;
-    background: var(--accent-soft); border-radius: 4px; padding: 0.85rem 1rem;
-    font-size: 0.9rem;
-  }
-  .boucle .fleche { font-family: var(--mono); color: var(--accent); font-weight: 500; white-space: nowrap; }
+  ul.liste { margin: 0; padding-left: 1.15rem; display: flex; flex-direction: column; gap: 0.55rem; max-width: 42rem; }
+  ul.liste strong { font-weight: 600; }
 
-  /* -- avant / après -- */
-  .compare { display: grid; gap: 1rem; grid-template-columns: 1fr 1fr; }
-  @media (max-width: 620px) { .compare { grid-template-columns: 1fr; } }
-  .scene {
-    border: 1px solid var(--line); border-radius: 4px; padding: 1.1rem;
-    display: flex; flex-direction: column; gap: 0.7rem; min-width: 0;
+  .phases { display: flex; flex-direction: column; gap: 0.5rem; }
+  .phase {
+    display: grid; grid-template-columns: 5.5rem 1fr; gap: 0.9rem; align-items: baseline;
+    padding: 0.6rem 0.75rem; border-radius: 3px; border: 1px solid var(--line);
     background: var(--surface);
   }
-  .scene.avant { border-top: 3px solid var(--warn); }
-  .scene.apres { border-top: 3px solid var(--accent); }
-  .scene h3 { font-size: 0.78rem; letter-spacing: 0.08em; text-transform: uppercase; font-family: var(--body); }
-  .scene.avant h3 { color: var(--warn); }
-  .scene.apres h3 { color: var(--accent); }
-  .dial { display: flex; flex-direction: column; gap: 0.5rem; font-size: 0.9rem; }
-  .dial span { display: block; }
-  .qui { color: var(--muted); font-size: 0.78rem; }
-  .aveu { background: var(--warn-soft); border-radius: 3px; padding: 0.5rem 0.65rem; font-style: italic; }
-  .bien { background: var(--accent-soft); border-radius: 3px; padding: 0.5rem 0.65rem; }
+  .phase.fait { border-left: 3px solid var(--accent); }
+  .phase .etat { font-family: var(--mono); font-size: 0.72rem; color: var(--muted); }
+  .phase.fait .etat { color: var(--accent); }
+  .phase p { font-size: 0.88rem; }
+  @media (max-width: 480px) { .phase { grid-template-columns: 1fr; gap: 0.2rem; } }
 
-  /* -- chiffres -- */
-  .chiffres { display: grid; gap: 1rem; grid-template-columns: repeat(3, 1fr); }
-  @media (max-width: 620px) { .chiffres { grid-template-columns: 1fr; } }
-  .chiffre { display: flex; flex-direction: column; gap: 0.25rem; }
-  .chiffre .v {
-    font-family: var(--display); font-size: 2rem; font-weight: 600; line-height: 1;
-    font-variant-numeric: tabular-nums;
-  }
-  .chiffre .l { font-size: 0.85rem; color: var(--muted); }
-
-  ul.liste { margin: 0; padding-left: 1.1rem; display: flex; flex-direction: column; gap: 0.5rem; }
-  ul.liste li { color: var(--muted); }
-  ul.liste strong { color: var(--fg); font-weight: 600; }
+  .risques { display: grid; gap: 0.75rem; grid-template-columns: 1fr 1fr; }
+  @media (max-width: 620px) { .risques { grid-template-columns: 1fr; } }
+  .risque { border: 1px solid var(--line); border-top: 3px solid var(--warn); border-radius: 3px; padding: 0.85rem; background: var(--surface); min-width: 0; }
+  .risque h3 { font-size: 0.85rem; color: var(--warn); margin-bottom: 0.3rem; }
+  .risque p { font-size: 0.86rem; color: var(--muted); }
 
   hr { border: 0; border-top: 1px solid var(--line); margin: 0; }
-  footer { color: var(--muted); font-size: 0.85rem; }
+  footer { color: var(--muted); font-size: 0.84rem; }
+  footer p { max-width: 42rem; }
 </style>
 
 <main>
 
-  <header>
-    <p class="eyebrow">Projet interne &middot; octobre 2026</p>
-    <h1>Un bibliothécaire pour notre agent</h1>
-    <p class="lede">Notre agent dispose de 537 procédures écrites. Il choisit souvent la mauvaise. GreenKnowledge lui glisse la bonne fiche avant qu'il se mette au travail.</p>
+  <header style="display:flex;flex-direction:column;gap:0.9rem">
+    <p class="eyebrow">Note technique interne &middot; octobre 2026</p>
+    <h1>GreenKnowledge</h1>
+    <p class="lede">Un service qui prépare, avant chaque tour de l'agent, la liste des procédures pertinentes parmi 537, les faits déjà vérifiés, et ce qui reste à contrôler. Conception arrêtée et confrontée au serveur réel ; la chaîne de mesure est construite, l'aide ne l'est pas encore.</p>
+    <p class="statut"><span>État</span> <span>phase 1 sur 4 livrée &middot; rien n'est encore injecté dans l'agent</span></p>
   </header>
 
   <hr>
 
   <section>
     <p class="eyebrow">Le problème</p>
-    <h2>Il a la documentation, il ne trouve pas la bonne page</h2>
-    <p>Nos équipes ont écrit 537 procédures : comment auditer la performance d'un site, comment retrouver l'historique d'un déploiement, comment traiter une commande. L'agent ne voit d'elles qu'un titre et deux lignes de description. Il choisit donc souvent au hasard, improvise à la place, et finit par le reconnaître lui-même en pleine conversation.</p>
-    <p>C'est cet aveu qui a lancé le projet, parce qu'il est mesurable.</p>
+    <h2>Une bibliothèque trop grande pour le contexte d'un modèle</h2>
+    <p>L'agent dispose de <strong>537 procédures</strong> rédigées par les équipes. À chaque tour, il n'en voit que les titres et une description courte : le corps complet des 537 fichiers représenterait plusieurs centaines de milliers de jetons, soit bien au-delà de ce qu'une fenêtre de contexte peut porter en même temps que la conversation.</p>
+    <p>Il choisit donc sur une information appauvrie, et se trompe. Le symptôme est un aveu en pleine conversation — « je n'avais pas la bonne procédure » — et c'est précisément ce qui le rend mesurable : une phrase repérable automatiquement, comptable, et attribuable.</p>
+    <p>L'inventaire du serveur a révélé un second facteur, que personne ne cherchait : le volume contient <strong>866 fichiers de procédure pour une bibliothèque de 537</strong>. Les mêmes 137 existent en double exemplaire, 20 traînent dans un répertoire mal orthographié, 32 dans un dossier au statut incertain. Une recherche naïve indexerait ces doublons et produirait des recommandations ambiguës — exactement le défaut à corriger.</p>
   </section>
 
   <section>
-    <p class="eyebrow">La solution</p>
-    <h2>Une fiche de trois lignes, à chaque question</h2>
-    <p>Avant que l'agent lise une demande, GreenKnowledge l'a déjà lue et lui prépare une note. Elle est courte à dessein : elle ne doit pas occuper la place dont il a besoin pour travailler.</p>
-    <div class="fiche"><b>Procédures à utiliser</b>  perf-audit (utilisée 14 fois), deploy-history
-<b>Déjà vérifié</b>        le site est hébergé chez OVH (constaté le 20/09)
-<b>Reste à vérifier</b>    y a-t-il eu un déploiement hier ?
-<b>À demander d'abord</b>  production ou préproduction ?</div>
-    <p>L'agent ne peut pas l'ignorer par distraction : la note est accolée à la demande avant qu'il commence à réfléchir. Il garde en revanche le dernier mot sur ce qu'il en fait.</p>
+    <p class="eyebrow">Le mécanisme</p>
+    <h2>Deux points d'accroche dans le cœur de l'agent</h2>
+
+    <figure>
+      <div class="scroll">
+        <svg class="schema" viewBox="0 0 900 430" role="img" aria-label="Le chemin de service relie le plugin interne à l'agent au service GreenKnowledge par la boucle locale, sans aucune sortie réseau ; seules l'extraction nocturne et la synthèse hebdomadaire sortent de la machine.">
+          <defs>
+            <marker id="fl" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 1 L 9 5 L 0 9 z" fill="currentColor"/>
+            </marker>
+            <marker id="flc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 1 L 9 5 L 0 9 z" fill="var(--accent)"/>
+            </marker>
+          </defs>
+
+          <!-- zone hote -->
+          <rect class="zone" x="8" y="24" width="884" height="310" rx="6"/>
+          <text class="zonenom" x="20" y="43">LE SERVEUR QUE NOUS EXPLOITONS DEJA</text>
+
+          <!-- conteneur Hermes -->
+          <rect class="zone" x="150" y="58" width="300" height="258" rx="5"/>
+          <text class="zonenom" x="162" y="76">CONTENEUR DE L'AGENT</text>
+
+          <!-- conteneur GK -->
+          <rect class="zone" x="520" y="58" width="352" height="258" rx="5"/>
+          <text class="zonenom" x="532" y="76">CONTENEUR GREENKNOWLEDGE &middot; 256 Mo</text>
+
+          <!-- collegue -->
+          <rect class="bloc" x="18" y="160" width="106" height="52" rx="4"/>
+          <text class="nom" x="71" y="183" text-anchor="middle">Un collègue</text>
+          <text class="sous" x="71" y="199" text-anchor="middle">écrit à l'agent</text>
+
+          <!-- agent -->
+          <rect class="bloc" x="172" y="92" width="256" height="62" rx="4"/>
+          <text class="nom" x="300" y="116" text-anchor="middle">L'agent</text>
+          <text class="sous" x="300" y="133" text-anchor="middle">537 procédures, un modèle de langage</text>
+
+          <!-- plugin -->
+          <rect class="bloc" x="172" y="236" width="256" height="62" rx="4"/>
+          <text class="nom" x="300" y="260" text-anchor="middle">Le pont</text>
+          <text class="sous" x="300" y="277" text-anchor="middle">50 lignes, sans état, ne lit pas la note</text>
+
+          <!-- GK interne -->
+          <rect class="bloc" x="542" y="92" width="308" height="44" rx="4"/>
+          <text class="nom" x="560" y="119">Index plein texte</text>
+          <text class="sous" x="836" y="119" text-anchor="end">537 procédures</text>
+
+          <rect class="bloc" x="542" y="148" width="308" height="44" rx="4"/>
+          <text class="nom" x="560" y="175">Faits vérifiés</text>
+          <text class="sous" x="836" y="175" text-anchor="end">source + date</text>
+
+          <rect class="bloc" x="542" y="204" width="308" height="44" rx="4"/>
+          <text class="nom" x="560" y="231">Compteur de corrections</text>
+          <text class="sous" x="836" y="231" text-anchor="end">la mesure</text>
+
+          <rect class="bloc" x="542" y="260" width="308" height="38" rx="4"/>
+          <text class="sous" x="560" y="284">SQLite, un fichier, &lt; 1 Mo</text>
+
+          <!-- flux -->
+          <line class="lien" x1="124" y1="186" x2="168" y2="150" marker-end="url(#fl)"/>
+          <line class="chaud" x1="300" y1="154" x2="300" y2="232" marker-end="url(#flc)"/>
+          <text class="etiqchaud" x="310" y="180">pre_llm_call</text>
+          <text class="etiq" x="310" y="196">transform_llm_output</text>
+
+          <line class="chaud" x1="428" y1="252" x2="538" y2="196" marker-end="url(#flc)"/>
+          <line class="chaud" x1="538" y1="236" x2="428" y2="292" marker-end="url(#flc)"/>
+          <text class="etiqchaud" x="483" y="228" text-anchor="middle">~20 ms</text>
+
+          <!-- retour vers l'agent -->
+          <path class="chaud" d="M 172 266 L 161 266 L 161 123 L 168 123" marker-end="url(#flc)"/>
+          <text class="etiqchaud" x="138" y="75" text-anchor="end">note accolée</text>
+          <text class="etiqchaud" x="138" y="89" text-anchor="end">à la demande</text>
+
+          <!-- sorties -->
+          <rect class="bloc" x="520" y="360" width="160" height="46" rx="4"/>
+          <text class="nom" x="600" y="381" text-anchor="middle">Service de langage</text>
+          <text class="sous" x="600" y="396" text-anchor="middle">rangement nocturne</text>
+
+          <rect class="bloc" x="712" y="360" width="160" height="46" rx="4"/>
+          <text class="nom" x="792" y="381" text-anchor="middle">Canal Discord</text>
+          <text class="sous" x="792" y="396" text-anchor="middle">synthèse hebdomadaire</text>
+
+          <line class="sortie" x1="640" y1="298" x2="600" y2="356" marker-end="url(#fl)"/>
+          <line class="sortie" x1="760" y1="298" x2="792" y2="356" marker-end="url(#fl)"/>
+          <text class="etiq" x="690" y="350" text-anchor="middle">les deux seules sorties</text>
+        </svg>
+      </div>
+      <figcaption>Le chemin de service, en vert, ne quitte jamais la machine : le pont appelle GreenKnowledge par la boucle locale et reçoit la note en une vingtaine de millisecondes. Les deux flèches pointillées sont les seules sorties réseau, et aucune des deux n'est sur le chemin d'une réponse.</figcaption>
+    </figure>
+
+    <p>Le cœur de l'agent expose des points d'accroche à des extensions. Nous en utilisons deux. <code>pre_llm_call</code> est appelé une fois par tour, avant que le modèle reçoive quoi que ce soit ; le texte qu'une extension y renvoie est accolé au message de l'utilisateur. <code>transform_llm_output</code> reçoit la réponse produite, et nous y renvoyons systématiquement une valeur nulle — nous observons sans jamais modifier.</p>
+    <p>Conséquence sur laquelle tout repose : <strong>l'agent ne peut pas omettre de consulter le service</strong>, puisque ce n'est pas lui qui le consulte. Lui demander d'appeler un outil « trouve-moi la bonne procédure » aurait échoué pour la raison même qui motive le projet — une machine qui oublie de vérifier oublie aussi de demander.</p>
+
+    <p>La note, telle que l'agent la reçoit :</p>
+    <div class="fiche"><b>Procédures</b>       perf-audit (14 usages, 2 corrections), deploy-history
+<b>Connu</b>            site hébergé chez OVH (vérifié le 20/09)
+<b>À vérifier</b>       un déploiement a-t-il eu lieu hier ?
+<b>Demander d'abord</b> production ou préproduction ?</div>
+    <p>Elle est courte par conception : chaque ligne occupe une place que l'agent n'a plus pour la tâche. Le pont, lui, ne la lit pas — il transporte une chaîne opaque. C'est ce qui permet de changer le format de la note sans jamais toucher à l'extension installée dans l'agent de production.</p>
   </section>
 
   <section>
-    <p class="eyebrow">Le fonctionnement</p>
-    <h2>Quatre temps, à chaque échange</h2>
-    <ol class="temps">
-      <li>
-        <span class="n">1</span>
-        <h3>La demande arrive</h3>
-        <p>Un collègue écrit à l'agent, comme d'habitude. Rien ne change pour lui.</p>
-      </li>
-      <li>
-        <span class="n">2</span>
-        <h3>Le bibliothécaire prépare</h3>
-        <p>Il cherche dans les 537 procédures, retrouve ce qui est déjà vérifié, et rédige la note.</p>
-      </li>
-      <li>
-        <span class="n">3</span>
-        <h3>L'agent travaille</h3>
-        <p>Il reçoit la demande et la note ensemble, puis répond comme il l'entend.</p>
-      </li>
-      <li>
-        <span class="n">4</span>
-        <h3>On note le résultat</h3>
-        <p>Quelle procédure a servi, et l'agent a-t-il reconnu s'être trompé.</p>
-      </li>
-    </ol>
-    <div class="boucle">
-      <span class="fleche">4 &rarr; 2</span>
-      <p>Chaque erreur reconnue devient une leçon : le bibliothécaire sait désormais que pour une demande de ce genre, c'était cette procédure-là qu'il fallait. Il n'y a rien à ressaisir à la main.</p>
+    <p class="eyebrow">Le budget</p>
+    <h2>Vingt millisecondes, et rien ne sort</h2>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Étape du chemin de service</th><th>Coût</th><th>Où</th></tr></thead>
+        <tbody>
+          <tr><td>Aller-retour sur la boucle locale</td><td class="num">~1 ms</td><td>machine</td></tr>
+          <tr><td>Normalisation de la demande en français</td><td class="num">~1 ms</td><td>machine</td></tr>
+          <tr><td>Recherche plein texte sur 537 procédures</td><td class="num">quelques ms</td><td>machine</td></tr>
+          <tr><td>Lecture des faits vérifiés</td><td class="num">~1 ms</td><td>machine</td></tr>
+          <tr><td>Rédaction de la note</td><td class="num">négligeable</td><td>machine</td></tr>
+          <tr><td><strong>Au-delà d'une seconde</strong></td><td class="num">abandon</td><td>la demande passe sans note</td></tr>
+        </tbody>
+      </table>
     </div>
+    <p>La conception initiale prévoyait un appel à un service de langage pour rédiger la note, soit un délai de l'ordre de <strong>quatre secondes avant que l'agent commence à réfléchir</strong>. En reprenant ligne par ligne ce que la note contient, aucune ne s'est révélée en avoir besoin : les procédures sortent d'une recherche, les faits d'une lecture, et un fait de plus de trente jours passe mécaniquement en « à vérifier ». Le service de langage a donc été repoussé au travail nocturne, où quatre secondes n'intéressent personne.</p>
+    <p>Cette décision a un effet qui dépasse la latence. Le chemin de service n'ayant plus aucune dépendance externe, <strong>aucun message ne quitte la machine lorsque l'agent travaille.</strong> La seconde dépendance — un fournisseur de vecteurs sémantiques, qui aurait vu passer chaque message et l'intégralité des 537 procédures à l'indexation — a été écartée pour la version 1 par le même raisonnement : la mesure de référence du projet avait en réalité été obtenue sans elle.</p>
   </section>
 
   <section>
-    <p class="eyebrow">Concrètement</p>
-    <h2>Le même échange, avant et après</h2>
-    <div class="compare">
-      <div class="scene avant">
-        <h3>Aujourd'hui</h3>
-        <div class="dial">
-          <span><span class="qui">Le collègue</span> Fais-moi un audit de perf du site.</span>
-          <span><span class="qui">L'agent</span> Voici quelques pistes générales…</span>
-          <span class="aveu">Ah oui, tu as raison, je n'avais pas la bonne procédure.</span>
-        </div>
-      </div>
-      <div class="scene apres">
-        <h3>Avec le bibliothécaire</h3>
-        <div class="dial">
-          <span><span class="qui">Le collègue</span> Fais-moi un audit de perf du site.</span>
-          <span class="bien"><span class="qui">La note</span> Procédure : perf-audit</span>
-          <span><span class="qui">L'agent</span> J'applique perf-audit. Premier point…</span>
-        </div>
-      </div>
+    <p class="eyebrow">Les arbitrages</p>
+    <h2>Ce que chaque décision achète, et ce qu'elle coûte</h2>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Décision</th><th>Ce qu'elle achète</th><th>Ce qu'elle coûte</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><strong>Recherche par mots-clés seule</strong>, pas de vecteurs sémantiques en v1</td>
+            <td>Aucune sortie réseau, aucun fournisseur à choisir, latence divisée par 200, la bibliothèque ne part jamais à l'extérieur</td>
+            <td>Les synonymes ne sont pas couverts : une demande formulée autrement que la procédure peut la manquer. À mesurer, et à corriger si le chiffre l'exige</td>
+          </tr>
+          <tr>
+            <td><strong>L'agent est prévenu, pas contraint</strong></td>
+            <td>Il garde le dernier mot ; une mauvaise recommandation reste rattrapable par lui</td>
+            <td>Il peut ignorer la note. C'est pourquoi la mesure distingue « mauvaise recommandation » de « note ignorée » : les deux ont des remèdes opposés</td>
+          </tr>
+          <tr>
+            <td><strong>Les procédures sont envoyées par l'agent</strong>, le service ne les lit pas sur le disque</td>
+            <td>Aucun accès disque partagé, aucune lecture d'un fichier en cours d'écriture, et un envoi manqué ne désynchronise rien</td>
+            <td>Une dépendance de plus à surveiller : si l'envoi cesse, l'index vieillit en silence. D'où une alarme sur l'absence d'envoi</td>
+          </tr>
+          <tr>
+            <td><strong>Un fait n'est servi qu'après validation humaine</strong></td>
+            <td>Le service ne peut pas affirmer une inférence comme un fait établi ; et c'est aussi ce qui empêche un contenu de conversation d'atteindre le prompt de l'agent sous forme de fait</td>
+            <td>Une relecture hebdomadaire à tenir. Si personne ne vient, le service n'a simplement aucun fait à servir — il se tait plutôt que de supposer</td>
+          </tr>
+          <tr>
+            <td><strong>La mesure est livrée avant l'aide</strong></td>
+            <td>Un point de comparaison, et toute la plomberie validée sur une charge qui ne peut rien casser</td>
+            <td>Plusieurs semaines sans bénéfice visible. C'est l'ordre choisi, pas un retard</td>
+          </tr>
+        </tbody>
+      </table>
     </div>
   </section>
 
   <section>
     <p class="eyebrow">La mesure</p>
-    <h2>Comment on saura si ça marche</h2>
-    <p>Nous comptons une seule chose : le nombre de fois où l'agent reconnaît s'être trompé de procédure, pour cent messages.</p>
-    <p>Pour éviter de nous raconter une histoire, la note n'est fournie qu'un échange sur deux, tirés au hasard. Les deux moitiés sont comparées sur la même période, avec les mêmes collègues et les mêmes procédures. Si le chiffre baisse sur la moitié aidée et pas sur l'autre, c'est le bibliothécaire qui en est la cause et rien d'autre.</p>
-    <div class="chiffres">
-      <div class="chiffre"><span class="v">537</span><span class="l">procédures dans la bibliothèque</span></div>
-      <div class="chiffre"><span class="v">1 sur 2</span><span class="l">échanges aidés pendant l'essai</span></div>
-      <div class="chiffre"><span class="v">3 lignes</span><span class="l">la taille de la note</span></div>
+    <h2>Pourquoi un avant-après n'aurait rien prouvé</h2>
+    <p>L'indicateur est le nombre d'aveux pour cent messages. La tentation était de mesurer trois semaines sans le service, puis quatre avec. Sur sept semaines, la bibliothèque de procédures évolue, la nature du travail change, le modèle de l'agent peut être mis à jour par une version du cœur, et la façon même de formuler les demandes se déplace quand on sait qu'un service aide. Une baisse de moitié n'aurait désigné aucune cause.</p>
+    <p>La note est donc fournie <strong>un tour sur deux, tiré au hasard</strong>, et les deux moitiés sont comparées sur la même période. Bibliothèque, charge de travail, modèle et jeu de détection sont identiques par construction. Le coût est réel — la moitié du bénéfice pendant l'essai — et il achète une comparaison à laquelle on peut se fier, plus vite, puisque les deux moitiés se remplissent en parallèle.</p>
+
+    <h3 style="margin-top:0.5rem">Deux instruments, et un angle mort</h3>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Instrument</th><th>Ce qu'il établit</th><th>Facteurs parasites</th></tr></thead>
+        <tbody>
+          <tr><td>Banc d'essai hors production : corps complet contre titres seuls</td><td>Le service choisit-il mieux que l'agent seul — les titres seuls étant exactement ce qu'il voit aujourd'hui</td><td><strong>Aucun</strong></td></tr>
+          <tr><td>Essai moitié-moitié en production</td><td>Le service change-t-il le comportement de l'agent</td><td>Peu</td></tr>
+          <tr><td>Avant-après</td><td>Rien de solide à lui seul</td><td>Nombreux</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>L'angle mort est à nommer : le comptage automatique repose sur l'agent qui <em>avoue</em>. Un agent devenu simplement moins enclin à reconnaître ses erreurs ressemblerait trait pour trait à un progrès. C'est pourquoi des notations humaines, rares mais fiables, servent de point de calibration : les deux séries sont confrontées, et une divergence franche signifie que le détecteur est faux, pas que l'agent s'améliore.</p>
+    <p>Chaque aveu détecté est par ailleurs une donnée d'évaluation complète — la demande, et la procédure que l'agent lui-même désigne comme la bonne. Le corpus du banc d'essai se constitue donc en marchant, sans saisie manuelle.</p>
+  </section>
+
+  <section>
+    <p class="eyebrow">Les données</p>
+    <h2>Ce qui est conservé, et pour combien de temps</h2>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Donnée</th><th>Durée</th><th>Contient du texte</th><th>Reconstructible</th></tr></thead>
+        <tbody>
+          <tr><td>Index des procédures</td><td>tant qu'elles existent</td><td>non, jamais le corps</td><td>oui, gratuitement</td></tr>
+          <tr><td>Compteur d'une correction : date, classement, procédures</td><td>sans limite</td><td><strong>non</strong></td><td>non</td></tr>
+          <tr><td>Donnée d'évaluation : la demande tronquée</td><td>tant que la procédure citée existe</td><td>oui</td><td>non</td></tr>
+          <tr><td>Extrait de l'aveu, 200 caractères</td><td><strong>90 jours</strong></td><td>oui</td><td>non</td></tr>
+          <tr><td>Journal des notes émises</td><td><strong>7 jours</strong></td><td>oui</td><td>non</td></tr>
+          <tr><td>Conversations complètes</td><td>—</td><td colspan="2"><strong>jamais conservées</strong></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>Le découpage n'est pas cosmétique : il permet d'effacer le texte sans perdre la mesure. Le compteur, qui est tout ce dont la comparaison a besoin, ne contient aucun mot d'un collègue, et peut donc être gardé indéfiniment sans rien exposer. Une commande permet par ailleurs d'effacer à la demande tout ce qui vient d'une conversation donnée.</p>
+    <p>Quatre tables sur l'ensemble ne se reconstruisent pas ; tout le reste dérive d'un envoi de l'agent ou se jette. La sauvegarde du service tient donc dans quelques dizaines de kilo-octets.</p>
+  </section>
+
+  <section>
+    <p class="eyebrow">Avancement</p>
+    <h2>Quatre phases, dans cet ordre</h2>
+    <div class="phases">
+      <div class="phase fait">
+        <span class="etat">livrée</span>
+        <div>
+          <h3>Phase 1 &middot; la chaîne de mesure, seule</h3>
+          <p>Détection des aveux, classement, rétentions, outillage d'exploitation, conteneur. Aucune note injectée : l'agent est strictement inchangé. 33 tests automatisés.</p>
+        </div>
+      </div>
+      <div class="phase">
+        <span class="etat">à venir</span>
+        <div>
+          <h3>Phase 2 &middot; l'index et le banc d'essai</h3>
+          <p>Indexation des 537 procédures, traitement du français, et la mesure hors production qui décide si la recherche par mots-clés suffit. Toujours rien d'injecté.</p>
+        </div>
+      </div>
+      <div class="phase">
+        <span class="etat">à venir</span>
+        <div>
+          <h3>Phase 3 &middot; la note, un tour sur deux</h3>
+          <p>Première mise en service effective, comparée à la référence accumulée depuis la phase 1.</p>
+        </div>
+      </div>
+      <div class="phase">
+        <span class="etat">à venir</span>
+        <div>
+          <h3>Phase 4 &middot; les faits vérifiés</h3>
+          <p>Mémoire des faits sourcés, file de validation, synthèse hebdomadaire. En dernier, parce que c'est la partie la moins liée à l'indicateur principal.</p>
+        </div>
+      </div>
     </div>
   </section>
 
   <section>
-    <p class="eyebrow">Les garde-fous</p>
-    <h2>Ce que le bibliothécaire ne fait pas</h2>
-    <ul class="liste">
-      <li><strong>Il ne modifie aucune procédure.</strong> Il lit, il recommande, il ne réécrit rien. Les 537 fiches restent la propriété des équipes qui les ont écrites.</li>
-      <li><strong>Il ne bloque jamais l'agent.</strong> S'il tombe en panne, la demande passe sans note et l'agent travaille comme avant. Une panne se voit dans les chiffres, pas dans le service.</li>
-      <li><strong>Rien ne sort du serveur.</strong> La recherche se fait sur place, sans envoyer les messages à un prestataire extérieur. Seul un rangement nocturne fait appel à un service tiers, et uniquement sur les échanges déjà signalés.</li>
-      <li><strong>Aucun fait n'est inventé.</strong> Ce qu'il affirme comme vérifié a été validé par un humain. Tant que personne n'a validé, il se tait plutôt que de supposer.</li>
-      <li><strong>Il n'enregistre pas les conversations.</strong> Il conserve les erreurs reconnues pour pouvoir les compter, et efface le texte brut au bout de trois mois.</li>
-    </ul>
+    <p class="eyebrow">Ce qui n'est pas acquis</p>
+    <h2>Les risques, tels qu'ils se présentent</h2>
+    <div class="risques">
+      <div class="risque">
+        <h3>La recherche par mots-clés peut ne pas suffire</h3>
+        <p>La mesure de référence du projet portait sur 23 procédures fictives, pas sur 537 réelles comportant des quasi-doublons. Le banc d'essai de la phase 2 tranche, avant toute mise en service. Si l'écart est dérisoire, la question des vecteurs sémantiques est rouverte avec un chiffre en main.</p>
+      </div>
+      <div class="risque">
+        <h3>Une mise à jour du cœur peut couper le lien en silence</h3>
+        <p>Les points d'accroche appartiennent à un projet tiers en développement rapide. Une extension désactivée ou un point renommé ne produit aucune erreur : l'agent répond normalement, sans note. D'où une alarme sur l'absence d'appel, une vérification intégrée à la procédure de mise à jour, et une extension volontairement réduite à cinquante lignes pour être réécrite en une heure.</p>
+      </div>
+      <div class="risque">
+        <h3>Aucun chiffre de résultat n'existe aujourd'hui</h3>
+        <p>Le projet a construit l'instrument de mesure avant l'outil, délibérément. La contrepartie est qu'à la question « combien cela fait-il gagner », la seule réponse honnête aujourd'hui est : nous serons en mesure de le dire, et de le prouver, à l'issue de la phase 3.</p>
+      </div>
+      <div class="risque">
+        <h3>La relecture hebdomadaire reposera sur une personne</h3>
+        <p>La validation des faits demande quelques minutes par semaine, et ce genre d'engagement s'érode. Le système est conçu pour que l'abandon soit sans danger : sans validation, aucun fait n'est servi. Il perd une fonction, il ne produit pas d'erreur.</p>
+      </div>
+    </div>
   </section>
 
   <hr>
 
   <footer>
-    <p>GreenKnowledge tourne à côté de l'agent, dans son propre conteneur, sur le serveur que nous exploitons déjà. La conception est arrêtée et documentée ; la construction a commencé par la mesure, afin d'avoir un point de comparaison avant d'activer la moindre aide.</p>
+    <p>Le service tourne dans son propre conteneur, sur le serveur déjà exploité, avec une limite de 256 Mo et aucun port ouvert au-delà de la boucle locale. L'intégralité des décisions d'architecture, y compris celles qui ont été reprises après confrontation au serveur réel, est consignée dans un document de référence versionné avec le code.</p>
   </footer>
 
 </main>
