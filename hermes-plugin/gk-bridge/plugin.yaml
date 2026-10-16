@@ -1,0 +1,8 @@
+name: gk-bridge
+version: 0.1.0
+description: "Pont vers GreenKnowledge. PHASE 1 : observation seule, rien n'est injecte. transform_llm_output renvoie toujours None, donc le comportement de l'agent est strictement inchange. Toute exception est avalee."
+author: "GreenKnowledge"
+kind: standalone
+hooks:
+  - transform_llm_output
+  - on_skill_lifecycle

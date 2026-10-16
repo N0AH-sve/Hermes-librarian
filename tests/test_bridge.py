@@ -1,0 +1,195 @@
+"""Tests du pont, contre un faux Hermes.
+
+Le pont est la piece la plus risquee : il tourne dans l'agent de production. Ce
+qui est verifie ici est exactement ce qui ne doit jamais arriver — une exception
+qui remonte, un retour non nul sur `transform_llm_output`, ou une attente sur le
+chemin de la reponse.
+"""
+
+from __future__ import annotations
+
+import importlib.util
+import json
+import sys
+import time
+from pathlib import Path
+
+import pytest
+
+RACINE = Path(__file__).resolve().parents[1]
+
+
+def charger(tmp_path, monkeypatch):
+    monkeypatch.setenv("GK_BRIDGE_LOG", str(tmp_path / "bridge.jsonl"))
+    spec = importlib.util.spec_from_file_location(
+        "gkbridge", RACINE / "hermes-plugin" / "gk-bridge" / "__init__.py"
+    )
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+class FauxCtx:
+    """Reproduit la signature reelle relevee dans hermes_cli/plugins.py."""
+
+    def __init__(self, leve=None):
+        self.appels = []
+        self.leve = leve
+
+    def call_mcp(self, server: str, tool: str, arguments=None, timeout: float = 30):
+        if self.leve:
+            raise self.leve
+        self.appels.append((server, tool, arguments, timeout))
+        return {"content": [{"type": "text", "text": "{}"}]}
+
+
+def journal(mod):
+    p = Path(mod.JOURNAL)
+    if not p.is_file():
+        return []
+    return [json.loads(l) for l in p.read_text(encoding="utf-8").strip().splitlines() if l]
+
+
+def attendre(ctx, n=1, limite=2.0):
+    """Les appels partent sur un fil : on laisse le temps au thread."""
+    debut = time.time()
+    while len(ctx.appels) < n and time.time() - debut < limite:
+        time.sleep(0.01)
+    return ctx.appels
+
+
+# -- la garantie centrale --------------------------------------------------
+
+
+@pytest.mark.parametrize("cle", ["text", "output", "content", "response", "message"])
+def test_renvoie_toujours_none_quelle_que_soit_la_cle(tmp_path, monkeypatch, cle):
+    mod = charger(tmp_path, monkeypatch)
+    ctx = FauxCtx()
+    assert mod.on_transform_llm_output(ctx=ctx, session_id="s", **{cle: "Tu as raison."}) is None
+
+
+def test_la_reponse_est_transmise_a_observe(tmp_path, monkeypatch):
+    mod = charger(tmp_path, monkeypatch)
+    ctx = FauxCtx()
+    mod.on_transform_llm_output(ctx=ctx, session_id="sess-7", text="Tu as raison.")
+    appels = attendre(ctx)
+    assert len(appels) == 1
+    serveur, outil, args, timeout = appels[0]
+    assert (serveur, outil) == ("gk", "observe")
+    assert args["reply"] == "Tu as raison." and args["session_id"] == "sess-7"
+    assert timeout == 1.0, "plancher impose par Hermes"
+
+
+def test_ctx_trouve_ou_qu_il_arrive(tmp_path, monkeypatch):
+    """Par ou arrive le PluginContext n'est pas connu : il est reconnu a ce
+    qu'il sait faire, pas a son nom."""
+    for nom in ("ctx", "context", "plugin_ctx", "api"):
+        mod = charger(tmp_path, monkeypatch)
+        ctx = FauxCtx()
+        mod.on_transform_llm_output(text="Tu as raison.", **{nom: ctx})
+        assert attendre(ctx), f"non trouve sous {nom!r}"
+        assert any(e["event"] == "ctx_trouve" for e in journal(mod))
+
+
+def test_ctx_passe_a_l_initialisation(tmp_path, monkeypatch):
+    mod = charger(tmp_path, monkeypatch)
+    ctx = FauxCtx()
+    mod.register(ctx)
+    mod.on_transform_llm_output(text="Tu as raison.")  # sans ctx dans les kwargs
+    assert attendre(ctx)
+
+
+def test_sans_ctx_le_pont_se_tait(tmp_path, monkeypatch):
+    mod = charger(tmp_path, monkeypatch)
+    assert mod.on_transform_llm_output(text="Tu as raison.") is None
+    assert mod.on_skill_lifecycle(skill_name="x") is None
+
+
+# -- rien ne remonte jamais ------------------------------------------------
+
+
+def test_une_permission_refusee_ne_remonte_pas(tmp_path, monkeypatch):
+    """Defaut-refus de Hermes quand mcp_allowlist manque."""
+    mod = charger(tmp_path, monkeypatch)
+    ctx = FauxCtx(leve=PermissionError("pas dans mcp_allowlist"))
+    assert mod.on_transform_llm_output(ctx=ctx, text="Tu as raison.") is None
+    time.sleep(0.15)
+    assert any(e["event"] == "refuse" for e in journal(mod))
+
+
+def test_un_serveur_en_panne_ne_remonte_pas(tmp_path, monkeypatch):
+    mod = charger(tmp_path, monkeypatch)
+    ctx = FauxCtx(leve=RuntimeError("connexion refusee"))
+    assert mod.on_transform_llm_output(ctx=ctx, text="Tu as raison.") is None
+    time.sleep(0.15)
+    assert any(e["event"] == "echec" for e in journal(mod))
+
+
+@pytest.mark.parametrize("kw", [{}, {"text": None}, {"text": 12}, {"session_id": object()}])
+def test_des_kwargs_absurdes_ne_remontent_pas(tmp_path, monkeypatch, kw):
+    mod = charger(tmp_path, monkeypatch)
+    assert mod.on_transform_llm_output(ctx=FauxCtx(), **kw) is None
+    assert mod.on_skill_lifecycle(ctx=FauxCtx(), **kw) is None
+
+
+def test_un_ctx_hostile_ne_remonte_pas(tmp_path, monkeypatch):
+    mod = charger(tmp_path, monkeypatch)
+
+    class Hostile:
+        def __getattr__(self, n):
+            raise RuntimeError("boom")
+
+    assert mod.register(Hostile()) is None
+    assert mod.on_transform_llm_output(text="Tu as raison.") is None
+
+
+def test_journal_illisible_ne_remonte_pas(tmp_path, monkeypatch):
+    mod = charger(tmp_path, monkeypatch)
+    mod.JOURNAL = "/un/chemin/qui/n/existe/pas/x.jsonl"
+    assert mod.on_transform_llm_output(ctx=FauxCtx(), text="Tu as raison.") is None
+
+
+# -- le releve des inconnues ----------------------------------------------
+
+
+def test_le_premier_appel_consigne_la_forme_reelle(tmp_path, monkeypatch):
+    mod = charger(tmp_path, monkeypatch)
+    mod.on_transform_llm_output(ctx=FauxCtx(), session_id="s", text="bonjour", model="x")
+    premiers = [e for e in journal(mod) if e["event"] == "premier_appel"]
+    assert len(premiers) == 1
+    assert set(premiers[0]["cles_kwargs"]) == {"ctx", "session_id", "text", "model"}
+    # Une seule fois : pas de journal qui gonfle a chaque tour
+    mod.on_transform_llm_output(ctx=FauxCtx(), text="autre")
+    assert len([e for e in journal(mod) if e["event"] == "premier_appel"]) == 1
+
+
+def test_reponse_introuvable_est_signalee(tmp_path, monkeypatch):
+    mod = charger(tmp_path, monkeypatch)
+    mod.on_transform_llm_output(ctx=FauxCtx(), session_id="s", un_nom_inattendu="Tu as raison.")
+    assert any(e["event"] == "reponse_introuvable" for e in journal(mod))
+
+
+# -- cycle de vie des skills ----------------------------------------------
+
+
+def test_skill_lifecycle_transmet_les_champs_reels(tmp_path, monkeypatch):
+    mod = charger(tmp_path, monkeypatch)
+    ctx = FauxCtx()
+    mod.on_skill_lifecycle(
+        ctx=ctx, skill_name="perf-audit", action="use",
+        session_id="s", task_id="t", use_count=14, provenance="local",
+    )
+    args = attendre(ctx)[0][2]
+    assert args == {
+        "skill_name": "perf-audit", "action": "use",
+        "session_id": "s", "task_id": "t", "use_count": 14,
+    }
+
+
+def test_aucun_hook_d_entree_en_phase_1(tmp_path, monkeypatch):
+    """Le chemin d'entree de l'agent n'est pas touche : il n'y a pas de
+    pre_llm_call, et le manifeste ne le declare pas."""
+    mod = charger(tmp_path, monkeypatch)
+    assert not hasattr(mod, "on_pre_llm_call")
+    manifeste = (RACINE / "hermes-plugin" / "gk-bridge" / "plugin.yaml").read_text()
+    assert "pre_llm_call" not in manifeste
