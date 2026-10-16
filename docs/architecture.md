@@ -1150,6 +1150,35 @@ Mesuré sur le déploiement réel, en remplacement des valeurs du handoff.
 | Secrets | `/opt/data/.env`, 29 Ko, plus trois sauvegardes contenant aussi des secrets |
 | API Hermes | serveur HTTP sur `${API_SERVER_PORT:-8742}` avec un `/health` |
 | Déjà en service | MCP (`.mcp-discovery.lock`), Discord (identifiant dans une sauvegarde `.env`), Curator (`.curator_backups`) |
+| Convention de plugin | `/opt/data/plugins/<nom>/` avec `plugin.yaml` (clés `name`, `version`, `description`, `author`, `kind`, `hooks`) et `__init__.py`. **On désactive en renommant le manifeste** en `plugin.yaml.inactif`, pas par une commande |
+| Plugins en place | `gm-routing` (actif), `gm-provenance`, `gm-discord-cards`, `gm-destructive-guard`, `gm-routing-socle-test`, et `gm-skill-dup-guard` **inactif** |
+
+### Les hooks, vérifiés dans la source de Hermes
+
+Les trois points d'accroche de la conception existent sur `v2026.9.21`, avec la
+sémantique supposée. `hermes_cli/plugins.py` les liste parmi les hooks de plugin
+valides, aux côtés de `transform_llm_output`.
+
+| Fait | Source |
+|---|---|
+| `pre_llm_call` renvoie une **chaîne**, **ajoutée au message utilisateur** | `agent/turn_context.py:453` : `plugin_user_context: str = ""  # pre_llm_call context (appended to user message)` |
+| Les contributions de **plusieurs plugins sont collectées**, pas écrasées | `_collect_pre_llm_call_context` : « Run `pre_llm_call` plugins » |
+| Un hook qui lève est **attrapé et journalisé**, pas fatal | `turn_context.py:783` : `logger.warning("pre_llm_call hook failed: %s", exc)` |
+| `post_llm_call` est **une fois par tour, après la boucle d'outils** | `agent/turn_finalizer.py:416` |
+
+Deux conséquences. La règle « le brief est un texte opaque pour le plugin »
+(étape 5) tombe exactement sur le mécanisme réel. Et la coexistence avec
+`gm-routing`, qui s'accroche à `pre_verify` et `pre_tool_call`, ne pose aucun
+problème : même sur un hook partagé, les contextes s'additionnent.
+
+**Mais un risque apparaît sur `on_skill_lifecycle`.** `plugins.py:128` le décrit
+comme portant les « **successful** skill lifecycle facts ». Si « successful »
+qualifie les skills et non la capture, le hook ne rapporte que les réussites —
+et l'étape 3 s'en sert pour savoir quel skill a réellement servi, y compris
+quand le tour a mal tourné. En dépendraient le compteur de réussites du brief,
+qui ne verrait jamais les échecs, et surtout l'attribution des corrections entre
+« mauvaise recommandation » et « brief ignoré », qui perdrait son signal dans
+les cas mêmes qui motivent la mesure. À lire dans le code.
 
 **La prétendue incohérence des chemins n'existait pas.** Le handoff voyait une
 contradiction entre `HERMES_HOME=/opt/data` et l'affirmation de gb que
@@ -1192,6 +1221,7 @@ pristine, et le plugin doit vivre dans un sous-dossier clairement nommé.
 | Sujet | État |
 |---|---|
 | Emplacement des plugins et du `config.yaml` | **Skills levés, plugins non.** Vérifié dans le conteneur : `HERMES_HOME=/opt/data` (via `env_file`), les skills sont en `/opt/data/skills`, et `/opt/data/.hermes` existe mais ne contient ni `skills` ni `plugins`. Reste à inspecter les trois sous-dossiers de `.hermes` pour y trouver `config.yaml` et l'emplacement des plugins |
+| Portée de `on_skill_lifecycle` | **Prioritaire.** Ne rapporte peut-être que les skills réussis, ce qui priverait l'attribution des corrections de son signal. À lire dans le code |
 | Version de Hermes | Le compose épingle `v2026.9.21`, alors que le handoff mesurait `v2026.7.20`. **Hermes a donc été mis à jour depuis**, et l'API des plugins a pu bouger : les mesures d'environnement du handoff sont à considérer comme périmées |
 | URL des docs Hermes | `hermes-agent.nousresearch.com` ne résout pas. Bloque la vérification de la stabilité des hooks et du comportement d'un plugin qui plante |
 | Code du prototype | Absent du dépôt. Les 45 tests et les 86 % de Hit@1 du handoff ne sont pas vérifiables ici |
