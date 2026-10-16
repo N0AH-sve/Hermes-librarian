@@ -7,3 +7,5 @@ __pycache__/
 *.db-shm
 dist/
 *.egg-info/
+deploy/.env
+.env

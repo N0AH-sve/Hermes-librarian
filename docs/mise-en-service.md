@@ -44,12 +44,21 @@ git log --oneline -1
 
 ## 2. Le jeton
 
+Il est écrit directement dans un fichier `.env` à côté du compose, jamais
+exporté à la main : un `export` ne survit pas au shell, et le service ne
+redémarrerait plus ni depuis une autre session ni après un redémarrage du
+serveur.
+
 ```bash
-openssl rand -hex 32
+cd ~/greenknowledge
+printf 'GK_BRIDGE_TOKEN=%s\n' "$(openssl rand -hex 32)" > deploy/.env
+chmod 600 deploy/.env
+cat deploy/.env
 ```
 
-Note-le : il servira **deux fois**, dans l'environnement de GK et dans la
-configuration de l'agent. Ils doivent être identiques.
+Ce fichier est ignoré par git. Le jeton qu'il contient servira **deux fois** :
+ici, et dans la configuration de l'agent à l'étape 4. Récupère-le par un
+copier-coller depuis la sortie de `cat`, jamais en le retapant.
 
 Sans jeton, GK démarre quand même mais accepte tout appel arrivant sur la
 boucle locale, et il le dit bruyamment au démarrage, dans `/health` et dans
@@ -64,10 +73,12 @@ contre la maladresse, pas une frontière de sécurité.
 
 ```bash
 cd ~/greenknowledge
-export GK_BRIDGE_TOKEN=<le-jeton-de-l-etape-2>
 docker compose -f deploy/compose.gk.yaml up -d --build
 docker compose -f deploy/compose.gk.yaml logs --tail 20
 ```
+
+Compose lit `deploy/.env` tout seul, puisqu'il est à côté du fichier compose.
+Rien à exporter.
 
 **Vérifier** — trois choses dans les journaux :
 
@@ -122,7 +133,8 @@ mcp:
     gk:
       url: http://127.0.0.1:8765/mcp/bridge
       headers:
-        Authorization: "Bearer <le-jeton-de-l-etape-2>"
+        # Le jeton de l'etape 2, a copier-coller depuis `cat deploy/.env`.
+        Authorization: "Bearer LE_JETON_ICI"
 ```
 
 > La forme exacte de cette section dépend de la version de Hermes. Si elle
