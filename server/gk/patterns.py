@@ -95,7 +95,10 @@ class Detector:
         Renvoie None sur une reponse vide ou sans aveu, ce qui est le cas de la
         tres grande majorite des tours.
         """
-        if not reply:
+        # Le detecteur est le seul a supposer du texte, donc c'est ici qu'on
+        # tolere autre chose : un plugin qui transmet un objet inattendu doit
+        # couter une ligne de mesure, pas un tour a l'agent.
+        if not isinstance(reply, str) or not reply:
             return None
         folded = fold(reply)
         for raw, compiled in self._compiled:

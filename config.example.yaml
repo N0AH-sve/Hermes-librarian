@@ -1,0 +1,25 @@
+# Exemple de configuration. Ne contient que des valeurs factices : le jeton reel
+# arrive par l'environnement (GK_BRIDGE_TOKEN), jamais par ce fichier.
+#
+# Toute cle peut etre surchargee par GK_<CLE_EN_MAJUSCULES>, qui a le dernier mot.
+
+database: /var/lib/gk/gk.db
+patterns: /etc/gk/motifs.yaml
+
+# Racine d'indexation, nommee explicitement et jamais decouverte recursivement.
+# Le volume contient 866 SKILL.md pour une bibliotheque de 537 : une decouverte
+# large indexerait les doublons et produirait des recommandations ambigues.
+skills_root: /opt/data/skills
+
+# Boucle locale uniquement. L'agent tourne en network_mode: host, donc aucun nom
+# de service bridge n'est resoluble et le plugin vise 127.0.0.1.
+host: 127.0.0.1
+port: 8765
+bridge_path: /mcp/bridge
+agent_path: /mcp/agent
+
+bridge_token: a-definir-par-l-environnement
+agent_token: a-definir-par-l-environnement
+discord_webhook: ""
+
+log_level: INFO

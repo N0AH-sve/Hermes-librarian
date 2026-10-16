@@ -1,0 +1,36 @@
+# Fragment a ajouter au docker-compose.yml de l'agent.
+#
+# Publie sur la BOUCLE LOCALE et non sur un reseau bridge : l'agent tourne en
+# `network_mode: host`, donc aucun nom de service n'est resoluble. La frontiere
+# est ce binding plus le pare-feu de l'hote — un cran plus faible qu'un reseau
+# interne, et il faut le savoir.
+
+services:
+  gk:
+    build: .
+    image: greenknowledge:0.1.0
+    container_name: gk
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8765:8765"
+    volumes:
+      - gk-data:/var/lib/gk
+    environment:
+      GK_BRIDGE_TOKEN: ${GK_BRIDGE_TOKEN:?jeton requis}
+      GK_AGENT_TOKEN: ${GK_AGENT_TOKEN:-}
+      GK_SKILLS_ROOT: /opt/data/skills
+      GK_LOG_LEVEL: INFO
+    # 256 Mo : les 512 du handoff supposaient des vecteurs et peut-etre un
+    # modele local. Sans eux, GK c'est Python, SQLite et un petit index. Ce
+    # chiffre est a confirmer par la mesure apres deploiement.
+    mem_limit: 256m
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
+
+volumes:
+  gk-data:
