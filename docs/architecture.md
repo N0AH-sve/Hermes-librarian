@@ -15,7 +15,7 @@ Langue de travail : français. Le README reste en anglais.
 | 3 | Flux | close |
 | 4 | Données | close |
 | 5 | Interfaces | close |
-| 6 | Choix techniques | à faire |
+| 6 | Choix techniques | close |
 | 7 | Qualités | à faire |
 | 8 | Validation | à faire |
 
@@ -650,6 +650,139 @@ Autrement dit : pour les interfaces qu'on maîtrise, on conçoit la
 **compatibilité**. Pour celle qu'on ne maîtrise pas, on conçoit la
 **remplaçabilité**.
 
+## Étape 6 : choix techniques (close)
+
+Les étapes précédentes ont vidé cette étape d'une bonne part de son contenu. Il
+ne reste qu'un vrai sujet, la recherche en français, et des choix qui s'imposent
+d'eux-mêmes.
+
+### Langage et dépendances
+
+**Python 3.11+.** Le plugin doit être en Python puisqu'il tourne dans Hermes,
+FTS5 est dans le `sqlite3` de la bibliothèque standard, et une seule langue
+permet aux tests de contrat de partager du code.
+
+| Dépendance | Pourquoi | Évitable |
+|---|---|---|
+| une bibliothèque serveur MCP | implémenter le transport à la main serait absurde | non |
+| `snowballstemmer` | stemming français, Python pur, sans compilation | non |
+| `PyYAML` | `config.yaml` et `motifs.yaml` | oui, en passant au JSON |
+| `sqlite3`, `urllib`, `threading` | stockage, HTTP sortant, ordonnanceur | déjà dans la stdlib |
+
+Pas d'APScheduler : un fil et une boucle suffisent pour deux tâches périodiques.
+Pas de client HTTP tiers : `urllib` suffit pour deux appels sortants. Pas d'ORM :
+quelques tables, du SQL écrit à la main. C'est volontaire — chaque dépendance
+est une dette de mise à jour sur un serveur censé tourner sans surveillance.
+
+Sur la bibliothèque MCP, une réserve : le handoff dit « FastMCP 4 », mais l'état
+et la maintenance des bibliothèques MCP n'ont pas pu être vérifiés depuis
+l'environnement de conception. Prendre celle qui est officiellement maintenue,
+**épingler la version exacte**, et garder la couche MCP mince — même logique de
+remplaçabilité que pour le plugin.
+
+**Le plugin : stdlib stricte.** Ce n'est pas une préférence mais une contrainte,
+puisqu'on ne peut rien installer dans l'image de Hermes.
+
+### Stockage
+
+**SQLite, un seul fichier, dans le volume dédié.** Postgres serait un second
+conteneur pour un écrivain unique et quelques méga-octets ; un fichier s'exporte
+et se sauvegarde trivialement, ce que demande le `gk export` de l'étape 4.
+
+**Mode WAL**, et ce n'est pas un détail : GK lit sur le chemin de service pendant
+qu'il écrit (ingestion de manifeste, extraction nocturne). Sans WAL, une écriture
+bloque les lectures, donc l'extraction nocturne pourrait figer un `prepare`.
+Avec les 20 ms visées, cela ruinerait le budget.
+
+**FTS5 avec `content=''`**, cohérent avec « on ne stocke jamais le corps ».
+Conséquence : reconstruire l'index exige de redemander les corps. Le mécanisme
+`besoins` le couvre — `catalogue_vide` se généralise en `index_a_reconstruire`.
+
+Pas d'ORM.
+
+### La recherche
+
+FTS5 est désormais le seul moteur. Trois problèmes distincts.
+
+**a) Le français.** Les options de tokenizer :
+
+| Tokenizer | Comportement | Verdict |
+|---|---|---|
+| `porter` | stemming anglais | celui du prototype, et faux |
+| `unicode61` | découpe et replie les accents, pas de stemming | base correcte |
+| `trigram` | tout sous-mot de 3 caractères | index énorme, BM25 perd son sens |
+| sur mesure | extension C | trop lourd |
+
+**Décision : `unicode61 remove_diacritics 2`, et le stemming français fait en
+Python.** GK stemme les mots à l'indexation et à la requête avec
+`snowballstemmer`, et indexe la forme stemmée. FTS5 reste vanille, toute la
+logique française est dans du Python qu'on contrôle et qu'on peut régler, et
+`snowballstemmer` est du Python pur sans compilation — ce qui compte sur un VPS
+sans AVX2. Le stemming français reste imparfait : c'est le banc d'essai qui le
+dira, pas une discussion.
+
+**b) Le découpage.** Un `SKILL.md` de 400 lignes indexé en un seul document
+dilue BM25 : les documents longs sont pénalisés et une correspondance dans un
+recoin lointain ne veut rien dire. **Découper par titre markdown**, indexer
+chaque morceau, et le score du skill est celui de son **meilleur morceau**,
+auquel s'ajoutent les champs de tête. C'est ce qui permet d'indexer le corps
+complet, comme le recommande SkillRouter, sans que la longueur devienne un
+handicap.
+
+**c) Le classement.** BM25, fourni par FTS5, avec des **poids par champ** (nom,
+description, corps). Aucune valeur n'est fixée ici : SkillRouter dit que le corps
+est le signal décisif, donc le réflexe de surpondérer le nom serait une erreur.
+Ce sont des paramètres à régler au banc d'essai, pas à deviner.
+
+### Le modèle
+
+**DeepSeek, la nuit uniquement**, API compatible OpenAI, pour la seule
+extraction des faits candidats.
+
+**Inversion de critère** : la latence étant devenue gratuite, le travail nocturne
+prend le **meilleur** modèle disponible, pas le plus rapide. Le mode réflexion
+qui inquiétait le handoff devient un avantage. Le bouton `extra_body` reste dans
+la config, sans urgence.
+
+Sortie en JSON avec un exemple dans le prompt — DeepSeek le recommande et
+renvoie parfois du vide sans.
+
+**Le travail nocturne est idempotent et reprenable** : s'il meurt à mi-course, le
+relancer ne duplique pas les faits candidats. Clé d'idempotence, l'identifiant du
+tour.
+
+### Déploiement
+
+| | |
+|---|---|
+| Forme | service ajouté au `docker-compose.yml` de gb |
+| Réseau | interne, `http://gk:8765/mcp`, aucun port publié |
+| Image de base | `python:3.11-slim`, tag épinglé |
+| Utilisateur | non-root |
+| Volumes | un volume dédié pour la base, aucun montage des données de Hermes |
+| Mémoire | 256 Mo, à confirmer par la mesure |
+| Healthcheck | `/health`, que `gk check` interroge aussi |
+
+Les 512 Mo du handoff supposaient des vecteurs et peut-être un modèle local.
+Sans eux, GK c'est Python, SQLite et un petit index, vraisemblablement 80 à
+150 Mo. Le chiffre de 256 Mo sera **mesuré après déploiement, pas deviné**.
+
+Le `deploy/` du prototype, qui cible systemd et pipx, est à jeter.
+
+### Ce que la conception ne peut pas produire
+
+La décision « pas d'embeddings en v1 » repose sur une mesure qui n'existe pas
+encore : FTS seul tient-il sur 500 skills français réels ? Les 86 % du handoff
+portaient sur 23 skills factices.
+
+Il faut pour cela **20 à 30 tâches réelles accompagnées du skill qui aurait dû
+être choisi** : de vraies demandes, formulées comme l'utilisateur les écrit, avec
+la bonne réponse. C'est la seule pièce du projet qui ne peut être ni déduite ni
+fabriquée, et c'est elle qui valide ou invalide le choix le plus structurant.
+
+Les corrections détectées en produiront automatiquement par la suite, mais il
+faut un premier jeu pour démarrer.
+
 ## Mesure du succès
 
 Deux instruments, de natures différentes et complémentaires.
@@ -721,4 +854,4 @@ Protections, par ordre d'efficacité :
 | AVX2 sur le VPS | Non vérifié. Décide si l'auto-hébergement d'un modèle est seulement discutable en v2 |
 | Licence | À choisir avant publication. Le fichier a été supprimé au commit 3b94d02 |
 | Embeddings | Écartés de la v1 (étape 4). À rouvrir en v2 seulement si la mesure sur les vrais skills l'exige |
-| Tokenizer FTS5 pour le français | **Première priorité de l'étape 6** : `porter` applique des règles anglaises, et FTS est désormais le seul moteur de recherche |
+| Jeu de tâches du banc d'essai | **Bloquant pour valider la v1.** 20 à 30 tâches réelles avec le skill attendu, à fournir par l'utilisateur : rien d'autre ne peut confirmer que FTS seul suffit |
