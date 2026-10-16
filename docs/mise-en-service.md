@@ -12,6 +12,11 @@ tourne et que personne n'appelle ne peut rien casser.
 aveux. Elle n'injecte rien — le pont ne déclare aucun hook d'entrée. Le
 comportement de gb est strictement inchangé.
 
+**Sur les chemins** : les commandes de GreenKnowledge se lancent depuis
+`~/greenknowledge`, celles de l'agent visent `~/next_hermes/compose.yaml` en
+chemin absolu. Les deux se mélangent dans la procédure, donc les chemins sont
+absolus partout où il y a un doute. Adapte si ton arborescence diffère.
+
 ---
 
 ## Avant de commencer
@@ -118,7 +123,7 @@ n'a pas été touché.
 **Sauvegarde d'abord**, selon la convention déjà en usage dans le volume :
 
 ```bash
-docker compose -f next_hermes/compose.yaml exec hermes bash -lc \
+docker compose -f ~/next_hermes/compose.yaml exec hermes bash -lc \
   'cp /opt/data/config.yaml /opt/data/config.yaml.bak-avant-gk-'$(date +%Y%m%d-%H%M%S)
 ```
 
@@ -144,7 +149,7 @@ mcp:
 **Vérifier** : la configuration est toujours lisible.
 
 ```bash
-docker compose -f next_hermes/compose.yaml exec hermes bash -lc \
+docker compose -f ~/next_hermes/compose.yaml exec hermes bash -lc \
   'python3 -c "import yaml,sys; yaml.safe_load(open(\"/opt/data/config.yaml\")); print(\"YAML valide\")"'
 ```
 
@@ -176,7 +181,7 @@ C'est la première étape qui touche réellement l'agent. Elle est aussi la plus
 facile à défaire.
 
 ```bash
-docker compose -f next_hermes/compose.yaml exec hermes bash -lc \
+docker compose -f ~/next_hermes/compose.yaml exec hermes bash -lc \
   'ls -la /opt/data/plugins/'
 # verifier qu'il n'y a pas deja un gk-bridge
 
@@ -191,7 +196,7 @@ cp -r ~/greenknowledge/hermes-plugin/gk-bridge \
 d'entrée :
 
 ```bash
-docker compose -f next_hermes/compose.yaml exec hermes bash -lc \
+docker compose -f ~/next_hermes/compose.yaml exec hermes bash -lc \
   'cat /opt/data/plugins/gk-bridge/plugin.yaml'
 # attendu : hooks: transform_llm_output et on_skill_lifecycle, et RIEN d'autre.
 # Si "pre_llm_call" apparait, n'installe pas : ce n'est pas la phase 1.
@@ -200,7 +205,7 @@ docker compose -f next_hermes/compose.yaml exec hermes bash -lc \
 *Revenir en arrière*, et c'est la convention locale :
 
 ```bash
-docker compose -f next_hermes/compose.yaml exec hermes bash -lc \
+docker compose -f ~/next_hermes/compose.yaml exec hermes bash -lc \
   'mv /opt/data/plugins/gk-bridge/plugin.yaml \
       /opt/data/plugins/gk-bridge/plugin.yaml.inactif'
 ```
@@ -210,16 +215,16 @@ docker compose -f next_hermes/compose.yaml exec hermes bash -lc \
 ## 7. Redémarrer l'agent
 
 ```bash
-docker compose -f next_hermes/compose.yaml restart hermes
+docker compose -f ~/next_hermes/compose.yaml restart hermes
 sleep 20
-docker compose -f next_hermes/compose.yaml logs --tail 40 hermes | grep -i "gk-bridge\|plugin"
+docker compose -f ~/next_hermes/compose.yaml logs --tail 40 hermes | grep -i "gk-bridge\|plugin"
 ```
 
 **Vérifier, et c'est le point le plus important de toute la procédure** : que
 l'agent a bien démarré.
 
 ```bash
-docker compose -f next_hermes/compose.yaml ps
+docker compose -f ~/next_hermes/compose.yaml ps
 curl -fsS http://127.0.0.1:${API_SERVER_PORT:-8742}/health && echo " agent en vie"
 ```
 
@@ -236,7 +241,7 @@ redémarre : tu auras au passage répondu à la question.
 Envoie un message quelconque à gb, par le canal habituel. Puis :
 
 ```bash
-docker compose -f next_hermes/compose.yaml exec hermes bash -lc \
+docker compose -f ~/next_hermes/compose.yaml exec hermes bash -lc \
   'cat /opt/data/gk-bridge.jsonl'
 ```
 
