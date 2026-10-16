@@ -18,8 +18,11 @@ port: 8765
 bridge_path: /mcp/bridge
 agent_path: /mcp/agent
 
-bridge_token: a-definir-par-l-environnement
-agent_token: a-definir-par-l-environnement
+# Volontairement VIDES. Un marque-place ici deviendrait un jeton reel si la
+# variable d'environnement manquait — et celui-la serait publie sur GitHub.
+# Vide, l'absence est bruyante : au demarrage, dans /health et dans `gk check`.
+bridge_token: ""
+agent_token: ""
 discord_webhook: ""
 
 log_level: INFO

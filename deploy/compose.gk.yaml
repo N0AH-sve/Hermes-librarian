@@ -28,6 +28,11 @@ services:
       GK_AGENT_TOKEN: ${GK_AGENT_TOKEN:-}
       GK_SKILLS_ROOT: /opt/data/skills
       GK_LOG_LEVEL: INFO
+      # Ecouter sur toutes les interfaces DU CONTENEUR, ce qui n'est pas un
+      # relachement : dans un conteneur, se lier a 127.0.0.1 rend le port
+      # injoignable depuis l'hote meme avec une publication. C'est la ligne
+      # `ports` ci-dessus, en 127.0.0.1, qui restreint reellement l'exposition.
+      GK_HOST: 0.0.0.0
     # 256 Mo : les 512 du handoff supposaient des vecteurs et peut-etre un
     # modele local. Sans eux, GK c'est Python, SQLite et un petit index. Ce
     # chiffre est a confirmer par la mesure apres deploiement.

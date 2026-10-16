@@ -18,6 +18,8 @@ DEFAULTS: dict[str, str] = {
     "database": "/var/lib/gk/gk.db",
     "patterns": "/etc/gk/motifs.yaml",
     "skills_root": "/opt/data/skills",
+    # Bon defaut hors conteneur. Dans un conteneur, le compose impose
+    # GK_HOST=0.0.0.0 et c'est la publication du port qui restreint.
     "host": "127.0.0.1",
     "port": "8765",
     "bridge_path": "/mcp/bridge",

@@ -332,3 +332,22 @@ def test_health_dit_la_verite_sur_le_jeton(tmp_path):
     avec = Service.open(tmp_path / "b.db", MOTIFS, require_token=True)
     assert avec.health()["jeton_exige"] is True
     avec.close()
+
+
+def test_le_jeton_d_exemple_est_vide():
+    """Un marque-place dans le fichier d'exemple deviendrait un vrai jeton si la
+    variable d'environnement manquait — et il serait publie sur GitHub."""
+    exemple = (Path(__file__).resolve().parents[1] / "config.example.yaml").read_text()
+    from gk.config import _read_flat_yaml
+
+    valeurs = _read_flat_yaml(exemple)
+    assert not valeurs.get("bridge_token"), "le jeton d'exemple doit etre vide"
+    assert not valeurs.get("agent_token"), "le jeton d'exemple doit etre vide"
+
+
+def test_le_conteneur_ecoute_sur_toutes_les_interfaces():
+    """Dans un conteneur, se lier a 127.0.0.1 rend le port injoignable depuis
+    l'hote meme avec une publication : c'est `ports` qui restreint."""
+    compose = (Path(__file__).resolve().parents[1] / "deploy" / "compose.gk.yaml").read_text()
+    assert "GK_HOST: 0.0.0.0" in compose
+    assert '"127.0.0.1:8765:8765"' in compose, "la publication doit rester sur la boucle locale"
