@@ -1140,7 +1140,11 @@ Mesuré sur le déploiement réel, en remplacement des valeurs du handoff.
 | `HERMES_HOME` | `/opt/data`, via `env_file: .env` |
 | `HOME` du processus Hermes | `/opt/data` (défini dans la commande du compose ; un `exec` voit `/root`) |
 | Skills | **`/opt/data/skills`** |
-| `~/.hermes` | `/opt/data/.hermes` — existe, mais ne contient ni `skills` ni `plugins` |
+| Plugins | **`/opt/data/plugins/`** |
+| Config de Hermes | **`/opt/data/config.yaml`** — c'est là que va `mcp_allowlist` |
+| `~/.hermes` | `/opt/data/.hermes` : contient `cron/`, `scripts/`, `state/` et deux `.conf` métier. Ni skills ni plugins, et ce n'est pas le dossier de configuration principal |
+| Ordonnanceur de Hermes | `.hermes/cron` existe et sert déjà. L'ordonnanceur interne à GK reste le choix retenu, mais c'est un arbitrage et non une nécessité |
+| Profils | `/opt/data/profiles/`, `profiles-archives/`, `bascule-detonantes-*/` : ce déploiement a **plusieurs profils d'agent** |
 | Socket Docker | `/run/user/1001/docker.sock` monté dans gb : **rootless confirmé**, et gb a la main sur Docker |
 | CPU | **AVX et AVX2 présents** |
 | Secrets | `/opt/data/.env`, 29 Ko, plus trois sauvegardes contenant aussi des secrets |
@@ -1159,6 +1163,48 @@ raison sur l'emplacement des skills, gb avait raison sur `.hermes`.
 divers, 97 entrées. Conséquence : `gk check` ne doit pas supposer un volume
 pristine, et le plugin doit vivre dans un sous-dossier clairement nommé.
 
+## Si le compte de skills est bien de 44
+
+À vérifier avant toute conclusion, le déploiement ayant plusieurs profils. Mais
+si le chiffre tient, il faut l'affronter.
+
+**Le raisonnement fondateur s'affaiblit.** L'argument du projet est qu'avec des
+centaines de skills, l'agent ne voit que des noms et des descriptions courtes et
+choisit donc mal. À 44 skills, ces métadonnées tiennent dans environ 2 000
+jetons : gb les voit toutes, à chaque tour.
+
+**Le symptôme reste réel** — les aveux « je n'ai pas le bon skill » ont été
+observés. Mais à 44 skills la cause n'est probablement pas le nombre, c'est
+l'autre moitié du diagnostic du handoff : **des descriptions de qualité inégale
+et des quasi-doublons**.
+
+Si c'est cela, **le remède le moins cher est de réécrire 44 descriptions**, soit
+un après-midi. Le handoff plaçait ce travail hors périmètre, ce qui se justifiait
+à 500 skills et beaucoup moins à 44. Cette hypothèse bon marché n'a jamais été
+testée.
+
+**Le banc de l'étape 8 tranche, sans rien construire** : sur les 44 vrais skills,
+métadonnées seules contre corps complet. À 90 % pour les métadonnées seules, la
+couche de recherche n'apporte presque rien et le projet doit pivoter ; à 60 %,
+elle gagne sa place. Ce banc devient donc le juge de **toute la couche de
+recherche**, et plus seulement de la question des embeddings.
+
+**Ce qui survit quel que soit le verdict**, et qui représente une bonne moitié de
+la conception :
+
+- le magasin de faits, les lignes « Connu » et « À vérifier » : sans rapport avec
+  le nombre de skills ;
+- la boucle de mesure — compter les corrections, les attribuer, en faire des cas
+  de test — utile même si GK ne recommande jamais rien ;
+- le mécanisme d'injection automatique : `pre_llm_call`, brief opaque, prompt
+  système. C'est l'infrastructure qui permet de dire quoi que ce soit à gb avant
+  qu'il réfléchisse ;
+- l'ensemble des flux, interfaces, données et résilience.
+
+À 44 skills, GK serait moins un moteur de recherche qu'un **greffier avec
+mémoire** — ce qui est exactement la moitié du projet que le principe 2 nommait
+« greffier, pas enquêteur ».
+
 ## Points ouverts
 
 | Sujet | État |
@@ -1171,4 +1217,5 @@ pristine, et le plugin doit vivre dans un sous-dossier clairement nommé.
 | AVX2 sur le VPS | Non vérifié. Décide si l'auto-hébergement d'un modèle est seulement discutable en v2 |
 | Licence | À choisir avant publication. Le fichier a été supprimé au commit 3b94d02 |
 | Embeddings | Écartés de la v1 (étape 4). À rouvrir en v2 seulement si la mesure sur les vrais skills l'exige |
+| **Le nombre réel de skills** | **Remet la prémisse en cause.** Le handoff annonce « environ 500 » ; `ls /opt/data/skills` en compte **44**. À 44, noms et descriptions tiennent dans ~2 000 jetons et gb les voit tous, donc l'argument « trop nombreux pour être vus » s'effondre. À vérifier d'abord, le déploiement ayant plusieurs profils |
 | Jeu de tâches du banc d'essai | **Plus bloquant** (étape 8) : le corpus se constitue seul depuis la phase de mesure, et le banc ne sert qu'à diagnostiquer si l'A/B déçoit |
