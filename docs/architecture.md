@@ -14,7 +14,7 @@ Langue de travail : français. Le README reste en anglais.
 | 2 | Responsabilités | close |
 | 3 | Flux | close |
 | 4 | Données | close |
-| 5 | Interfaces | à faire |
+| 5 | Interfaces | close |
 | 6 | Choix techniques | à faire |
 | 7 | Qualités | à faire |
 | 8 | Validation | à faire |
@@ -505,13 +505,26 @@ des valeurs factices.
 dans ce chemin. C'est une **troncature**. Le terme est corrigé partout pour ne
 pas laisser croire à une capacité qui n'existe pas.
 
-## Interface entre le plugin et GK
+## Étape 5 : interfaces (close)
 
-**MCP over HTTP**, pour tous les appels : `prepare`, `report`, le manifeste du
-catalogue, `remember`, `recall` et `rate`. Un seul mécanisme à maintenir plutôt
-que deux.
+### Les cinq interfaces, et qui les contrôle
 
-Deux risques connus et acceptés, qu'un tuyau HTTP/JSON simple aurait supprimés :
+| Interface | Sens | Contrôle |
+|---|---|---|
+| Plugin vers GK | MCP over HTTP | **nous, entièrement** |
+| GK vers plugin | champ `besoins` dans les réponses | **nous, entièrement** |
+| gb vers GK | MCP, 3 outils | **nous, entièrement** |
+| GK vers Discord | webhook, un seul sens | nous, mais le format est à Discord |
+| Plugin et Hermes | API de plugin | **pas nous** |
+
+Les quatre premières se conçoivent pour durer. La cinquième ne se conçoit pas,
+elle se subit, et c'est là que tout le risque se concentre.
+
+### Le transport : MCP over HTTP
+
+Pour tous les appels, dans les deux points d'entrée. Un seul mécanisme à
+maintenir plutôt que deux. Deux risques connus et acceptés, qu'un tuyau
+HTTP/JSON simple aurait supprimés :
 
 - `plugins.entries.gk-bridge.mcp_allowlist` reste nécessaire dans le
   `config.yaml` de Hermes : une ligne de plus qu'une migration peut jeter. Déjà
@@ -519,6 +532,123 @@ Deux risques connus et acceptés, qu'un tuyau HTTP/JSON simple aurait supprimés
 - Le format de retour de `ctx.call_mcp` est inconnu. Le plugin doit accepter
   défensivement les formats plausibles, comme le faisait le prototype, jusqu'à
   vérification contre un vrai Hermes.
+
+### La règle qui gouverne tout : le plugin ne comprend pas le brief
+
+Le plugin vit dans le volume de Hermes ; le mettre à jour veut dire toucher à
+gb, donc à la production. Il faut donc que **GK puisse évoluer sans que le
+plugin bouge jamais.**
+
+D'où la règle : **le brief est un texte opaque pour le plugin.** Il ne le lit
+pas, ne connaît pas la ligne `Skills:`, ne sait pas qu'il existe des faits. Il
+reçoit une chaîne et l'accole au message. C'est un coursier, pas un lecteur.
+
+Tout changement de format du brief est donc gratuit : ajouter une ligne, en
+retirer une, changer l'ordre, sans rien redéployer chez gb.
+
+Par extension, **GK sert aussi la section de prompt système**, les deux règles
+qui disent à gb d'obéir au brief. Codées dans le plugin, les affiner demanderait
+un redéploiement. Le plugin les demande à GK au chargement et les enregistre ; il
+garde une version minimale en dur au cas où GK serait absent à ce moment-là.
+
+### Deux points d'entrée, pas un
+
+Si gb et le plugin parlent au même serveur MCP, gb voit **tous** les outils, y
+compris `prepare`, qu'il n'a aucune raison d'appeler, et `catalog`, qu'il
+pourrait appeler avec n'importe quoi.
+
+| Point d'entrée | Outils | Qui l'appelle |
+|---|---|---|
+| `/mcp/bridge` | `prepare`, `observe`, `catalog` | le plugin seul, jeton propre |
+| `/mcp/agent` | `recall`, `remember`, `report` | gb, déclaré dans sa config |
+
+Cela préserve l'intention du README : la surface d'outils est délibérément
+petite, pour que GK ne recrée pas le problème qu'il doit résoudre. **gb voit
+trois outils, pas six.**
+
+### Les contrats
+
+```
+prepare  -> { v, conv_id, task }
+         <- { v, brief, brief_id, besoins[] }
+
+observe  -> { v, conv_id, brief_id, reply }
+         <- { v, besoins[] }
+
+catalog  -> { v, skills: [{path, fingerprint, usage?}], complete: true }
+         <- { v, wanted: [path], besoins[] }
+catalog  -> { v, bodies: [{path, body}] }
+         <- { v, besoins[] }
+
+report   -> { v, conv_id?, brief_id?, skill, outcome, note?, source }
+remember -> { v, fact, source }   <- { v, status }
+recall   -> { v, query }          <- { v, facts: [{fact, source, date, status}] }
+```
+
+Trois détails qui portent des décisions antérieures.
+
+**Le manifeste se fait en deux temps.** GK répond au manifeste par la liste des
+corps qu'il veut, et le plugin ne renvoie que ceux-là. Sans quoi 500 corps
+traverseraient le réseau toutes les heures pour rien.
+
+**`observe` transmet la réponse entière, GK n'en garde qu'un extrait.** Le texte
+complet traverse le fil, il n'est pas retenu. C'est ce qui rend l'étape 4
+tenable.
+
+**`report` porte un champ `source` : `hook`, `agent` ou `human`.** L'étape 4 a
+décidé que les compteurs de GK font foi et que les notations humaines servent de
+calibration ; les confondre dans un seul compteur détruirait la confrontation
+qui rend la mesure vérifiable. Il n'y a donc pas d'outil `rate` séparé : une
+notation est un `report` avec `source: human`.
+
+### Le canal retour : `besoins`
+
+Chaque réponse porte une liste `besoins`, le mécanisme de l'étape 3 pour que GK
+demande sans parler le premier. Une seule valeur aujourd'hui, `catalogue_vide`.
+
+Règle qui le rend durable : **un besoin que le plugin ne connaît pas est ignoré
+en silence.** On peut donc en ajouter autant qu'on veut sans toucher au plugin.
+
+### Comment ça évolue sans casser
+
+**Une règle de tolérance, et c'est presque tout.** Dans les deux sens : **un
+champ inconnu est ignoré, un champ absent prend sa valeur par défaut.** Cela ne
+coûte rien à écrire et rend tous les ajouts gratuits, dans les deux directions,
+pour toujours.
+
+**On ne versionne que les ruptures.** Un ajout ne change pas `v`, la règle de
+tolérance le couvre. Seul un changement incompatible l'incrémente, et alors GK
+sert les deux versions pendant une fenêtre de transition : `/mcp/bridge/v1` et
+`/mcp/bridge/v2` coexistent le temps que le plugin soit remplacé.
+
+**Un test de contrat dans les deux sens.** Le prototype avait un faux plugin
+appelant le vrai serveur. Il manque l'autre moitié : un faux serveur répondant
+au vrai plugin, y compris avec des champs et des besoins inconnus, pour prouver
+que la tolérance fonctionne au lieu d'y croire.
+
+### L'interface qu'on ne contrôle pas
+
+Le plugin touche six points de l'API de Hermes : `register_hook`,
+`register_system_prompt_section`, `call_mcp`, et les hooks `pre_llm_call`,
+`on_skill_lifecycle`, `post_llm_call`. Chacun peut disparaître ou changer de
+forme à une mise à jour, et aucune règle de tolérance n'y changera rien : si
+`pre_llm_call` est renommé, le hook ne tourne plus.
+
+Il n'y a donc pas de compatibilité à concevoir ici, mais deux choses :
+
+**Détecter vite** — `gk check` vérifie les six points, le canari passif alerte
+sur le silence. Décidé aux étapes 2 et 3.
+
+**Rendre le remplacement bon marché** — c'est la vraie assurance, et elle change
+la façon d'écrire le plugin. S'il fait cinquante lignes, n'utilise que la
+bibliothèque standard, ne garde aucun état et ne comprend rien à ce qu'il
+transporte, le réécrire pour une nouvelle API de Hermes est une heure de
+travail, pas un chantier. C'est pour cela que toute l'intelligence doit être
+dans GK et aucune dans le plugin.
+
+Autrement dit : pour les interfaces qu'on maîtrise, on conçoit la
+**compatibilité**. Pour celle qu'on ne maîtrise pas, on conçoit la
+**remplaçabilité**.
 
 ## Mesure du succès
 
@@ -541,14 +671,14 @@ franche signifie que les motifs sont faux. `gk stats` affiche ce taux d'accord.
 calibrent, elles ne mesurent pas. Si personne ne note pendant un mois, le
 système continue de fonctionner et perd seulement sa calibration.
 
-La notation n'est pas un sous-système : c'est l'outil existant
-`report(skill, outcome, note)` appelé par un humain au lieu d'un hook. Deux
-portes vers le même point :
+La notation n'est pas un sous-système : c'est l'outil `report` appelé avec
+`source: human` au lieu de `source: hook` (étape 5). Deux portes vers le même
+point :
 
 - `gk rate bad --skill perf-audit` en CLI, fiable et sans couplage à Hermes ;
-- un outil `rate` exposé à gb, pour pouvoir le dire en langage naturel. La
-  dépendance à gb est ici acceptable, l'instruction étant explicite dans le
-  message.
+- `report` exposé à gb sur `/mcp/agent`, pour pouvoir le dire en langage
+  naturel. La dépendance à gb est ici acceptable, l'instruction étant explicite
+  dans le message.
 
 Contrainte : utilisable en une seconde, et fonctionnelle même tapée nue.
 
