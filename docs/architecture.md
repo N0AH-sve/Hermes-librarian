@@ -161,6 +161,16 @@ finira par manquer :
    aveu a été détecté, ceux où l'utilisateur a demandé de retenir quelque chose.
    Réduit d'un ordre de grandeur le coût LLM et ce qui part chez le fournisseur.
 
+La synthèse hebdomadaire arrive sur un **canal Discord dédié**, distinct du fil
+de conversation. GK y poste par **webhook**, directement : il ne demande pas à
+gb de relayer, ce qui romprait le principe 4 et rendrait la synthèse dépendante
+de la bonne volonté de gb. Discord reste le média de gb, mais le message ne
+traverse pas son processus. Un tiers appelé en sortie ne contredit pas le
+principe 4, qui interdit à GK de s'adresser à gb, pas de parler au monde.
+
+Ce même canal porte tout le journal de GK : synthèse hebdomadaire, alarme du
+canari, avertissement de catalogue périmé.
+
 En cas de conflit entre deux faits, GK garde le plus récent et **signale** ; il
 n'arbitre jamais en silence et ne tranche pas entre deux faits contemporains
 contradictoires : il montre les deux avec leurs dates.
@@ -192,6 +202,21 @@ Trois conséquences :
    besoin du corps au moment de servir.
 3. La fraîcheur du catalogue devient surveillable et doit l'être : le manifeste
    porte une date, `gk check` annonce « catalogue reçu il y a N jours ».
+
+## Interface entre le plugin et GK
+
+**MCP over HTTP**, pour tous les appels : `prepare`, `report`, le manifeste du
+catalogue, `remember`, `recall` et `rate`. Un seul mécanisme à maintenir plutôt
+que deux.
+
+Deux risques connus et acceptés, qu'un tuyau HTTP/JSON simple aurait supprimés :
+
+- `plugins.entries.gk-bridge.mcp_allowlist` reste nécessaire dans le
+  `config.yaml` de Hermes : une ligne de plus qu'une migration peut jeter. Déjà
+  couverte par `gk check`.
+- Le format de retour de `ctx.call_mcp` est inconnu. Le plugin doit accepter
+  défensivement les formats plausibles, comme le faisait le prototype, jusqu'à
+  vérification contre un vrai Hermes.
 
 ## Mesure du succès
 
@@ -256,12 +281,11 @@ Protections, par ordre d'efficacité :
 
 | Sujet | État |
 |---|---|
-| Tuyau plugin vers GK : MCP ou HTTP/JSON simple | Non tranché. Recommandation : HTTP simple pour `prepare`, `report` et le manifeste (supprime `mcp_allowlist` et le risque du format de retour de `ctx.call_mcp`), MCP pour `remember`, `recall` et `rate`, où c'est gb qui décide d'appeler |
-| Où arrive la synthèse hebdomadaire des faits candidats | Non tranché. Par défaut `gk facts review` en CLI ; une passerelle de messagerie serait plus sûre |
 | Chemins réels dans le conteneur de gb | Non vérifié. `~/.hermes` est le défaut documenté, mais `HERMES_HOME=/opt/data` le surcharge. À lever par `echo $HERMES_HOME; ls -la /opt/data` |
 | `docker-compose.yml` de gb | Non récupéré. Dira si l'image est épinglée et quels volumes sont montés |
 | URL des docs Hermes | `hermes-agent.nousresearch.com` ne résout pas. Bloque la vérification de la stabilité des hooks et du comportement d'un plugin qui plante |
 | Code du prototype | Absent du dépôt. Les 45 tests et les 86 % de Hit@1 du handoff ne sont pas vérifiables ici |
+| Écriture GitHub | L'app Claude a la lecture seule sur le dépôt. `git push` et l'API renvoient 403. À accorder depuis https://github.com/apps/claude/installations/select_target |
 | Licence | À choisir avant publication. Le fichier a été supprimé au commit 3b94d02 |
 | Fournisseur d'embeddings | À trancher à l'étape 6. DeepSeek n'en propose pas |
 | Tokenizer FTS5 pour le français | `porter` applique des règles anglaises. À traiter à l'étape 6 |
