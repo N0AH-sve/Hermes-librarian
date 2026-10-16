@@ -131,20 +131,28 @@ Puis ajouter le serveur MCP. L'adresse est la **boucle locale**, pas un nom de
 service : l'agent tourne en `network_mode: host`, donc aucun réseau bridge
 n'existe pour résoudre un nom.
 
+La section est `mcp_servers:`, à plat, et **l'interpolation de variables
+d'environnement y fonctionne** — c'est la forme relevée sur les serveurs déjà en
+service. Le jeton ne va donc pas dans `config.yaml`, seulement son nom :
+
 ```yaml
-# dans /opt/data/config.yaml
-mcp:
-  servers:
-    gk:
-      url: http://127.0.0.1:8765/mcp/bridge
-      headers:
-        # Le jeton de l'etape 2, a copier-coller depuis `cat deploy/.env`.
-        Authorization: "Bearer LE_JETON_ICI"
+# dans /opt/data/config.yaml, sous la section mcp_servers existante
+mcp_servers:
+  gk:
+    url: http://127.0.0.1:8765/mcp/bridge
+    headers:
+      Authorization: Bearer ${GK_BRIDGE_TOKEN}
 ```
 
-> La forme exacte de cette section dépend de la version de Hermes. Si elle
-> diffère, cale-toi sur la façon dont les serveurs MCP déjà en service sont
-> déclarés dans ce fichier — il y en a, puisque `.mcp-discovery.lock` existe.
+Et la valeur dans le fichier d'environnement que le conteneur lit, celui qui
+définit déjà les clés des autres serveurs MCP :
+
+```bash
+GK_BRIDGE_TOKEN=le-jeton-genere-a-l-etape-2
+```
+
+Ainsi le secret ne se trouve qu'à un seul endroit par machine, et `config.yaml`
+reste lisible sans précaution.
 
 **Vérifier** : la configuration est toujours lisible.
 
