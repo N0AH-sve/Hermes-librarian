@@ -17,7 +17,7 @@ Langue de travail : français. Le README reste en anglais.
 | 5 | Interfaces | close |
 | 6 | Choix techniques | close |
 | 7 | Qualités | close |
-| 8 | Validation | à faire |
+| 8 | Validation | close |
 
 ## Étape 1 : besoins (close)
 
@@ -42,14 +42,15 @@ skills ; brief court ; poser la question quand c'est ambigu ; tout par API.
    succès de la v1 ne se mesure que sur le choix des skills. Raison : avec deux
    objectifs principaux, aucun verdict n'est possible.
 
-2. Pas de cible chiffrée a priori. Deux phases :
-   - **Phase 1** (3 semaines) : la chaîne de mesure tourne seule, sans brief
-     injecté. On obtient la valeur de référence.
-   - **Phase 2** : la cible est fixée à partir de ce chiffre, puis le brief est
-     branché.
+2. Pas de cible chiffrée a priori. La chaîne de mesure se déploie **avant** le
+   brief, de sorte qu'aucune amélioration ne soit revendiquée sans point de
+   comparaison.
 
-   Conséquence de planning : la mesure se déploie **avant** le brief. Sans
-   « avant », aucune amélioration n'est démontrable.
+   **Révisé à l'étape 8** : la comparaison se fait par A/B sur la même période
+   (le brief injecté un tour sur deux) et non plus par deux phases successives,
+   dont la seconde aurait été confondue par tout ce qui bouge en sept semaines.
+   Le déploiement de la mesure avant le brief reste acquis, et sert désormais
+   aussi à constituer le corpus du banc d'essai.
 
 ## Étape 2 : responsabilités (close)
 
@@ -940,6 +941,143 @@ renvoie un brief vide avec un code 200, jamais une erreur 500. Le « fail open �
 du plugin devient alors trivial à écrire, et un plugin trivial est un plugin qui
 ne casse pas.
 
+## Étape 8 : validation (close)
+
+### Trois preuves, qui n'ont pas la même valeur
+
+| Preuve | Ce qu'elle établit | Confondants |
+|---|---|---|
+| **Banc d'essai** : corps complet contre métadonnées seules | GK choisit mieux que gb ne le fait seul | **aucun** |
+| **A/B en production** | le système change le comportement de gb | peu |
+| **Avant/après** | rien de solide à lui seul | beaucoup |
+
+La première est la preuve propre, et le prototype la faisait déjà sans le dire :
+68 % avec les métadonnées seules, 86 % avec le corps complet. Or **les
+métadonnées seules sont exactement ce que voit gb aujourd'hui** — nom et
+description courte. Cet écart *est* donc la mesure de ce que GK apporte, établie
+hors production, sans aucun confondant.
+
+### L'A/B remplace l'avant/après
+
+Révision de la décision 2 de l'étape 1. La mesure en deux phases était
+méthodologiquement faible : sur sept semaines, la bibliothèque de skills, la
+nature du travail, le modèle de gb et la façon même de formuler les demandes
+peuvent tous avoir changé. Une baisse de moitié ne prouverait rien.
+
+**GK tire à pile ou face à chaque tour et n'injecte le brief qu'une fois sur
+deux**, en notant le tirage dans le journal des briefs.
+
+| | Avant/après | A/B |
+|---|---|---|
+| Comparaison | deux périodes différentes | **la même période** |
+| Bibliothèque, charge, modèle | peuvent avoir changé | **identiques par construction** |
+| Jeu de motifs | à geler par discipline | **identique par construction** |
+| Bénéfice pendant l'essai | nul puis entier | la moitié |
+| Délai avant une réponse fiable | 3 semaines puis 4 | les deux bras s'accumulent en parallèle |
+
+Le coût est réel : la moitié des tours sans brief pendant l'essai. Ce qu'on
+achète est une comparaison fiable, et plus vite. C'est devenu facile grâce au
+journal des briefs et à la classification des corrections, qui n'existaient pas
+quand l'étape 1 a été tranchée.
+
+### Le critère d'acceptation de la v1
+
+**Sur de vraies tâches et les vrais skills, de combien le corps complet bat-il
+les métadonnées seules ?**
+
+Aucun seuil n'est fixé d'avance, et c'est volontaire : un chiffre rond décidé
+avant la mesure serait une invention. Le seuil se fixe **devant le résultat** —
+un écart de 20 points justifie le système à lui seul, un écart de 3 points ne
+vaut pas son conteneur et impose de rouvrir la question des embeddings.
+
+S'y ajoutent les conditions de forme : les tests passent, les tests de contrat
+passent **dans les deux sens**, et `gk check` est vert contre un vrai Hermes.
+
+### Le corpus du banc se construit tout seul
+
+L'étape 1 déploie la chaîne de mesure **avant** le brief. Or cette chaîne produit
+exactement la donnée du banc, étiquetée gratuitement :
+
+| Type de cas | Origine | Qui l'étiquette |
+|---|---|---|
+| **Cas difficiles** | les corrections détectées | l'aveu de gb, qui nomme le skill qui aurait convenu |
+| **Cas faciles** | un tour sur vingt où un skill a servi sans correction ensuite | le skill utilisé, puisque personne ne s'est plaint |
+
+Zéro travail manuel dans les deux cas : le jeu de tâches est un **sous-produit de
+la phase de mesure, pas un prérequis**.
+
+Une seule addition : une table `bench_candidates` qui échantillonne les cas
+faciles, puisque le journal des briefs ne vit que 7 jours. Elle ne garde que la
+demande tronquée et le skill utilisé, rien de plus que ce que les corrections
+stockent déjà.
+
+**Caveat** : un banc fait uniquement de corrections est un banc de cas
+difficiles. C'est informatif, puisque c'est là qu'est la valeur, mais son score
+absolu n'est pas comparable aux 86 % du prototype. D'où l'échantillonnage des
+cas faciles en contrepoids.
+
+Une alternative avait été envisagée — rédiger 20 à 30 tâches à la main depuis
+d'anciennes conversations — et écartée pour son coût. Elle portait un biais
+sérieux qu'il vaut la peine de noter pour mémoire : **rédiger les tâches avec la
+liste des skills sous les yeux conduit à employer leur vocabulaire**, et le banc
+affiche alors un score flatteur qui ne tient pas en production. Le corpus issu de
+la production n'a pas ce défaut, par construction.
+
+### Le banc n'est pas bloquant
+
+Les deux mesures répondent à des questions différentes :
+
+- **l'A/B décide « on garde ou pas »** : GK change-t-il le comportement de gb ;
+- **le banc décide « FTS ou embeddings »** : pourquoi cela ne marche pas, le cas
+  échéant.
+
+Si l'A/B est bon, le banc n'est jamais nécessaire. Il ne sort de sa boîte que si
+le résultat déçoit, pour diagnostiquer.
+
+### Le contrôle de cohérence qui tient l'ensemble
+
+Le banc dit « GK choisit bien ». Les corrections classées disent « en production,
+les erreurs viennent de la recommandation ou de l'obéissance ». Les deux doivent
+s'accorder :
+
+- banc bon et corrections attribuées à « mauvaise recommandation » → **le banc
+  ment**, ses tâches ne ressemblent pas à la réalité ;
+- banc bon et corrections attribuées à « brief ignoré » → la recherche va bien,
+  le problème est dans le prompt système ou la forme du brief.
+
+Sans la coupure en deux de l'étape 2, ce diagnostic serait impossible.
+
+### Ce qui tourne en continu
+
+| Quoi | Où | Quand |
+|---|---|---|
+| Tests unitaires et de contrat | CI GitHub Actions | à chaque poussée |
+| Banc sur les fixtures | CI | à chaque poussée, garde-fou de régression |
+| Banc sur les **vrais** skills | en local | avant une mise en production, score consigné |
+| `gk check` | au démarrage et au rituel de mise à jour | toujours |
+| Canari et battement hebdomadaire | GK vers Discord | en continu |
+
+**Distinction assumée** : les vrais skills ne peuvent pas entrer dans un dépôt
+public, puisqu'ils décrivent l'infrastructure de GREENMUSICIANS. La CI ne garde
+donc que le banc sur fixtures ; le banc réel est un rituel local dont seul le
+score est consigné dans un `bench/history.jsonl` versionné. On perd
+l'automatisme, on garde la trace de la dérive.
+
+### Une barrière avant d'écrire du code
+
+Trois points ouverts ne sont pas des détails de mise en œuvre : ce sont des
+hypothèses dont dépendent des décisions déjà prises.
+
+| Hypothèse | Ce qui s'écroule si elle est fausse |
+|---|---|
+| Les chemins réels dans le conteneur (`/opt/data`) | le déploiement, `gk check`, l'emplacement du plugin |
+| Le format de retour de `ctx.call_mcp` | le plugin, qui accepte trois formats « plausibles » |
+| Un plugin qui plante bloque-t-il le démarrage de gb ? | la gravité de toute panne du plugin |
+
+Les trois se résolvent en quelques minutes avec un accès au VPS, et se paient en
+jours si l'on construit par-dessus une mauvaise réponse. **Elles doivent être
+closes avant la première ligne de code**, pas pendant.
+
 ## Mesure du succès
 
 Deux instruments, de natures différentes et complémentaires.
@@ -984,4 +1122,4 @@ Contrainte : utilisable en une seconde, et fonctionnelle même tapée nue.
 | AVX2 sur le VPS | Non vérifié. Décide si l'auto-hébergement d'un modèle est seulement discutable en v2 |
 | Licence | À choisir avant publication. Le fichier a été supprimé au commit 3b94d02 |
 | Embeddings | Écartés de la v1 (étape 4). À rouvrir en v2 seulement si la mesure sur les vrais skills l'exige |
-| Jeu de tâches du banc d'essai | **Bloquant pour valider la v1.** 20 à 30 tâches réelles avec le skill attendu, à fournir par l'utilisateur : rien d'autre ne peut confirmer que FTS seul suffit |
+| Jeu de tâches du banc d'essai | **Plus bloquant** (étape 8) : le corpus se constitue seul depuis la phase de mesure, et le banc ne sert qu'à diagnostiquer si l'A/B déçoit |
