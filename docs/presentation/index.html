@@ -1,0 +1,255 @@
+<title>GreenKnowledge</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  /* Colonne de lecture unique, un seul accent vert profond, et la fiche
+     rendue en monospace pour qu'on la reconnaisse comme un objet technique. */
+  :root {
+    --bg: #fbfaf7;
+    --surface: #ffffff;
+    --fg: #1a1f1c;
+    --muted: #5e6862;
+    --line: #e2e3dd;
+    --accent: #1f6b45;
+    --accent-soft: #e8f1ea;
+    --warn: #8a4a1f;
+    --warn-soft: #f8ede3;
+
+    --display: "Bricolage Grotesque", "Trebuchet MS", sans-serif;
+    --body: "IBM Plex Sans", system-ui, -apple-system, sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #12150f;
+      --surface: #1b1f19;
+      --fg: #eceee8;
+      --muted: #9ba59d;
+      --line: #2d332b;
+      --accent: #6fcf9a;
+      --accent-soft: #1d2d24;
+      --warn: #e0a677;
+      --warn-soft: #2d2218;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #12150f;
+    --surface: #1b1f19;
+    --fg: #eceee8;
+    --muted: #9ba59d;
+    --line: #2d332b;
+    --accent: #6fcf9a;
+    --accent-soft: #1d2d24;
+    --warn: #e0a677;
+    --warn-soft: #2d2218;
+    color-scheme: dark;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--body);
+    font-size: 1rem;
+    line-height: 1.65;
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+    padding-block: 3.5rem 4rem;
+  }
+  main { max-width: 46rem; margin: 0 auto; display: flex; flex-direction: column; gap: 3.25rem; }
+
+  h1, h2, h3 { font-family: var(--display); text-wrap: balance; margin: 0; line-height: 1.15; }
+  h1 { font-size: clamp(2.1rem, 7vw, 3rem); font-weight: 600; letter-spacing: -0.02em; }
+  h2 { font-size: clamp(1.35rem, 4vw, 1.6rem); font-weight: 600; }
+  h3 { font-size: 1rem; font-weight: 600; }
+  p { margin: 0; }
+  section { display: flex; flex-direction: column; gap: 1rem; }
+
+  .eyebrow {
+    font-family: var(--body); font-size: 0.72rem; font-weight: 600;
+    letter-spacing: 0.1em; text-transform: uppercase; color: var(--accent);
+  }
+  .lede { font-size: 1.12rem; color: var(--muted); max-width: 34rem; }
+
+  /* -- la fiche, telle que l'agent la reçoit -- */
+  .fiche {
+    font-family: var(--mono); font-size: 0.82rem; line-height: 1.75;
+    background: var(--surface); border: 1px solid var(--line);
+    border-left: 3px solid var(--accent); border-radius: 3px;
+    padding: 1rem 1.1rem; overflow-x: auto; white-space: pre;
+  }
+  .fiche b { color: var(--accent); font-weight: 500; }
+
+  /* -- les quatre temps -- */
+  .temps { display: grid; gap: 0.75rem; grid-template-columns: repeat(4, 1fr); }
+  .temps li {
+    list-style: none; background: var(--surface); border: 1px solid var(--line);
+    border-radius: 4px; padding: 1rem; display: flex; flex-direction: column; gap: 0.45rem;
+    min-width: 0;
+  }
+  .temps .n {
+    font-family: var(--mono); font-size: 0.7rem; color: var(--accent);
+    background: var(--accent-soft); border-radius: 2px;
+    width: 1.5rem; height: 1.5rem; display: grid; place-items: center; font-weight: 500;
+  }
+  .temps p { font-size: 0.88rem; color: var(--muted); }
+  @media (max-width: 760px) { .temps { grid-template-columns: 1fr 1fr; } }
+  @media (max-width: 430px) { .temps { grid-template-columns: 1fr; } }
+
+  .boucle {
+    display: flex; align-items: baseline; gap: 0.75rem;
+    background: var(--accent-soft); border-radius: 4px; padding: 0.85rem 1rem;
+    font-size: 0.9rem;
+  }
+  .boucle .fleche { font-family: var(--mono); color: var(--accent); font-weight: 500; white-space: nowrap; }
+
+  /* -- avant / après -- */
+  .compare { display: grid; gap: 1rem; grid-template-columns: 1fr 1fr; }
+  @media (max-width: 620px) { .compare { grid-template-columns: 1fr; } }
+  .scene {
+    border: 1px solid var(--line); border-radius: 4px; padding: 1.1rem;
+    display: flex; flex-direction: column; gap: 0.7rem; min-width: 0;
+    background: var(--surface);
+  }
+  .scene.avant { border-top: 3px solid var(--warn); }
+  .scene.apres { border-top: 3px solid var(--accent); }
+  .scene h3 { font-size: 0.78rem; letter-spacing: 0.08em; text-transform: uppercase; font-family: var(--body); }
+  .scene.avant h3 { color: var(--warn); }
+  .scene.apres h3 { color: var(--accent); }
+  .dial { display: flex; flex-direction: column; gap: 0.5rem; font-size: 0.9rem; }
+  .dial span { display: block; }
+  .qui { color: var(--muted); font-size: 0.78rem; }
+  .aveu { background: var(--warn-soft); border-radius: 3px; padding: 0.5rem 0.65rem; font-style: italic; }
+  .bien { background: var(--accent-soft); border-radius: 3px; padding: 0.5rem 0.65rem; }
+
+  /* -- chiffres -- */
+  .chiffres { display: grid; gap: 1rem; grid-template-columns: repeat(3, 1fr); }
+  @media (max-width: 620px) { .chiffres { grid-template-columns: 1fr; } }
+  .chiffre { display: flex; flex-direction: column; gap: 0.25rem; }
+  .chiffre .v {
+    font-family: var(--display); font-size: 2rem; font-weight: 600; line-height: 1;
+    font-variant-numeric: tabular-nums;
+  }
+  .chiffre .l { font-size: 0.85rem; color: var(--muted); }
+
+  ul.liste { margin: 0; padding-left: 1.1rem; display: flex; flex-direction: column; gap: 0.5rem; }
+  ul.liste li { color: var(--muted); }
+  ul.liste strong { color: var(--fg); font-weight: 600; }
+
+  hr { border: 0; border-top: 1px solid var(--line); margin: 0; }
+  footer { color: var(--muted); font-size: 0.85rem; }
+</style>
+
+<main>
+
+  <header>
+    <p class="eyebrow">Projet interne &middot; octobre 2026</p>
+    <h1>Un bibliothécaire pour notre agent</h1>
+    <p class="lede">Notre agent dispose de 537 procédures écrites. Il choisit souvent la mauvaise. GreenKnowledge lui glisse la bonne fiche avant qu'il se mette au travail.</p>
+  </header>
+
+  <hr>
+
+  <section>
+    <p class="eyebrow">Le problème</p>
+    <h2>Il a la documentation, il ne trouve pas la bonne page</h2>
+    <p>Nos équipes ont écrit 537 procédures : comment auditer la performance d'un site, comment retrouver l'historique d'un déploiement, comment traiter une commande. L'agent ne voit d'elles qu'un titre et deux lignes de description. Il choisit donc souvent au hasard, improvise à la place, et finit par le reconnaître lui-même en pleine conversation.</p>
+    <p>C'est cet aveu qui a lancé le projet, parce qu'il est mesurable.</p>
+  </section>
+
+  <section>
+    <p class="eyebrow">La solution</p>
+    <h2>Une fiche de trois lignes, à chaque question</h2>
+    <p>Avant que l'agent lise une demande, GreenKnowledge l'a déjà lue et lui prépare une note. Elle est courte à dessein : elle ne doit pas occuper la place dont il a besoin pour travailler.</p>
+    <div class="fiche"><b>Procédures à utiliser</b>  perf-audit (utilisée 14 fois), deploy-history
+<b>Déjà vérifié</b>        le site est hébergé chez OVH (constaté le 20/09)
+<b>Reste à vérifier</b>    y a-t-il eu un déploiement hier ?
+<b>À demander d'abord</b>  production ou préproduction ?</div>
+    <p>L'agent ne peut pas l'ignorer par distraction : la note est accolée à la demande avant qu'il commence à réfléchir. Il garde en revanche le dernier mot sur ce qu'il en fait.</p>
+  </section>
+
+  <section>
+    <p class="eyebrow">Le fonctionnement</p>
+    <h2>Quatre temps, à chaque échange</h2>
+    <ol class="temps">
+      <li>
+        <span class="n">1</span>
+        <h3>La demande arrive</h3>
+        <p>Un collègue écrit à l'agent, comme d'habitude. Rien ne change pour lui.</p>
+      </li>
+      <li>
+        <span class="n">2</span>
+        <h3>Le bibliothécaire prépare</h3>
+        <p>Il cherche dans les 537 procédures, retrouve ce qui est déjà vérifié, et rédige la note.</p>
+      </li>
+      <li>
+        <span class="n">3</span>
+        <h3>L'agent travaille</h3>
+        <p>Il reçoit la demande et la note ensemble, puis répond comme il l'entend.</p>
+      </li>
+      <li>
+        <span class="n">4</span>
+        <h3>On note le résultat</h3>
+        <p>Quelle procédure a servi, et l'agent a-t-il reconnu s'être trompé.</p>
+      </li>
+    </ol>
+    <div class="boucle">
+      <span class="fleche">4 &rarr; 2</span>
+      <p>Chaque erreur reconnue devient une leçon : le bibliothécaire sait désormais que pour une demande de ce genre, c'était cette procédure-là qu'il fallait. Il n'y a rien à ressaisir à la main.</p>
+    </div>
+  </section>
+
+  <section>
+    <p class="eyebrow">Concrètement</p>
+    <h2>Le même échange, avant et après</h2>
+    <div class="compare">
+      <div class="scene avant">
+        <h3>Aujourd'hui</h3>
+        <div class="dial">
+          <span><span class="qui">Le collègue</span> Fais-moi un audit de perf du site.</span>
+          <span><span class="qui">L'agent</span> Voici quelques pistes générales…</span>
+          <span class="aveu">Ah oui, tu as raison, je n'avais pas la bonne procédure.</span>
+        </div>
+      </div>
+      <div class="scene apres">
+        <h3>Avec le bibliothécaire</h3>
+        <div class="dial">
+          <span><span class="qui">Le collègue</span> Fais-moi un audit de perf du site.</span>
+          <span class="bien"><span class="qui">La note</span> Procédure : perf-audit</span>
+          <span><span class="qui">L'agent</span> J'applique perf-audit. Premier point…</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <p class="eyebrow">La mesure</p>
+    <h2>Comment on saura si ça marche</h2>
+    <p>Nous comptons une seule chose : le nombre de fois où l'agent reconnaît s'être trompé de procédure, pour cent messages.</p>
+    <p>Pour éviter de nous raconter une histoire, la note n'est fournie qu'un échange sur deux, tirés au hasard. Les deux moitiés sont comparées sur la même période, avec les mêmes collègues et les mêmes procédures. Si le chiffre baisse sur la moitié aidée et pas sur l'autre, c'est le bibliothécaire qui en est la cause et rien d'autre.</p>
+    <div class="chiffres">
+      <div class="chiffre"><span class="v">537</span><span class="l">procédures dans la bibliothèque</span></div>
+      <div class="chiffre"><span class="v">1 sur 2</span><span class="l">échanges aidés pendant l'essai</span></div>
+      <div class="chiffre"><span class="v">3 lignes</span><span class="l">la taille de la note</span></div>
+    </div>
+  </section>
+
+  <section>
+    <p class="eyebrow">Les garde-fous</p>
+    <h2>Ce que le bibliothécaire ne fait pas</h2>
+    <ul class="liste">
+      <li><strong>Il ne modifie aucune procédure.</strong> Il lit, il recommande, il ne réécrit rien. Les 537 fiches restent la propriété des équipes qui les ont écrites.</li>
+      <li><strong>Il ne bloque jamais l'agent.</strong> S'il tombe en panne, la demande passe sans note et l'agent travaille comme avant. Une panne se voit dans les chiffres, pas dans le service.</li>
+      <li><strong>Rien ne sort du serveur.</strong> La recherche se fait sur place, sans envoyer les messages à un prestataire extérieur. Seul un rangement nocturne fait appel à un service tiers, et uniquement sur les échanges déjà signalés.</li>
+      <li><strong>Aucun fait n'est inventé.</strong> Ce qu'il affirme comme vérifié a été validé par un humain. Tant que personne n'a validé, il se tait plutôt que de supposer.</li>
+      <li><strong>Il n'enregistre pas les conversations.</strong> Il conserve les erreurs reconnues pour pouvoir les compter, et efface le texte brut au bout de trois mois.</li>
+    </ul>
+  </section>
+
+  <hr>
+
+  <footer>
+    <p>GreenKnowledge tourne à côté de l'agent, dans son propre conteneur, sur le serveur que nous exploitons déjà. La conception est arrêtée et documentée ; la construction a commencé par la mesure, afin d'avoir un point de comparaison avant d'activer la moindre aide.</p>
+  </footer>
+
+</main>
