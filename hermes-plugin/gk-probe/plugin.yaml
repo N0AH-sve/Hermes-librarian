@@ -1,6 +1,0 @@
-name: gk-probe
-version: 0.1.0
-description: "SONDE JETABLE — releve l'API de plugin de Hermes au chargement : signature de ctx.call_mcp, membres de ctx, hooks disponibles. N'enregistre aucun hook, n'injecte rien, ne leve jamais. A supprimer des que /opt/data/gk-probe.jsonl a ete lu."
-author: "GreenKnowledge"
-kind: standalone
-hooks: []
