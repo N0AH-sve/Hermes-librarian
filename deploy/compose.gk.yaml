@@ -7,7 +7,11 @@
 
 services:
   gk:
-    build: .
+    # Le contexte remonte d'un niveau : compose resout les chemins relatifs
+    # depuis le dossier de CE fichier, et le Dockerfile est a la racine.
+    build:
+      context: ..
+      dockerfile: Dockerfile
     image: greenknowledge:0.1.0
     container_name: gk
     restart: unless-stopped
@@ -15,6 +19,10 @@ services:
       - "127.0.0.1:8765:8765"
     volumes:
       - gk-data:/var/lib/gk
+      # Les motifs sont montes depuis l'hote pour etre modifiables sans
+      # reconstruire l'image. Un redemarrage du conteneur est necessaire pour
+      # qu'ils soient relus ; `gk patterns` dit ce qui est charge.
+      - ../motifs.yaml:/etc/gk/motifs.yaml:ro
     environment:
       GK_BRIDGE_TOKEN: ${GK_BRIDGE_TOKEN:?jeton requis}
       GK_AGENT_TOKEN: ${GK_AGENT_TOKEN:-}

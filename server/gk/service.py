@@ -32,12 +32,18 @@ class Service:
     store: Store
     detector: Detector
     recorder: Recorder
+    require_token: bool = False
 
     @classmethod
-    def open(cls, database, patterns_path=None) -> "Service":
+    def open(cls, database, patterns_path=None, require_token: bool = False) -> "Service":
         store = Store(database)
         reconcile_on_start(store)
-        return cls(store=store, detector=Detector.load(patterns_path), recorder=Recorder(store))
+        return cls(
+            store=store,
+            detector=Detector.load(patterns_path),
+            recorder=Recorder(store),
+            require_token=require_token,
+        )
 
     def reload_patterns(self, patterns_path) -> str:
         """Recharge `motifs.yaml` sans redemarrer. L'empreinte change si le jeu
@@ -153,6 +159,8 @@ class Service:
             detail["erreur"] = repr(exc)
         last = self.store.counter("last_observe_ts")
         detail["derniere_observation_il_y_a_s"] = round(now() - last, 1) if last else None
+        # Dire la verite sur l'authentification plutot que de la laisser deviner.
+        detail["jeton_exige"] = bool(self.require_token)
         return {"v": 1, "ok": ok, **detail}
 
     def _besoins(self) -> list[str]:

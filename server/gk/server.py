@@ -102,27 +102,74 @@ def build(service: Service, config: Config):
     return server
 
 
+class BearerGuard:
+    """Verifie `Authorization: Bearer <jeton>` sur le chemin MCP.
+
+    Pourquoi ce n'est pas optionnel : la configuration portait un
+    `bridge_token` et `gk check` se plaignait de son absence, alors que rien ne
+    le verifiait. Un bouton qui ne fait rien est pire que pas de bouton, parce
+    qu'on se croit protege.
+
+    Ce que ce garde vaut, en revanche, est modeste et il faut le dire : la vraie
+    frontiere est le binding sur la boucle locale plus le pare-feu de l'hote.
+    L'agent dispose du socket Docker de l'hote, donc il peut de toute facon
+    entrer dans ce conteneur et lire son environnement. C'est un garde-fou
+    contre la maladresse, pas une frontiere de securite.
+
+    `/health` reste ouvert : c'est le healthcheck du conteneur qui l'interroge.
+    """
+
+    def __init__(self, app, token: str, protege: str):
+        self.app = app
+        self.token = token
+        self.protege = protege
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http" or not scope.get("path", "").startswith(self.protege):
+            return await self.app(scope, receive, send)
+        attendu = f"Bearer {self.token}".encode()
+        fourni = dict(scope.get("headers") or {}).get(b"authorization")
+        if fourni != attendu:
+            from starlette.responses import JSONResponse
+
+            return await JSONResponse(
+                {"erreur": "jeton absent ou invalide"}, status_code=401
+            )(scope, receive, send)
+        return await self.app(scope, receive, send)
+
+
 def run(config: Config | None = None) -> None:
     cfg = config or Config.load()
     logging.basicConfig(
         level=getattr(logging, cfg["log_level"].upper(), logging.INFO),
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
-    service = Service.open(cfg.database, cfg.patterns)
+    service = Service.open(cfg.database, cfg.patterns, require_token=bool(cfg["bridge_token"]))
     server = build(service, cfg)
+    app = server.streamable_http_app(streamable_http_path=cfg["bridge_path"])
+
+    jeton = cfg["bridge_token"]
+    if jeton:
+        app = BearerGuard(app, jeton, cfg["bridge_path"])
+    else:
+        # Bruyant a dessein : une protection absente doit se voir au demarrage,
+        # pas se deviner. `gk check` et /health le disent aussi.
+        logger.warning(
+            "AUCUN JETON configure : tout appel sur %s est accepte. "
+            "La seule protection est le binding sur %s.",
+            cfg["bridge_path"], cfg["host"],
+        )
+
     logger.info(
-        "GreenKnowledge sur http://%s:%s%s — %d motifs (empreinte %s)",
+        "GreenKnowledge sur http://%s:%s%s — %d motifs (empreinte %s), jeton %s",
         cfg["host"], cfg.port, cfg["bridge_path"],
         len(service.detector.raw_patterns), service.detector.digest,
+        "exige" if jeton else "ABSENT",
     )
     try:
-        import anyio
+        import uvicorn
 
-        anyio.run(
-            lambda: server.run_streamable_http_async(
-                host=cfg["host"], port=cfg.port, streamable_http_path=cfg["bridge_path"]
-            )
-        )
+        uvicorn.run(app, host=cfg["host"], port=cfg.port, log_level=cfg["log_level"].lower())
     finally:
         service.close()
 

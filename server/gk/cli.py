@@ -85,7 +85,7 @@ def cmd_check(args, cfg: Config) -> int:
     problemes: list[str] = []
     detail: dict[str, object] = {}
     try:
-        svc = Service.open(cfg.database, cfg.patterns)
+        svc = Service.open(cfg.database, cfg.patterns, require_token=bool(cfg["bridge_token"]))
     except Exception as exc:
         _emit({"ok": False, "problemes": [f"base inutilisable: {exc!r}"]}, args)
         return 1
@@ -105,7 +105,10 @@ def cmd_check(args, cfg: Config) -> int:
         if cfg.patterns and not Path(cfg.patterns).is_file():
             problemes.append(f"motifs absents ({cfg.patterns}), les valeurs par defaut sont utilisees")
         if not cfg["bridge_token"]:
-            problemes.append("aucun jeton pour /mcp/bridge")
+            problemes.append(
+                "aucun jeton : tout appel sur /mcp/bridge est accepte, la seule protection "
+                "etant le binding sur la boucle locale"
+            )
         skills = Path(cfg["skills_root"])
         detail["racine_skills"] = str(skills)
         if not skills.is_dir():
