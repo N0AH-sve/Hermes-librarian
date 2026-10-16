@@ -1196,17 +1196,55 @@ strictement sans effet puisque seul le premier retour non nul compte. Un
 observateur pur sur un hook de transformation. Il est en revanche sur le chemin
 de la réponse, donc l'envoi-sans-attente de l'étape 3 devient impératif.
 
-**Sur `on_skill_lifecycle`, le risque s'atténue.** `plugins.py:128` le décrit
+**Le modèle de plugin, relevé dans `gm-routing`.** On déclare les hooks dans
+`plugin.yaml` et on implémente des **fonctions de module** `on_<hook>(**kwargs)`.
+Il n'y a **ni objet `ctx` ni `register_hook`** : le modèle du handoff était faux.
+
+```python
+def on_pre_tool_call(**kwargs):
+    session_id = str(kwargs.get("session_id") or "")
+```
+
+Le pont devient donc trois fonctions nues : `on_pre_llm_call` qui renvoie le
+brief, `on_transform_llm_output` qui renvoie `None` et observe, et
+`on_skill_lifecycle`.
+
+**`call_mcp` existe** — `hermes_cli/plugins.py:513`, comme méthode, donc porté
+par un objet. Et `gm-routing` montre comment les plugins l'atteignent : ils
+**importent les modules de Hermes directement**
+(`from hermes_cli.lifecycle import has_hook, invoke_hook`). Le choix « MCP over
+HTTP » de l'étape 5 reste donc viable ; c'était le risque sérieux, il est
+écarté.
+
+**Sur `on_skill_lifecycle`, le risque s'atténue mais déplace une décision.** `plugins.py:128` le décrit
 comme portant les « successful skill lifecycle facts », ce qui laissait craindre
 qu'il ne rapporte que les réussites — or l'étape 3 s'en sert pour savoir quel
 skill a réellement servi, y compris quand le tour a mal tourné.
 
-`tools/skill_usage.py:474` montre un appel
-`invoke_hook("on_skill_lifecycle", action=action, skill_name=skill_name, ...)` :
-il y a un champ **`action`**, donc un verbe de cycle de vie et non un simple
-signal de réussite. Le « successful » du commentaire qualifie vraisemblablement
-l'opération capturée, pas le résultat du skill. Reste à relever les valeurs que
-prend `action`, pour savoir si un skill qui échoue produit un événement.
+L'appel réel, dans `tools/skill_usage.py` :
+
+```python
+invoke_hook("on_skill_lifecycle", action=action, skill_name=skill_name,
+            provenance=..., task_id=..., session_id=...,
+            use_count=..., reused=..., reuse_after_patch=...)
+```
+
+La docstring dit « lifecycle hook **after an authoritative state change** » et
+`_mutate_and_emit` précise « **only if the write landed** » : le « successful »
+du commentaire qualifiait l'écriture, pas le skill. Aucune inquiétude de ce
+côté.
+
+**Mais ce hook ne dit pas ce que la conception attendait.** Il signale qu'un
+*enregistrement* de skill a changé, avec son `use_count` — c'est la télémétrie
+du Curator. Il ne dit pas « ce skill a servi à ce tour et ça a marché ».
+
+Le compteur de réussites du brief se construit donc de **deux sources** : les
+usages depuis ce hook (`skill_name`, `session_id`, `task_id`), et les échecs
+depuis les corrections détectées et les notations humaines. Ce qui donne
+« utilisé 14 fois, 2 corrections » plutôt qu'un drapeau de réussite
+auto-déclaré — mieux fondé, et cohérent avec la décision de l'étape 4 selon
+laquelle les compteurs de GK font foi parce qu'ils répondent à la bonne
+question.
 
 **La prétendue incohérence des chemins n'existait pas.** Le handoff voyait une
 contradiction entre `HERMES_HOME=/opt/data` et l'affirmation de gb que
@@ -1249,8 +1287,7 @@ pristine, et le plugin doit vivre dans un sous-dossier clairement nommé.
 | Sujet | État |
 |---|---|
 | Emplacement des plugins et du `config.yaml` | **Skills levés, plugins non.** Vérifié dans le conteneur : `HERMES_HOME=/opt/data` (via `env_file`), les skills sont en `/opt/data/skills`, et `/opt/data/.hermes` existe mais ne contient ni `skills` ni `plugins`. Reste à inspecter les trois sous-dossiers de `.hermes` pour y trouver `config.yaml` et l'emplacement des plugins |
-| **Le modèle de plugin lui-même** | **Le plus structurant.** `invoke_hook("on_skill_lifecycle", action=..., skill_name=...)` passe des arguments nommés sans objet `ctx`, et `gm-routing` déclare ses hooks dans son manifeste au lieu de les enregistrer. Le modèle est donc peut-être « déclarer dans `plugin.yaml`, implémenter des fonctions de module appelées avec des kwargs », et non le `ctx.register_hook` que suppose la conception. Si `ctx` n'existe pas sous cette forme, `ctx.call_mcp` — sur quoi repose tout le pont — non plus |
-| Valeurs de `action` dans `on_skill_lifecycle` | Le hook porte un champ `action`, donc ce n'est pas un simple signal de réussite. Reste à voir si un skill qui échoue produit un événement |
+| Signature de `call_mcp` | Dernière inconnue du pont. La fonction existe (`hermes_cli/plugins.py:513`) comme méthode ; reste sa signature et la façon dont un plugin obtient l'objet qui la porte. À lire en `sed -n "495,545p"` |
 | Version de Hermes | Le compose épingle `v2026.9.21`, alors que le handoff mesurait `v2026.7.20`. **Hermes a donc été mis à jour depuis**, et l'API des plugins a pu bouger : les mesures d'environnement du handoff sont à considérer comme périmées |
 | URL des docs Hermes | `hermes-agent.nousresearch.com` ne résout pas. Bloque la vérification de la stabilité des hooks et du comportement d'un plugin qui plante |
 | Code du prototype | Absent du dépôt. Les 45 tests et les 86 % de Hit@1 du handoff ne sont pas vérifiables ici |
