@@ -1209,12 +1209,30 @@ Le pont devient donc trois fonctions nues : `on_pre_llm_call` qui renvoie le
 brief, `on_transform_llm_output` qui renvoie `None` et observe, et
 `on_skill_lifecycle`.
 
-**`call_mcp` existe** — `hermes_cli/plugins.py:513`, comme méthode, donc porté
-par un objet. Et `gm-routing` montre comment les plugins l'atteignent : ils
-**importent les modules de Hermes directement**
-(`from hermes_cli.lifecycle import has_hook, invoke_hook`). Le choix « MCP over
-HTTP » de l'étape 5 reste donc viable ; c'était le risque sérieux, il est
-écarté.
+**`call_mcp`, signature relevée** (`hermes_cli/plugins.py:513`) :
+
+```python
+def call_mcp(self, server: str, tool: str,
+             arguments: Optional[Dict[str, Any]] = None,
+             timeout: float = 30) -> Dict[str, Any]:
+    ...
+    return self._mcp_envelope(raw)
+```
+
+| Fait | Conséquence |
+|---|---|
+| Le retour est un **dictionnaire**, produit par `_mcp_envelope` | fin des « trois formats plausibles » du prototype |
+| **Défaut-refus** : `PermissionError` si le serveur n'est pas dans `plugins.entries.<plugin_id>.mcp_allowlist` | confirme l'étape 5 mot pour mot |
+| `timeout` **borné à 1–600 s**, défaut 30 | le seuil de dégradation à 1 s de l'étape 3 n'est pas un choix mais le **plancher imposé** par Hermes |
+| Synchrone, via le client natif, avec disjoncteur et reconnexion | le « fail open » s'appuie sur le disjoncteur au lieu de le contourner |
+| Résultats **tronqués au-delà de 64 Ko** (`_MCP_RESULT_CHAR_CAP`) | borne ce que GK renvoie : brief et liste `wanted` passent, mais jamais de corps de skills dans ce sens |
+
+`call_mcp` étant une méthode portée par un objet d'API par plugin — qui offre
+aussi `has_capability` et l'enregistrement d'outils —, **il existe bien un objet
+de contexte** ; ce sont les *hooks* qui ne le reçoivent pas, puisqu'ils
+reçoivent des kwargs. Comment un plugin obtient cet objet est la dernière
+inconnue du pont. Le choix « MCP over HTTP » de l'étape 5 est donc viable :
+c'était le risque sérieux, il est écarté.
 
 **Sur `on_skill_lifecycle`, le risque s'atténue mais déplace une décision.** `plugins.py:128` le décrit
 comme portant les « successful skill lifecycle facts », ce qui laissait craindre
@@ -1287,7 +1305,9 @@ pristine, et le plugin doit vivre dans un sous-dossier clairement nommé.
 | Sujet | État |
 |---|---|
 | Emplacement des plugins et du `config.yaml` | **Skills levés, plugins non.** Vérifié dans le conteneur : `HERMES_HOME=/opt/data` (via `env_file`), les skills sont en `/opt/data/skills`, et `/opt/data/.hermes` existe mais ne contient ni `skills` ni `plugins`. Reste à inspecter les trois sous-dossiers de `.hermes` pour y trouver `config.yaml` et l'emplacement des plugins |
-| Signature de `call_mcp` | Dernière inconnue du pont. La fonction existe (`hermes_cli/plugins.py:513`) comme méthode ; reste sa signature et la façon dont un plugin obtient l'objet qui la porte. À lire en `sed -n "495,545p"` |
+| Comment un plugin obtient son objet d'API | Dernière inconnue du pont. `call_mcp` est une méthode ; reste à voir ce qui la passe au plugin (fonction d'initialisation, import, autre). À lire dans `hermes_cli/plugins.py` |
+| Clés exactes de `_mcp_envelope` | Le retour est un dictionnaire ; ses clés se lisent dans la même source |
+| Nom de fonction attendu par hook | `gm-routing` implémente `on_pre_tool_call` pour le hook `pre_tool_call`. Reste à confirmer la règle, notamment pour `on_skill_lifecycle` qui commence déjà par `on_` |
 | Version de Hermes | Le compose épingle `v2026.9.21`, alors que le handoff mesurait `v2026.7.20`. **Hermes a donc été mis à jour depuis**, et l'API des plugins a pu bouger : les mesures d'environnement du handoff sont à considérer comme périmées |
 | URL des docs Hermes | `hermes-agent.nousresearch.com` ne résout pas. Bloque la vérification de la stabilité des hooks et du comportement d'un plugin qui plante |
 | Code du prototype | Absent du dépôt. Les 45 tests et les 86 % de Hit@1 du handoff ne sont pas vérifiables ici |
