@@ -12,7 +12,7 @@ Langue de travail : français. Le README reste en anglais.
 |---|---|---|
 | 1 | Besoins | close |
 | 2 | Responsabilités | close |
-| 3 | Flux | à faire |
+| 3 | Flux | close |
 | 4 | Données | à faire |
 | 5 | Interfaces | à faire |
 | 6 | Choix techniques | à faire |
@@ -203,6 +203,138 @@ Trois conséquences :
 3. La fraîcheur du catalogue devient surveillable et doit l'être : le manifeste
    porte une date, `gk check` annonce « catalogue reçu il y a N jours ».
 
+## Étape 3 : flux (close)
+
+### Aucun LLM dans le chemin de service
+
+Décision maîtresse de l'étape. Le handoff prévoyait 4 s de latence pour
+DeepSeek, le README un timeout de 3 s ; les deux sont incompatibles avec un
+brief injecté avant que gb commence à réfléchir.
+
+Or aucune ligne du brief n'a besoin d'un LLM :
+
+| Ligne | Ce qui la produit |
+|---|---|
+| `Skills:` | recherche hybride et compteurs d'usage, pure récupération |
+| `Connu:` | faits courts déjà stockés, retrouvés par requête |
+| `À vérifier:` | un fait de plus de 30 jours l'est mécaniquement |
+| `Demander:` | une règle sur les métadonnées des candidats, pas un jugement |
+
+Le LLM ne sert donc qu'en tâche de fond, pour l'extraction nocturne des faits
+candidats. Ce que cette décision règle d'un coup :
+
+- le budget passe d'environ 4 s à environ 300 ms, dominés par l'embedding de la
+  requête ;
+- le mode réflexion de DeepSeek sort du chemin critique : la nuit, 4 s
+  n'intéressent personne ;
+- plus de coût LLM par message, et plus d'envoi de chaque message au
+  fournisseur ;
+- le chemin de service n'a plus qu'une dépendance externe au lieu de deux.
+
+### Flux 1 : avant le message
+
+```
+message utilisateur
+  |
+  +-- pre_llm_call --> plugin --MCP/HTTP--> GK.prepare(task, conv_id)
+  |                                           |
+  |                                           +-- trivial ? -> brief vide
+  |                                           +-- FTS5 + vecteurs -> fusion
+  |                                           +-- faits confirmés, datés
+  |                                           +-- journalise le brief (id)
+  |                                           v
+  +-- brief accolé au message <-------------- brief + brief_id
+  v
+tour de gb
+```
+
+Le filtre des messages triviaux vit **dans GK**, pas dans le plugin : un
+aller-retour sur le réseau interne coûte une milliseconde, et avoir les règles
+en un seul endroit rechargeable à chaud vaut ce prix. Le plugin reste bête.
+Seule exception, un message vide, qu'il n'envoie pas.
+
+Trois niveaux de dégradation, pour tenir le « ne jamais bloquer » :
+
+| Niveau | Condition | Résultat |
+|---|---|---|
+| 1 | tout va bien | brief complet, FTS et vecteurs |
+| 2 | API d'embeddings lente ou hors service (> 500 ms) | brief sur FTS seul |
+| 3 | GK lent ou hors service (> 1 s) | aucun brief, le message passe nu |
+
+Le niveau 2 est le plus important : il évite qu'une panne chez le fournisseur
+d'embeddings fasse disparaître le brief alors qu'un demi-brief suffirait.
+
+### Flux 2 : pendant le message
+
+gb peut appeler `recall`, `remember` et `rate` en cours de tour.
+
+**Deux provenances de faits, deux traitements.** L'étape 2 interdit à un fait non
+confirmé d'entrer dans un brief ; appliqué littéralement, `remember` devient
+inutile. La provenance tranche :
+
+- **`remember` appelé par gb** quand l'utilisateur vient de dire la chose : la
+  source est sa parole, le fait est confirmé et immédiatement utilisable ;
+- **fait extrait par GK la nuit** depuis une conversation : c'est une inférence,
+  il part en file de confirmation.
+
+Le trou de cette distinction est que gb pourrait enregistrer une inférence en la
+présentant comme la parole de l'utilisateur. Il n'est pas malveillant, seulement
+peu fiable. Donc chaque fait garde son origine, et la synthèse hebdomadaire
+liste aussi les faits auto-confirmés : non pour les approuver, mais pour pouvoir
+en attraper un mauvais. Coût nul, et l'humain reste dans la boucle sans être un
+goulot.
+
+**Un identifiant de conversation est nécessaire.** Quand l'utilisateur dit
+« c'était mauvais, tu aurais dû prendre perf-audit », gb appelle `rate`, et GK
+doit savoir à quel brief rattacher la note. Le plugin transmet donc un
+identifiant de conversation stable à chaque appel, et GK garde les derniers
+briefs par conversation. Nouvelle exigence sur le contrat du plugin, à reprendre
+à l'étape 5.
+
+### Flux 3 : après le message
+
+Deux événements arrivent, et **leur ordre n'est pas garanti** : `post_llm_call`
+apporte la réponse de gb, `on_skill_lifecycle` apporte le skill réellement
+utilisé. Or classer une correction (mauvaise recommandation contre brief ignoré)
+exige les deux.
+
+Une correction détectée s'écrit donc en **attribution en attente**, et se
+complète quand les événements de skill du même tour arrivent. Au bout de 60 s
+elle se ferme avec ce qui est connu. Une correction non attribuable reste
+comptée dans le total et sort du détail : le total ne mente jamais.
+
+Tout ce flux est à sens unique, sans attente de réponse : le plugin envoie et
+oublie.
+
+### Flux 4 : en tâche de fond
+
+| Rythme | Travail | Où |
+|---|---|---|
+| à chaque tour, au plus 1 fois par heure | envoi du manifeste du catalogue | plugin, asynchrone |
+| à réception d'un manifeste | indexation et vectorisation des skills modifiés | GK |
+| chaque nuit | extraction des faits candidats, tours remarquables seulement | GK, avec LLM |
+| chaque semaine | synthèse sur le canal Discord | GK, webhook |
+| chaque jour | purge des faits de plus de 180 jours | GK |
+| en continu | canari : aucun `prepare` depuis 24 h, alerte Discord | GK |
+
+**Le vieillissement des faits n'a besoin d'aucune tâche.** « Connu » contre
+« À vérifier » est `maintenant - date < 30 jours`, calculé au moment de
+construire le brief. Seule la purge dure à 180 jours demande un travail
+périodique. Un rouage de moins.
+
+### Démarrage à froid
+
+Un GK qui redémarre avec une base vide n'a aucun catalogue, et ne peut pas en
+réclamer un sans parler le premier.
+
+**GK signale ses besoins dans les réponses qu'il envoie déjà.** Son `prepare`
+renvoie un drapeau « catalogue vide », le plugin le voit et envoie le manifeste
+immédiatement, hors throttle. Un redémarrage est rattrapé en un message au lieu
+d'une heure, et le principe 4 tient : répondre « au fait, il me manque ceci »
+n'est pas une initiative.
+
+C'est le mécanisme général de toute demande de GK vers le plugin.
+
 ## Interface entre le plugin et GK
 
 **MCP over HTTP**, pour tous les appels : `prepare`, `report`, le manifeste du
@@ -289,4 +421,3 @@ Protections, par ordre d'efficacité :
 | Licence | À choisir avant publication. Le fichier a été supprimé au commit 3b94d02 |
 | Fournisseur d'embeddings | À trancher à l'étape 6. DeepSeek n'en propose pas |
 | Tokenizer FTS5 pour le français | `porter` applique des règles anglaises. À traiter à l'étape 6 |
-| Mode réflexion de DeepSeek | Peut-être actif par défaut, incompatible avec le budget de 4 s |
