@@ -16,7 +16,7 @@ Langue de travail : français. Le README reste en anglais.
 | 4 | Données | close |
 | 5 | Interfaces | close |
 | 6 | Choix techniques | close |
-| 7 | Qualités | à faire |
+| 7 | Qualités | close |
 | 8 | Validation | à faire |
 
 ## Étape 1 : besoins (close)
@@ -783,6 +783,163 @@ fabriquée, et c'est elle qui valide ou invalide le choix le plus structurant.
 Les corrections détectées en produiront automatiquement par la suite, mais il
 faut un premier jeu pour démarrer.
 
+## Étape 7 : qualités (close)
+
+Beaucoup avait déjà été tranché en chemin. Cette étape rassemble, et comble cinq
+trous trouvés en relisant l'ensemble.
+
+### Latence
+
+| Étape du chemin de service | Coût |
+|---|---|
+| aller-retour HTTP sur le réseau interne | ~1 ms |
+| stemming de la requête | ~1 ms |
+| requête FTS5 sur ~500 skills découpés | quelques ms |
+| requête des faits | ~1 ms |
+| assemblage du brief | négligeable |
+
+**Trou 1 : le journal des briefs est une écriture sur le chemin critique.** La
+décision (c) de l'étape 2 fait journaliser chaque brief, ce qui n'avait pas été
+vu comme une écriture synchrone. Avec WAL c'est rapide, mais un `fsync` au
+mauvais moment fait un pic.
+
+Correctif : `PRAGMA synchronous=NORMAL` avec WAL, et journalisation **en file
+d'attente** vidée par le fil de fond. Ce qu'on perd sur une coupure de courant,
+ce sont les dernières lignes d'un journal de débogage à 7 jours : sans
+importance. **Les faits et les corrections restent en écriture synchrone.**
+
+Le travail nocturne tourne dans le même processus mais il est **lié aux
+entrées-sorties** (appels API) : il libère le GIL et ne concurrence pas le chemin
+de service pour le CPU, et avec WAL sa connexion écrit sans bloquer les lectures.
+
+### Pannes
+
+**Trou 2 : les attributions en attente ne survivent pas à un redémarrage.**
+L'étape 3 écrit une correction en « attribution en attente », fermée à 60 s. Si
+GK meurt dans l'intervalle, la ligne reste en attente indéfiniment et sort des
+statistiques sans que personne le sache. Correctif : une **réconciliation au
+démarrage** qui ferme toute attribution de plus de 60 secondes avec ce qui est
+connu.
+
+**Trou 3 : l'intégrité n'était pas traitée.** `PRAGMA integrity_check` au
+démarrage, et une histoire de reprise qui découle de l'étape 4 :
+
+| Donnée | Si la base est perdue |
+|---|---|
+| Catalogue et index | se reconstruit seul, via `besoins` |
+| Journal des briefs | perte sans conséquence |
+| Faits, corrections, notations, compteurs | **ne se reconstruisent pas**, il faut la sauvegarde `gk export` |
+
+L'ingestion du manifeste se fait **en une seule transaction**, tout ou rien. Un
+plantage à mi-course n'applique rien, et comme le manifeste est auto-réparateur,
+l'heure suivante remet tout d'aplomb.
+
+**Trou 4, le plus sérieux : le canari ne peut pas se surveiller lui-même.** Le
+canari détecte « le plugin a cessé de m'appeler », mais il vit dans GK. Un GK
+mort ne peut pas alerter sur sa propre mort.
+
+- `restart: unless-stopped`, et un **healthcheck qui teste vraiment** :
+  `/health` exécute une requête FTS triviale et renvoie l'âge du catalogue, au
+  lieu de répondre 200 sans rien vérifier.
+- Et surtout : **la synthèse hebdomadaire part même quand il n'y a rien à dire.**
+  « Rien à signaler cette semaine » est un message utile, parce que c'est son
+  **absence** qui devient le signal. Un battement de cœur qui ne bat que
+  lorsqu'il y a des nouvelles n'est pas un battement de cœur, et c'est la seule
+  façon de détecter depuis l'extérieur un GK entièrement mort.
+
+### Sécurité
+
+Le modèle de menace réel : personne n'attaque ce service. Les risques véritables
+sont un port publié par erreur, gb qui fait quelque chose de maladroit, et l'URL
+du webhook qui fuite. La réponse est proportionnée à cela.
+
+**La vraie frontière est le réseau** : aucun port publié, réseau interne du
+compose uniquement. C'est elle qui protège, pas les jetons.
+
+**Deux jetons distincts**, un par point d'entrée. Mais les deux finiront dans le
+`config.yaml` de Hermes, lisible par tout ce qui tourne dans ce conteneur : la
+séparation empêche gb d'appeler `catalog` ou `observe` par accident ou par
+initiative malheureuse. C'est un **garde-fou, pas une frontière de sécurité**, et
+mieux vaut le dire que se raconter une histoire.
+
+**La file de confirmation des faits est aussi un contrôle de sécurité.** Un fait
+de GK est injecté dans le prompt de gb, et les faits candidats sont extraits de
+conversations par un LLM : du contenu de conversation peut donc devenir un fait.
+La confirmation humaine de l'étape 4 est ce qui ferme ce chemin. Elle n'était là
+que pour la qualité ; c'est une raison de plus de ne jamais servir un fait non
+confirmé.
+
+Le brief est une donnée pour gb, pas une instruction d'exécution. L'URL du
+webhook est un secret, puisqu'elle suffit à poster sur le canal.
+
+### Mises à jour de Hermes
+
+Deux familles de pannes, presque toutes silencieuses.
+
+**Les fichiers disparaissent** : `plugins/` hors du volume persistant,
+`config.yaml` réécrit par une migration qui jette `mcp_allowlist`, plugin remis
+à désactivé.
+
+**L'API change** : hook renommé ou supprimé, texte retourné qui n'est plus
+accolé au message utilisateur (le pire : GK est appelé, le brief part, personne
+ne le lit), format de manifeste de plugin modifié.
+
+Protections, par ordre d'efficacité :
+
+1. **Épingler le tag de l'image** dans le compose de gb. Transforme « ça casse un
+   jour au hasard » en « ça casse le jour où je l'ai décidé ».
+2. Le plugin dans le volume persistant, vérifié comme tel.
+3. `gk check` lancé automatiquement : au démarrage de GK, et dans la procédure
+   de mise à jour, qui devient un rituel en trois temps (pull, recréation,
+   `gk check`).
+4. **Canari passif**, complété par le battement hebdomadaire ci-dessus.
+5. Réduire la surface d'API touchée par le plugin.
+6. **Le plugin ne lève jamais d'exception à l'import.** Tout en `try/except`, et
+   en cas d'échec il ne fait rien. À vérifier dans les docs : un plugin qui
+   plante au chargement empêche-t-il gb de démarrer ?
+
+### Mises à jour de GK
+
+**Trou 5 : les migrations de schéma n'avaient jamais été évoquées.** Une table
+`schema_version` et des migrations ordonnées appliquées au démarrage. Banal,
+mais sans cela la première évolution de schéma corrompt la base.
+
+Et une règle qui en découle, puisqu'il n'y a ni pré-production ni seconde
+instance : **les migrations sont additives uniquement.** On ajoute des colonnes
+et des tables, on n'en supprime ni n'en renomme jamais. Revenir au tag précédent
+reste donc possible, parce que l'ancienne version sait encore lire la base. Sans
+cette règle le retour arrière est impossible et chaque mise à jour devient un
+pari.
+
+Une mise à jour de GK ne doit jamais exiger une mise à jour du plugin : la règle
+de tolérance de l'étape 5 le garantit.
+
+### Supervision
+
+**Un seul endroit à regarder : le canal Discord.**
+
+| Ce qui y arrive | Quand |
+|---|---|
+| Synthèse hebdomadaire | chaque semaine, **même vide** |
+| Alarme du canari | aucun `prepare` depuis 24 h |
+| Catalogue périmé | manifeste trop ancien |
+| Échec répété du travail nocturne | après plusieurs nuits |
+
+**Règle anti-bruit** : GK ne parle sur Discord que pour ce qui demande une action
+humaine, plus le battement hebdomadaire. Tout le reste va dans les logs, sur la
+sortie standard, ramassés par Docker. Sinon le canal est mis en silencieux au
+bout de trois semaines et les alertes ne servent plus à rien, exactement comme
+les notations.
+
+À la demande : `gk check` pour l'état, `gk stats` pour la mesure.
+
+### Un principe transverse
+
+**GK se dégrade, il n'échoue pas.** Quand il ne peut pas construire un brief, il
+renvoie un brief vide avec un code 200, jamais une erreur 500. Le « fail open »
+du plugin devient alors trivial à écrire, et un plugin trivial est un plugin qui
+ne casse pas.
+
 ## Mesure du succès
 
 Deux instruments, de natures différentes et complémentaires.
@@ -814,33 +971,6 @@ point :
   dans le message.
 
 Contrainte : utilisable en une seconde, et fonctionnelle même tapée nue.
-
-## Résilience aux mises à jour de Hermes
-
-Deux familles de pannes, presque toutes silencieuses.
-
-**Les fichiers disparaissent** : `plugins/` hors du volume persistant,
-`config.yaml` réécrit par une migration qui jette `mcp_allowlist`, plugin remis
-à désactivé.
-
-**L'API change** : hook renommé ou supprimé, texte retourné qui n'est plus
-accolé au message utilisateur (le pire : GK est appelé, le brief part, personne
-ne le lit), format de manifeste de plugin modifié.
-
-Protections, par ordre d'efficacité :
-
-1. **Épingler le tag de l'image** dans le compose de gb. Transforme « ça casse un
-   jour au hasard » en « ça casse le jour où je l'ai décidé ».
-2. Le plugin dans le volume persistant, vérifié comme tel.
-3. `gk check` lancé automatiquement : au démarrage de GK, et dans la procédure
-   de mise à jour, qui devient un rituel en trois temps (pull, recréation,
-   `gk check`).
-4. **Canari passif** : GK sait qu'il devrait être appelé à chaque message. Le
-   silence est l'alarme. Aucune supervision externe à installer.
-5. Réduire la surface d'API touchée par le plugin.
-6. **Le plugin ne lève jamais d'exception à l'import.** Tout en `try/except`, et
-   en cas d'échec il ne fait rien. À vérifier dans les docs : un plugin qui
-   plante au chargement empêche-t-il gb de démarrer ?
 
 ## Points ouverts
 
