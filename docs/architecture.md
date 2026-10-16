@@ -13,7 +13,7 @@ Langue de travail : français. Le README reste en anglais.
 | 1 | Besoins | close |
 | 2 | Responsabilités | close |
 | 3 | Flux | close |
-| 4 | Données | à faire |
+| 4 | Données | close |
 | 5 | Interfaces | à faire |
 | 6 | Choix techniques | à faire |
 | 7 | Qualités | à faire |
@@ -69,14 +69,15 @@ skills ; brief court ; poser la question quand c'est ambigu ; tout par API.
 
 4. **GK ne bloque jamais et ne parle jamais le premier.** Tout le trafic va de
    Hermes vers GK. GK n'a aucun canal retour et aucun accès disque. Ses seules
-   connexions sortantes sont les API du LLM et des embeddings.
+   connexions sortantes sont l'API du LLM, la nuit, et le webhook Discord. Le
+   chemin de service, lui, ne sort pas du tout (étape 4).
 
 ### Ce dont GK est responsable
 
 | Responsabilité | Détail |
 |---|---|
-| Tenir le catalogue | Recevoir le manifeste, détecter les écarts par empreinte, maintenir l'index plein texte et les vecteurs |
-| Choisir les skills | Recherche hybride sur le corps complet, fusion des classements, petit nombre de candidats |
+| Tenir le catalogue | Recevoir le manifeste, détecter les écarts par empreinte, maintenir l'index plein texte |
+| Choisir les skills | Recherche plein texte sur le corps complet, petit nombre de candidats |
 | Tenir les faits | Stocker avec source et date, restituer, faire vieillir, dédoublonner |
 | Décider quoi dire | Produire les lignes « Skills », « Connu », « À vérifier », « Demander » |
 | Se taire | Message trivial ou confiance trop basse : pas de brief plutôt qu'un mauvais brief |
@@ -197,9 +198,9 @@ Trois conséquences :
 1. Le montage disque disparaît : GK n'a plus besoin de
    `/home/webmanager/hermes/data` monté en lecture seule.
 2. « Pas de copie des skills » se renforce : GK n'a besoin du corps qu'au moment
-   d'indexer (tokenisation FTS, vectorisation), puis il le jette. Le brief ne
-   cite que des noms. À revoir à l'étape 6 si un reranker est ajouté, car lui a
-   besoin du corps au moment de servir.
+   d'indexer (tokenisation FTS), puis il le jette. Le brief ne cite que des
+   noms. À revoir à l'étape 6 si un reranker est ajouté, car lui a besoin du
+   corps au moment de servir.
 3. La fraîcheur du catalogue devient surveillable et doit l'être : le manifeste
    porte une date, `gk check` annonce « catalogue reçu il y a N jours ».
 
@@ -215,7 +216,7 @@ Or aucune ligne du brief n'a besoin d'un LLM :
 
 | Ligne | Ce qui la produit |
 |---|---|
-| `Skills:` | recherche hybride et compteurs d'usage, pure récupération |
+| `Skills:` | recherche plein texte et compteurs d'usage, pure récupération |
 | `Connu:` | faits courts déjà stockés, retrouvés par requête |
 | `À vérifier:` | un fait de plus de 30 jours l'est mécaniquement |
 | `Demander:` | une règle sur les métadonnées des candidats, pas un jugement |
@@ -223,13 +224,12 @@ Or aucune ligne du brief n'a besoin d'un LLM :
 Le LLM ne sert donc qu'en tâche de fond, pour l'extraction nocturne des faits
 candidats. Ce que cette décision règle d'un coup :
 
-- le budget passe d'environ 4 s à environ 300 ms, dominés par l'embedding de la
-  requête ;
 - le mode réflexion de DeepSeek sort du chemin critique : la nuit, 4 s
   n'intéressent personne ;
 - plus de coût LLM par message, et plus d'envoi de chaque message au
   fournisseur ;
-- le chemin de service n'a plus qu'une dépendance externe au lieu de deux.
+- le chemin de service perd une de ses deux dépendances externes. L'étape 4 lui
+  retirera la seconde, voir « Pas d'embeddings en v1 ».
 
 ### Flux 1 : avant le message
 
@@ -239,7 +239,7 @@ message utilisateur
   +-- pre_llm_call --> plugin --MCP/HTTP--> GK.prepare(task, conv_id)
   |                                           |
   |                                           +-- trivial ? -> brief vide
-  |                                           +-- FTS5 + vecteurs -> fusion
+  |                                           +-- FTS5 sur le corps complet
   |                                           +-- faits confirmés, datés
   |                                           +-- journalise le brief (id)
   |                                           v
@@ -257,12 +257,12 @@ Trois niveaux de dégradation, pour tenir le « ne jamais bloquer » :
 
 | Niveau | Condition | Résultat |
 |---|---|---|
-| 1 | tout va bien | brief complet, FTS et vecteurs |
-| 2 | API d'embeddings lente ou hors service (> 500 ms) | brief sur FTS seul |
-| 3 | GK lent ou hors service (> 1 s) | aucun brief, le message passe nu |
+| 1 | tout va bien | brief complet |
+| 2 | GK lent ou hors service (> 1 s) | aucun brief, le message passe nu |
 
-Le niveau 2 est le plus important : il évite qu'une panne chez le fournisseur
-d'embeddings fasse disparaître le brief alors qu'un demi-brief suffirait.
+Il y avait un niveau intermédiaire, qui repliait sur FTS seul quand l'API
+d'embeddings faiblissait. L'étape 4 l'a rendu sans objet : FTS **est** le chemin,
+et il est local. Ce niveau reviendra si les embeddings sont ajoutés en v2.
 
 ### Flux 2 : pendant le message
 
@@ -311,7 +311,7 @@ oublie.
 | Rythme | Travail | Où |
 |---|---|---|
 | à chaque tour, au plus 1 fois par heure | envoi du manifeste du catalogue | plugin, asynchrone |
-| à réception d'un manifeste | indexation et vectorisation des skills modifiés | GK |
+| à réception d'un manifeste | indexation des skills modifiés | GK |
 | chaque nuit | extraction des faits candidats, tours remarquables seulement | GK, avec LLM |
 | chaque semaine | synthèse sur le canal Discord | GK, webhook |
 | chaque jour | purge des faits de plus de 180 jours | GK |
@@ -334,6 +334,176 @@ d'une heure, et le principe 4 tient : répondre « au fait, il me manque ceci »
 n'est pas une initiative.
 
 C'est le mécanisme général de toute demande de GK vers le plugin.
+
+## Étape 4 : données (close)
+
+### Inventaire
+
+| Donnée | Propriétaire | Source de vérité | Rétention | Reconstructible |
+|---|---|---|---|---|
+| Catalogue de skills (chemin, empreinte) | GK | **Hermes** | tant que présent au manifeste | oui, gratuitement |
+| Index FTS5 (`content=''`) | GK | dérivé | idem | oui, gratuitement |
+| Corps des SKILL.md | — | — | **jamais stocké** | — |
+| Vecteurs des skills | — | — | **aucun en v1** | — |
+| Faits confirmés | **GK** | **GK** | 180 jours puis purge | **non** |
+| Faits candidats en attente | GK | GK | 30 jours puis abandon | non |
+| Historique des faits remplacés | GK | GK | avec le fait courant | non |
+| Journal des briefs | GK | GK | **7 jours** | non |
+| Corrections | **GK** | **GK** | trois niveaux, voir plus bas | non |
+| Notations | **GK** | **GK** | sans limite | non |
+| Événements d'usage de skills | GK | GK | détail 30 jours, puis compteurs | non |
+| Compteurs du Curator | Hermes | Hermes | reçus au manifeste | oui |
+| Échantillon des réponses de gb | — | — | **néant** | — |
+
+### Quatre lignes seulement sont irremplaçables
+
+Les faits, les corrections, les notations et les compteurs d'usage. Tout le reste
+est dérivé d'un manifeste ou jeté par construction. Et ces quatre lignes pèsent
+des dizaines de kilo-octets, pas des méga-octets.
+
+La question des sauvegardes se réduit donc à **exporter quatre tables** :
+`gk export` produit un JSON de quelques dizaines de ko, et c'est à l'ops de
+sauvegarder le volume.
+
+Taille de la base complète, sans vecteurs : un index FTS sans contenu et
+quelques centaines de ko de journaux. **Moins d'un méga-octet.** La limite de
+512 Mo du conteneur est très largement suffisante.
+
+### Journal des briefs : 7 jours
+
+À quoi il sert vraiment : attribuer une correction, ce qui se joue en 60
+secondes, et fabriquer un cas de test, ce que la fiche de correction fait en
+recopiant ce qu'il lui faut au moment de l'attribution.
+
+Il n'a donc besoin d'aucune longue conservation. **7 jours**, pour déboguer
+(« pourquoi ce brief-là ? »), pas pour archiver. Comme il contient les messages
+de l'utilisateur, la différence entre 7 et 90 jours n'est pas un détail.
+
+### Corrections : une durée de validité, pas une durée de vie
+
+Le volume n'est pas un argument : 20 corrections par jour à 400 octets font 3 Mo
+par an. Mais deux choses évoluent en sens inverse. **L'utilité décroît** : une
+correction portant sur un skill réécrit depuis est un fossile, et elle pollue la
+statistique en mélangeant deux états de la bibliothèque. **L'exposition ne
+décroît pas** : l'extrait et la demande tronquée restent aussi sensibles au bout
+de deux ans.
+
+La bonne règle n'est donc pas temporelle. **Une correction vaut tant que les
+skills qu'elle nomme gardent la même empreinte.** GK l'applique mécaniquement,
+puisque le manifeste lui apporte les empreintes chaque heure.
+
+| Niveau | Contenu | Durée | Texte utilisateur |
+|---|---|---|---|
+| **Le compteur** | date, classification, skill recommandé, skill utilisé, empreinte de `motifs.yaml` | **sans limite** | non |
+| **Le cas de test** | demande tronquée, skill attendu | tant que les empreintes tiennent | oui |
+| **La preuve** | extrait de l'aveu, 200 caractères | **90 jours** | oui |
+
+Le compteur est exactement ce qu'il faut pour comparer la phase 1 à la phase 2 ;
+ne contenant aucun texte, le garder indéfiniment ne coûte et n'expose rien. Le
+texte brut expire une fois qu'il a servi.
+
+L'extrait sert à vérifier qu'un motif a attrapé un vrai aveu plutôt qu'un faux
+positif. C'est un audit du détecteur, qui se fait dans les jours qui suivent :
+90 jours sont généreux.
+
+On garde des lignes individuelles plutôt que des agrégats : sous ce schéma elles
+ne contiennent plus de texte, et elles permettent de redécouper par skill ou par
+semaine plus tard.
+
+**`gk forget`**, en trois formes, que ce découpage rend possibles :
+
+- `--before <date>` purge les niveaux 2 et 3, garde les compteurs ;
+- `--conv <id>` purge tout ce qui vient d'une conversation ;
+- `--extracts` efface toutes les preuves, garde compteurs et cas de test.
+
+### Pas d'embeddings en v1
+
+Décision majeure de l'étape, qui retire une brique que le handoff tenait pour
+acquise.
+
+**Le raisonnement.** Le handoff annonce 86 % de premier choix correct avec le
+corps complet, et déclare par ailleurs que les vrais embeddings n'ont jamais
+tourné (Hugging Face bloqué, testés contre un faux serveur). Donc **ces 86 % ont
+été obtenus sans eux**, par FTS seul sur le corps complet. Et SkillRouter ne dit
+pas qu'il faut des vecteurs : il dit que le corps du skill est le signal
+décisif, *toutes méthodes de récupération confondues*.
+
+**Ce que la décision supprime** : l'envoi de la bibliothèque entière à un tiers
+à l'indexation (500 documents décrivant l'infrastructure et les procédures
+internes, soit la divulgation la plus lourde du projet) ; l'envoi du texte de
+chaque message à chaque tour ; le choix d'un fournisseur ; le coût ; le stockage
+des vecteurs ; et le niveau de dégradation intermédiaire de l'étape 3.
+
+Le chemin de service devient **entièrement local à GK, sans aucune dépendance
+externe**, et tombe à environ 20 ms.
+
+**Le caveat, assumé** : les 86 % portent sur 23 skills factices. Sur 500 skills
+français réels avec des quasi-doublons, ça tiendra moins bien, et c'est là que
+les synonymes manquants font mal. Ce n'est donc pas une certitude mais une
+hypothèse à mesurer, d'où l'ordre imposé à l'étape 6 :
+
+1. corriger le tokenizer français, qui devient la **première** priorité
+   technique puisqu'il conditionne tout le reste ;
+2. mesurer FTS seul sur les **vrais** skills avec le banc d'essai ;
+3. n'ajouter les embeddings que si le chiffre l'exige — la décision se prendra
+   alors avec un gain mesuré en face d'une exposition connue, au lieu d'être
+   supposée d'avance.
+
+**L'auto-hébergement du modèle est écarté**, et la contrainte « tout par API »
+du handoff s'avère bien fondée pour des raisons qu'elle n'énonçait pas. Mesures
+du VPS : 4 vCPU QEMU « Virtual CPU version 2.5+ », un modèle générique qui
+n'expose probablement pas AVX2 — à confirmer par
+`grep -o -m1 -E 'avx512[a-z]*|avx2|avx' /proc/cpuinfo | sort -u`. Sans AVX2,
+l'inférence CPU perd un facteur 3 à 10 : une requête courte passerait de 100-300
+ms à 0,5-3 s, et l'indexation de 500 skills de quelques minutes à des heures. Il
+y aurait une ironie à retirer le LLM du chemin de service pour gagner 4 secondes
+et y remettre un modèle local qui en coûte 2. S'y ajoute une charge déjà à 2,2
+sur 4 vCPU, soit 1,8 vCPU de marge à partager avec gb.
+
+### Un conflit de compteurs, tranché
+
+Deux comptages d'usage des skills vont coexister : ceux du **Curator**
+(`skills/.usage.json`, reçus au manifeste) et ceux de **GK** (ses propres
+événements, rattachés à un `brief_id`). Ils divergeront.
+
+**Ceux de GK font foi pour le brief**, parce qu'ils répondent à la bonne
+question : « est-ce que *ma* recommandation a marché ? », là où le Curator compte
+tous les usages, recommandés ou non. Ceux du Curator restent du contexte
+informatif, utiles pour repérer un skill populaire que GK ne recommande jamais.
+
+**On ne tente pas de les réconcilier.** Deux compteurs qui mesurent deux choses
+différentes, nommés distinctement, valent mieux qu'un chiffre bâtard.
+
+### Ce qui sort de GK, et vers qui
+
+| Destinataire | Ce qu'il reçoit | Fréquence |
+|---|---|---|
+| LLM (DeepSeek) | les tours remarquables uniquement | la nuit |
+| Discord | la synthèse : faits, candidats, alertes | chaque semaine |
+
+C'est tout, après la décision « pas d'embeddings en v1 ». Rien ne sort sur le
+chemin de service.
+
+Le handoff signalait comme point de vigilance que « chaque message et les faits
+associés partent chez DeepSeek ». Après l'étape 3, ce n'était plus DeepSeek mais
+le fournisseur d'embeddings qui voyait passer chaque message — le risque avait
+changé de destinataire sans diminuer. La décision de l'étape 4 le supprime.
+
+L'URL du webhook Discord est elle-même un secret : quiconque la détient peut
+poster sur le canal.
+
+### Les secrets
+
+Jeton d'accès au serveur GK, clé du LLM, URL du webhook. Ils appartiennent à
+l'ops, vivent en variables d'environnement ou en secrets du compose, et **ne
+sont ni dans la base ni dans le dépôt**. Le `config.example.yaml` ne porte que
+des valeurs factices.
+
+### Une correction de vocabulaire
+
+« Demande résumée » est faux : résumer demanderait un LLM, et il n'y en a pas
+dans ce chemin. C'est une **troncature**. Le terme est corrigé partout pour ne
+pas laisser croire à une capacité qui n'existe pas.
 
 ## Interface entre le plugin et GK
 
@@ -418,6 +588,7 @@ Protections, par ordre d'efficacité :
 | URL des docs Hermes | `hermes-agent.nousresearch.com` ne résout pas. Bloque la vérification de la stabilité des hooks et du comportement d'un plugin qui plante |
 | Code du prototype | Absent du dépôt. Les 45 tests et les 86 % de Hit@1 du handoff ne sont pas vérifiables ici |
 | Écriture GitHub | L'app Claude a la lecture seule sur le dépôt. `git push` et l'API renvoient 403. À accorder depuis https://github.com/apps/claude/installations/select_target |
+| AVX2 sur le VPS | Non vérifié. Décide si l'auto-hébergement d'un modèle est seulement discutable en v2 |
 | Licence | À choisir avant publication. Le fichier a été supprimé au commit 3b94d02 |
-| Fournisseur d'embeddings | À trancher à l'étape 6. DeepSeek n'en propose pas |
-| Tokenizer FTS5 pour le français | `porter` applique des règles anglaises. À traiter à l'étape 6 |
+| Embeddings | Écartés de la v1 (étape 4). À rouvrir en v2 seulement si la mesure sur les vrais skills l'exige |
+| Tokenizer FTS5 pour le français | **Première priorité de l'étape 6** : `porter` applique des règles anglaises, et FTS est désormais le seul moteur de recherche |
