@@ -9,13 +9,13 @@ plausibles" faute de le savoir. Mieux vaut mesurer.
 
 Trois garanties, dans cet ordre d'importance :
 
-1. Elle ne leve jamais d'exception, ni a l'import ni dans le hook. Tout est
+1. Elle ne leve jamais d'exception, ni a l'import ni ailleurs. Tout est
    enveloppe. On ne sait pas encore si un plugin qui plante empeche gb de
-   demarrer, donc on se comporte comme si oui.
-2. Elle n'injecte rien dans le contexte de gb. Le hook renvoie toujours une
-   chaine vide, donc le comportement de l'agent est inchange.
-3. Elle n'agit qu'une fois, puis devient inerte. Pas de latence ajoutee aux
-   tours suivants.
+   demarrer, donc on se comporte comme si oui. C'est aussi la convention des
+   plugins deja en place ici, qui avalent tout et renvoient None.
+2. Elle n'enregistre aucun hook et ne renvoie rien d'interpretable. Le
+   comportement de l'agent est strictement inchange.
+3. Elle n'agit qu'une fois, au chargement, puis devient inerte.
 
 Elle ecrit son releve dans PROBE_LOG, en JSON, une ligne par execution.
 
@@ -144,28 +144,30 @@ def _probe(ctx):
     return ""
 
 
-def _on_pre_llm_call(ctx, *args, **kwargs):
-    """Hook. Renvoie toujours une chaine vide : rien n'est injecte."""
-    try:
-        return _probe(ctx)
-    except Exception:
-        return ""
-
-
 def register(ctx, *args, **kwargs):
-    """Point d'entree.
+    """Point d'entree. Releve au chargement, et n'enregistre AUCUN hook.
 
-    Le nom exact attendu par Hermes fait partie de ce qu'on ignore, d'ou les
-    alias en bas de fichier. Celui qui sera appele fera le travail, les autres
-    resteront inertes.
+    Deux raisons de ne rien enregistrer. D'abord les plugins deja en place sur
+    ce Hermes utilisent `pre_verify`, `pre_tool_call`, `post_tool_call` et
+    `task_complete` — pas les `pre_llm_call` / `post_llm_call` que suppose la
+    conception de GreenKnowledge. Enregistrer un hook dont on ignore le nom
+    exact echouerait pour rien. Ensuite leurs hooks renvoient des
+    dictionnaires `{"action": ..., "message": ...}`, pas du texte : un retour
+    mal type pourrait etre interprete comme une directive. Une sonde ne doit
+    rien pouvoir diriger.
+
+    Le relevé se fait donc ici, a l'import du plugin, ce qui suffit : `ctx` est
+    deja l'objet dont on veut connaitre l'API.
+
+    Le nom attendu pour cette fonction fait partie de ce qu'on ignore, d'ou les
+    alias en bas de fichier.
     """
     try:
-        ctx.register_hook("pre_llm_call", _on_pre_llm_call)
-        _write({"event": "register", "ok": True})
+        _write({"event": "register", "entrypoint": kwargs.get("_name", "register")})
+        _probe(ctx)
     except Exception as exc:
-        # Un echec d'enregistrement est une information, pas une erreur a
-        # propager : on le note et on se tait.
-        _write({"event": "register", "ok": False, "error": repr(exc)})
+        # Un echec est une information, pas une erreur a propager.
+        _write({"event": "register_error", "error": repr(exc)})
     return None
 
 
