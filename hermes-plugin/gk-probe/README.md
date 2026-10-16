@@ -23,24 +23,28 @@ may answer the question. Nothing leaves the plugin unless you opt in.
 
 ## Install
 
-The entry-point name Hermes expects is itself unknown, so the module exposes
-`register`, `setup`, `init`, `activate` and `on_load` as aliases of the same
-function. Whichever one Hermes calls does the work.
+The local convention, read from the six plugins already in
+`/opt/data/plugins/`, is a directory holding a `plugin.yaml` manifest and an
+`__init__.py` module, optionally with further `.py` files, a `README.md` and
+`test_*.py`. One plugin carries `plugin.yaml.inactif`, so **a plugin is disabled
+by renaming its manifest** rather than through a CLI command.
 
-**Check the local convention first** — if `/opt/data/plugins/` already holds a
-plugin, copy its layout (manifest file, module name, directory structure) rather
-than guessing:
+This directory follows that layout, minus the manifest: its schema has not been
+read yet, and guessing it is the one thing that fails silently. Copy the shape
+from a working one:
 
 ```bash
 docker compose -f next_hermes/compose.yaml exec hermes bash -lc \
-  'ls -la /opt/data/plugins/; find /opt/data/plugins -maxdepth 2 -type f | head -20'
+  'cat /opt/data/plugins/gm-routing/plugin.yaml'
 ```
 
-Then:
+The entry-point name is also unconfirmed, so the module exposes `register`,
+`setup`, `init`, `activate` and `on_load` as aliases of the same function.
+Whichever one Hermes calls does the work; the others stay inert.
 
 ```bash
 cp -r hermes-plugin/gk-probe /opt/data/plugins/
-hermes plugins enable gk-probe     # or whatever this version uses
+# add plugin.yaml, matching the local schema
 ```
 
 Send the agent one message, then read the result:
