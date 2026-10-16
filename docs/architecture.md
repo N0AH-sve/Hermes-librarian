@@ -1139,7 +1139,7 @@ Mesuré sur le déploiement réel, en remplacement des valeurs du handoff.
 | Volume persistant | `./data` à côté du compose, monté sur `/opt/data`, **4,7 Go** |
 | `HERMES_HOME` | `/opt/data`, via `env_file: .env` |
 | `HOME` du processus Hermes | `/opt/data` (défini dans la commande du compose ; un `exec` voit `/root`) |
-| Skills | **`/opt/data/skills`** |
+| Skills | **`/opt/data/skills`**, **537 SKILL.md** — la prémisse du handoff (« environ 500 ») est confirmée |
 | Plugins | **`/opt/data/plugins/`** |
 | Config de Hermes | **`/opt/data/config.yaml`** — c'est là que va `mcp_allowlist` |
 | `~/.hermes` | `/opt/data/.hermes` : contient `cron/`, `scripts/`, `state/` et deux `.conf` métier. Ni skills ni plugins, et ce n'est pas le dossier de configuration principal |
@@ -1158,52 +1158,34 @@ contradiction entre `HERMES_HOME=/opt/data` et l'affirmation de gb que
 `/opt/data/home` » — était fausse : ce dossier n'existe pas. Le handoff avait
 raison sur l'emplacement des skills, gb avait raison sur `.hermes`.
 
+**La bibliothèque est dupliquée hors de sa racine.** 866 `SKILL.md` existent dans
+le volume pour une bibliothèque de 537 :
+
+| Chemin | SKILL.md | Nature |
+|---|---|---|
+| `/opt/data/skills` | **537** | la bibliothèque vivante |
+| `/opt/data/profiles` | 137 | les skills d'un profil |
+| `/opt/data/bascule-detonantes-20261015` | 137 | un instantané du précédent |
+| `/opt/data/home` | 32 | existe, mais n'est pas le `HOME` du processus |
+| `/opt/data/homr` | 20 | une faute de frappe devenue dossier |
+| `/opt/data/.venv` | 3 | embarqués dans un paquet |
+
+Le handoff soupçonnait « probablement des quasi-doublons » : en voilà la preuve
+matérielle. Deux conséquences de conception :
+
+- **Une seule racine d'indexation, nommée explicitement** dans la configuration :
+  `/opt/data/skills`, jamais une découverte récursive. Un manifeste construit
+  trop large indexerait les doublons et produirait des recommandations ambiguës,
+  c'est-à-dire précisément le défaut que GK doit corriger.
+- **GK signale les orphelins** : il compte les `SKILL.md` hors de la racine
+  indexée et le mentionne dans la synthèse hebdomadaire. Cela relève de la
+  responsabilité « se ranger » — signaler sans toucher — et personne ne le
+  remarque autrement.
+
 **Le volume n'est pas une installation propre** : scripts ad hoc à la racine
 (`_add.sh`, `_corr.py`, `_fd.py`, `_inv.py`), `__pycache__`, fichiers d'état
 divers, 97 entrées. Conséquence : `gk check` ne doit pas supposer un volume
 pristine, et le plugin doit vivre dans un sous-dossier clairement nommé.
-
-## Si le compte de skills est bien de 44
-
-À vérifier avant toute conclusion, le déploiement ayant plusieurs profils. Mais
-si le chiffre tient, il faut l'affronter.
-
-**Le raisonnement fondateur s'affaiblit.** L'argument du projet est qu'avec des
-centaines de skills, l'agent ne voit que des noms et des descriptions courtes et
-choisit donc mal. À 44 skills, ces métadonnées tiennent dans environ 2 000
-jetons : gb les voit toutes, à chaque tour.
-
-**Le symptôme reste réel** — les aveux « je n'ai pas le bon skill » ont été
-observés. Mais à 44 skills la cause n'est probablement pas le nombre, c'est
-l'autre moitié du diagnostic du handoff : **des descriptions de qualité inégale
-et des quasi-doublons**.
-
-Si c'est cela, **le remède le moins cher est de réécrire 44 descriptions**, soit
-un après-midi. Le handoff plaçait ce travail hors périmètre, ce qui se justifiait
-à 500 skills et beaucoup moins à 44. Cette hypothèse bon marché n'a jamais été
-testée.
-
-**Le banc de l'étape 8 tranche, sans rien construire** : sur les 44 vrais skills,
-métadonnées seules contre corps complet. À 90 % pour les métadonnées seules, la
-couche de recherche n'apporte presque rien et le projet doit pivoter ; à 60 %,
-elle gagne sa place. Ce banc devient donc le juge de **toute la couche de
-recherche**, et plus seulement de la question des embeddings.
-
-**Ce qui survit quel que soit le verdict**, et qui représente une bonne moitié de
-la conception :
-
-- le magasin de faits, les lignes « Connu » et « À vérifier » : sans rapport avec
-  le nombre de skills ;
-- la boucle de mesure — compter les corrections, les attribuer, en faire des cas
-  de test — utile même si GK ne recommande jamais rien ;
-- le mécanisme d'injection automatique : `pre_llm_call`, brief opaque, prompt
-  système. C'est l'infrastructure qui permet de dire quoi que ce soit à gb avant
-  qu'il réfléchisse ;
-- l'ensemble des flux, interfaces, données et résilience.
-
-À 44 skills, GK serait moins un moteur de recherche qu'un **greffier avec
-mémoire** — ce qui est exactement la moitié du projet que le principe 2 nommait
-« greffier, pas enquêteur ».
 
 ## Points ouverts
 
@@ -1217,5 +1199,4 @@ mémoire** — ce qui est exactement la moitié du projet que le principe 2 nomm
 | AVX2 sur le VPS | Non vérifié. Décide si l'auto-hébergement d'un modèle est seulement discutable en v2 |
 | Licence | À choisir avant publication. Le fichier a été supprimé au commit 3b94d02 |
 | Embeddings | Écartés de la v1 (étape 4). À rouvrir en v2 seulement si la mesure sur les vrais skills l'exige |
-| **Le nombre réel de skills** | **Remet la prémisse en cause.** Le handoff annonce « environ 500 » ; `ls /opt/data/skills` en compte **44**. À 44, noms et descriptions tiennent dans ~2 000 jetons et gb les voit tous, donc l'argument « trop nombreux pour être vus » s'effondre. À vérifier d'abord, le déploiement ayant plusieurs profils |
 | Jeu de tâches du banc d'essai | **Plus bloquant** (étape 8) : le corpus se constitue seul depuis la phase de mesure, et le banc ne sert qu'à diagnostiquer si l'A/B déçoit |
