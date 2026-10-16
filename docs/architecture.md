@@ -199,7 +199,8 @@ Trois conséquences :
 1. Le montage disque disparaît : GK n'a plus besoin du volume de données de
    Hermes monté en lecture seule. (Ce volume est `./data` relatif au compose,
    monté sur `/opt/data` dans le conteneur, et non le
-   `/home/webmanager/hermes/data` qu'annonçait le handoff.)
+   `/home/webmanager/hermes/data` qu'annonçait le handoff. Les skills y sont en
+   `/opt/data/skills`, vérifié.)
 2. « Pas de copie des skills » se renforce : GK n'a besoin du corps qu'au moment
    d'indexer (tokenisation FTS), puis il le jette. Le brief ne cite que des
    noms. À revoir à l'étape 6 si un reranker est ajouté, car lui a besoin du
@@ -1126,11 +1127,43 @@ point :
 
 Contrainte : utilisable en une seconde, et fonctionnelle même tapée nue.
 
+## L'environnement, vérifié
+
+Mesuré sur le déploiement réel, en remplacement des valeurs du handoff.
+
+| Élément | Valeur vérifiée |
+|---|---|
+| Image | `nousresearch/hermes-agent:v2026.9.21`, **épinglée**, `pull_policy: missing` |
+| Réseau | `network_mode: host` — **aucun réseau bridge disponible** |
+| Ressources de gb | `cpus: "2.0"` sur 4 vCPU de l'hôte, `memory: 6G`, `shm_size: 1gb` |
+| Volume persistant | `./data` à côté du compose, monté sur `/opt/data`, **4,7 Go** |
+| `HERMES_HOME` | `/opt/data`, via `env_file: .env` |
+| `HOME` du processus Hermes | `/opt/data` (défini dans la commande du compose ; un `exec` voit `/root`) |
+| Skills | **`/opt/data/skills`** |
+| `~/.hermes` | `/opt/data/.hermes` — existe, mais ne contient ni `skills` ni `plugins` |
+| Socket Docker | `/run/user/1001/docker.sock` monté dans gb : **rootless confirmé**, et gb a la main sur Docker |
+| CPU | **AVX et AVX2 présents** |
+| Secrets | `/opt/data/.env`, 29 Ko, plus trois sauvegardes contenant aussi des secrets |
+| API Hermes | serveur HTTP sur `${API_SERVER_PORT:-8742}` avec un `/health` |
+| Déjà en service | MCP (`.mcp-discovery.lock`), Discord (identifiant dans une sauvegarde `.env`), Curator (`.curator_backups`) |
+
+**La prétendue incohérence des chemins n'existait pas.** Le handoff voyait une
+contradiction entre `HERMES_HOME=/opt/data` et l'affirmation de gb que
+`~/.hermes` vaut `/opt/data/.hermes`. Les deux sont vrais et compatibles, puisque
+`HOME` vaut `/opt/data`. Seule l'inférence du handoff — « donc `~` vaut
+`/opt/data/home` » — était fausse : ce dossier n'existe pas. Le handoff avait
+raison sur l'emplacement des skills, gb avait raison sur `.hermes`.
+
+**Le volume n'est pas une installation propre** : scripts ad hoc à la racine
+(`_add.sh`, `_corr.py`, `_fd.py`, `_inv.py`), `__pycache__`, fichiers d'état
+divers, 97 entrées. Conséquence : `gk check` ne doit pas supposer un volume
+pristine, et le plugin doit vivre dans un sous-dossier clairement nommé.
+
 ## Points ouverts
 
 | Sujet | État |
 |---|---|
-| Emplacement des skills et des plugins | **Partiellement levé.** Le compose fait `export HOME=/opt/data`, donc dans le conteneur `~/.hermes` vaut `/opt/data/.hermes` — gb avait raison, et le raisonnement du handoff (`~` = `/opt/data/home`, d'après un `HERMES_HOME` absent du compose et vide sur l'hôte) était faux. Reste à confirmer par un `ls` **dans le conteneur** si les skills sont en `/opt/data/skills` ou `/opt/data/.hermes/skills` |
+| Emplacement des plugins et du `config.yaml` | **Skills levés, plugins non.** Vérifié dans le conteneur : `HERMES_HOME=/opt/data` (via `env_file`), les skills sont en `/opt/data/skills`, et `/opt/data/.hermes` existe mais ne contient ni `skills` ni `plugins`. Reste à inspecter les trois sous-dossiers de `.hermes` pour y trouver `config.yaml` et l'emplacement des plugins |
 | Version de Hermes | Le compose épingle `v2026.9.21`, alors que le handoff mesurait `v2026.7.20`. **Hermes a donc été mis à jour depuis**, et l'API des plugins a pu bouger : les mesures d'environnement du handoff sont à considérer comme périmées |
 | URL des docs Hermes | `hermes-agent.nousresearch.com` ne résout pas. Bloque la vérification de la stabilité des hooks et du comportement d'un plugin qui plante |
 | Code du prototype | Absent du dépôt. Les 45 tests et les 86 % de Hit@1 du handoff ne sont pas vérifiables ici |
