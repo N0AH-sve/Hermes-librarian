@@ -196,8 +196,10 @@ aucun nouveau mode de panne n'est créé.
 
 Trois conséquences :
 
-1. Le montage disque disparaît : GK n'a plus besoin de
-   `/home/webmanager/hermes/data` monté en lecture seule.
+1. Le montage disque disparaît : GK n'a plus besoin du volume de données de
+   Hermes monté en lecture seule. (Ce volume est `./data` relatif au compose,
+   monté sur `/opt/data` dans le conteneur, et non le
+   `/home/webmanager/hermes/data` qu'annonçait le handoff.)
 2. « Pas de copie des skills » se renforce : GK n'a besoin du corps qu'au moment
    d'indexer (tokenisation FTS), puis il le jette. Le brief ne cite que des
    noms. À revoir à l'étape 6 si un reranker est ajouté, car lui a besoin du
@@ -450,16 +452,17 @@ hypothèse à mesurer, d'où l'ordre imposé à l'étape 6 :
    alors avec un gain mesuré en face d'une exposition connue, au lieu d'être
    supposée d'avance.
 
-**L'auto-hébergement du modèle est écarté**, et la contrainte « tout par API »
-du handoff s'avère bien fondée pour des raisons qu'elle n'énonçait pas. Mesures
-du VPS : 4 vCPU QEMU « Virtual CPU version 2.5+ », un modèle générique qui
-n'expose probablement pas AVX2 — à confirmer par
-`grep -o -m1 -E 'avx512[a-z]*|avx2|avx' /proc/cpuinfo | sort -u`. Sans AVX2,
-l'inférence CPU perd un facteur 3 à 10 : une requête courte passerait de 100-300
-ms à 0,5-3 s, et l'indexation de 500 skills de quelques minutes à des heures. Il
-y aurait une ironie à retirer le LLM du chemin de service pour gagner 4 secondes
-et y remettre un modèle local qui en coûte 2. S'y ajoute une charge déjà à 2,2
-sur 4 vCPU, soit 1,8 vCPU de marge à partager avec gb.
+**L'auto-hébergement du modèle est écarté pour la v1**, mais pas pour les
+raisons avancées d'abord. La décision tient sur la simplicité et sur l'exigence
+de mesurer avant d'ajouter, pas sur le matériel.
+
+L'argument matériel initial était que le VPS expose un modèle de processeur QEMU
+générique, probablement sans AVX2, ce qui aurait coûté un facteur 3 à 10 sur
+l'inférence. **Vérification faite, c'était faux** : `avx` et `avx2` sont tous
+deux présents. Et le compose limite Hermes à `cpus: "2.0"` sur 4, donc deux vCPU
+entiers restent hors de sa portée. Avec AVX2, 60 Go de disque libéré et 6,2 Go de
+RAM disponible, **un modèle d'embeddings local est faisable** et mérite d'être
+évalué sérieusement en v2 si la mesure réclame des embeddings.
 
 ### Un conflit de compteurs, tranché
 
@@ -757,7 +760,7 @@ tour.
 | | |
 |---|---|
 | Forme | service ajouté au `docker-compose.yml` de gb |
-| Réseau | interne, `http://gk:8765/mcp`, aucun port publié |
+| Réseau | **boucle locale**, `http://127.0.0.1:8765/mcp` — voir la note ci-dessous |
 | Image de base | `python:3.11-slim`, tag épinglé |
 | Utilisateur | non-root |
 | Volumes | un volume dédié pour la base, aucun montage des données de Hermes |
@@ -767,6 +770,16 @@ tour.
 Les 512 Mo du handoff supposaient des vecteurs et peut-être un modèle local.
 Sans eux, GK c'est Python, SQLite et un petit index, vraisemblablement 80 à
 150 Mo. Le chiffre de 256 Mo sera **mesuré après déploiement, pas deviné**.
+
+**Le réseau : pas de bridge possible.** Le compose de gb tourne en
+`network_mode: host`, donc il n'existe aucun réseau bridge et la résolution par
+nom de service (`http://gk:8765`) est impossible. GK est donc sur un réseau
+bridge à lui, **publié sur la boucle locale seule** :
+`ports: ["127.0.0.1:8765:8765"]`, et le plugin vise `http://127.0.0.1:8765`.
+GK garde ainsi son propre espace réseau — il ne voit pas les autres services de
+l'hôte — tandis que Hermes l'atteint par la boucle locale. L'alternative (GK
+aussi en `network_mode: host`) a été écartée : plus simple, mais GK verrait
+toute la pile de l'hôte.
 
 Le `deploy/` du prototype, qui cible systemd et pipx, est à jeter.
 
@@ -854,14 +867,17 @@ Le modèle de menace réel : personne n'attaque ce service. Les risques véritab
 sont un port publié par erreur, gb qui fait quelque chose de maladroit, et l'URL
 du webhook qui fuite. La réponse est proportionnée à cela.
 
-**La vraie frontière est le réseau** : aucun port publié, réseau interne du
-compose uniquement. C'est elle qui protège, pas les jetons.
+**La frontière est le binding sur la boucle locale** plus le pare-feu de
+l'hôte. Ce n'est pas un réseau docker interne, puisque gb tourne en
+`network_mode: host` : c'est un cran moins fort, et il faut le savoir.
 
-**Deux jetons distincts**, un par point d'entrée. Mais les deux finiront dans le
-`config.yaml` de Hermes, lisible par tout ce qui tourne dans ce conteneur : la
-séparation empêche gb d'appeler `catalog` ou `observe` par accident ou par
-initiative malheureuse. C'est un **garde-fou, pas une frontière de sécurité**, et
-mieux vaut le dire que se raconter une histoire.
+**Deux jetons distincts**, un par point d'entrée, mais ils ne protègent presque
+rien et il vaut mieux le dire. Les deux finiront dans la configuration de
+Hermes, lisible dans son conteneur ; et surtout **le compose monte le socket
+Docker de l'hôte dans gb** (`/run/user/1001/docker.sock`, rootless, uid 1001),
+donc gb peut arrêter le conteneur GK, y entrer et lire son environnement. Face à
+cela aucun jeton ne tient. La séparation des jetons est un **garde-fou contre la
+maladresse**, pas une frontière de sécurité.
 
 **La file de confirmation des faits est aussi un contrôle de sécurité.** Un fait
 de GK est injecté dans le prompt de gb, et les faits candidats sont extraits de
@@ -1114,8 +1130,8 @@ Contrainte : utilisable en une seconde, et fonctionnelle même tapée nue.
 
 | Sujet | État |
 |---|---|
-| Chemins réels dans le conteneur de gb | Non vérifié. `~/.hermes` est le défaut documenté, mais `HERMES_HOME=/opt/data` le surcharge. À lever par `echo $HERMES_HOME; ls -la /opt/data` |
-| `docker-compose.yml` de gb | Non récupéré. Dira si l'image est épinglée et quels volumes sont montés |
+| Emplacement des skills et des plugins | **Partiellement levé.** Le compose fait `export HOME=/opt/data`, donc dans le conteneur `~/.hermes` vaut `/opt/data/.hermes` — gb avait raison, et le raisonnement du handoff (`~` = `/opt/data/home`, d'après un `HERMES_HOME` absent du compose et vide sur l'hôte) était faux. Reste à confirmer par un `ls` **dans le conteneur** si les skills sont en `/opt/data/skills` ou `/opt/data/.hermes/skills` |
+| Version de Hermes | Le compose épingle `v2026.9.21`, alors que le handoff mesurait `v2026.7.20`. **Hermes a donc été mis à jour depuis**, et l'API des plugins a pu bouger : les mesures d'environnement du handoff sont à considérer comme périmées |
 | URL des docs Hermes | `hermes-agent.nousresearch.com` ne résout pas. Bloque la vérification de la stabilité des hooks et du comportement d'un plugin qui plante |
 | Code du prototype | Absent du dépôt. Les 45 tests et les 86 % de Hit@1 du handoff ne sont pas vérifiables ici |
 | Écriture GitHub | L'app Claude a la lecture seule sur le dépôt. `git push` et l'API renvoient 403. À accorder depuis https://github.com/apps/claude/installations/select_target |
