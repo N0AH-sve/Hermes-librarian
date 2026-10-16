@@ -1,0 +1,23 @@
+# Motifs de detection des corrections. Rechargeable a chaud.
+#
+# GELE PENDANT UNE MESURE : l'empreinte de ce fichier est enregistree avec
+# chaque correction, et `gk stats` refuse de comparer deux periodes dont les
+# empreintes diffèrent. Ajouter un motif au milieu d'une mesure ferait monter le
+# chiffre sans que rien n'ait change chez l'agent.
+#
+# Ecrits sans accents et en minuscules : la comparaison replie le texte, donc
+# « utilisé » et « utilise » se detectent pareil.
+
+corrections:
+  - "tu as raison"
+  - "vous avez raison"
+  - "j'?ai utilise le mauvais"
+  - "je n'?ai pas (?:pris|utilise) le bon"
+  - "je n'?ai pas le bon skill"
+  - "ce n'?etait pas le bon skill"
+  - "j'?aurais du (?:utiliser|prendre|charger)"
+  - "il (?:aurait|eut) fallu (?:utiliser|prendre)"
+  - "effectivement,? je n'?ai pas"
+  - "en effet,? je n'?ai pas"
+  - "mea culpa"
+  - "je me suis trompe"
