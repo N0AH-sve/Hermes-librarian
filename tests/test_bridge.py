@@ -186,13 +186,28 @@ def test_skill_lifecycle_transmet_les_champs_reels(tmp_path, monkeypatch):
     }
 
 
-def test_aucun_hook_d_entree_en_phase_1(tmp_path, monkeypatch):
+def test_aucun_hook_d_entree(tmp_path, monkeypatch):
     """Le chemin d'entree de l'agent n'est pas touche : il n'y a pas de
-    pre_llm_call, et le manifeste ne le declare pas."""
+    pre_llm_call, et le manifeste ne l'ENREGISTRE pas.
+
+    La verification porte sur la liste `hooks` analysee, non sur le texte brut
+    du manifeste : la description y mentionne desormais `pre_llm_call` pour dire
+    qu'il est absent, et une recherche de sous-chaine confondait les deux. Un
+    test qui echoue sur sa propre documentation mesure la mauvaise chose.
+    """
     mod = charger(tmp_path, monkeypatch)
     assert not hasattr(mod, "on_pre_llm_call")
-    manifeste = (RACINE / "hermes-plugin" / "gk-bridge" / "plugin.yaml").read_text()
-    assert "pre_llm_call" not in manifeste
+    assert "pre_llm_call" not in [h for h, _ in mod.HOOKS], "ni cable dans le code"
+    lignes = (
+        (RACINE / "hermes-plugin" / "gk-bridge" / "plugin.yaml")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    )
+    declares = [
+        l.strip()[2:].strip() for l in lignes if l.startswith("  - ")
+    ]
+    assert declares == ["transform_llm_output", "on_skill_lifecycle"]
+    assert "pre_llm_call" not in declares
 
 
 # -- enregistrement des hooks ---------------------------------------------
