@@ -1689,8 +1689,68 @@ Le constructeur est trouvé : `/opt/hermes/agent/prompt_builder.py:1370` et
 `:1388`, deux chemins de rendu. `index_lines` à la ligne 1370 est ce que GM
 appelle « l'étape d'index » du prompt système.
 
-Reste à vérifier, et c'est la dernière chose : **quelle posture gb utilise**. S'il
-n'est pas en `focus`, la phase 2 reste suspendue pour de bon.
+### Conclusion : la phase 2 est morte, et ce n'était pas le bon problème
+
+`agent/prompt_builder.py`, lu directement :
+
+```python
+if category in demoted:
+    index_lines.append(f"  {category} [names only]: {', '.join(...)}")
+    continue
+...
+index_lines.append(f"    - {name}: {desc}" if desc else f"    - {name}")
+```
+
+Et le `config.yaml` de gb ne contient ni `posture` ni `focus`, seulement des
+`toolsets`. Donc `demoted` est vide : **chaque skill visible est listé avec sa
+description**. Le prompt système ne se contente pas de lister, il ordonne :
+
+> Before replying, scan the skills below. If a skill matches or is even
+> partially relevant to your task, you MUST load it with `skill_view(name)`…
+> Err on the side of loading — it is always better to have context you don't
+> need than to miss critical steps, pitfalls, or established workflows.
+
+**Il n'y a donc pas de problème de recherche.** Un index de GK répéterait ce qui
+est déjà là. La phase 2 — index plein texte, BM25, découpage par rubrique,
+tokenizer français, colonne à poids négatif, banc d'essai, corpus à constituer
+— est abandonnée, pas reportée.
+
+**Ce que la découverte révèle vaut mieux que ce qu'elle enlève.** Si
+`skills_gate.py` a été écrit à la main par-dessus ce catalogue et cette
+instruction, l'échec n'est pas **informationnel** : gb sait quels skills
+existent. Il est **comportemental** — gb ne scanne pas, ou n'applique pas
+l'instruction. C'est précisément la distinction que la phase 1 mesure déjà :
+`bad_recommendation` contre `brief_ignored`. L'instrument qui sépare les deux a
+été construit avant qu'on sache que ce serait la seule question qui compte.
+
+### Ce que GK devient
+
+| Garde | Pourquoi |
+|---|---|
+| **La mesure** (phase 1, déployée) | Seule chose qui dise si gb charge ce qu'il devrait, et laquelle des deux causes agit |
+| **Les faits sourcés** (phase 4) | Indépendant de la recherche. `RÈGLE ABSOLUE` datée et attribuée en est l'amorce |
+| **Le rangement** | Auditer les noms écrits à la main dans `DOMAINS`, signaler orphelins, doublons et skills trop gros |
+
+| Abandonne | Pourquoi |
+|---|---|
+| **L'index et la recherche** | Le catalogue complet est déjà dans le prompt système |
+| **Le brief de recommandation** | Il répéterait le catalogue |
+| **Le banc d'essai de recherche** | Il n'y a plus de recherche à évaluer |
+
+### La dernière inconnue
+
+`hidden_note` dans `prompt_builder.py`, et `plugins.py:1002` : « Not in
+`~/.hermes/skills/` nor `<available_skills>` — explicit loads only ». Des skills
+**sont donc cachables du catalogue**. S'ils sont nombreux, il reste un trou
+réel et bien délimité ; s'ils sont deux, non.
+
+Note aussi : la branche `is_single_query_session()` rend un prompt différent et
+plus court (`ONESHOT_SKILLS_LOAD_GUIDANCE`), sans le bloc d'instructions. Les
+sessions à requête unique ne reçoivent donc pas la même consigne de chargement.
+
+Et cela renchérit sur la décision « retirer l'index du prompt système » :
+retirer ce bloc ne retirerait pas seulement un catalogue mis en cache, mais
+aussi l'instruction « you MUST load it » qui l'accompagne.
 
 **Deux inconnues fermées au passage.** `plugins.py:940` définit
 `register_system_prompt_section` : un plugin **peut** ajouter une section au
