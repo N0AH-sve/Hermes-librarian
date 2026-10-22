@@ -216,3 +216,110 @@ def test_gk_declencheurs_rend_la_lecture_quand_il_a_des_sections(tmp_path, capsy
     out = json.loads(capsys.readouterr().out)
     assert out["negatif_en_prose"] == 1
     assert out["lecture"], "un chiffre doit arriver avec sa lecture"
+
+
+# -- le chevauchement des marqueurs, et la marge d'erreur ------------------
+
+
+def test_un_marqueur_n_est_pas_compte_deux_fois():
+    """Le defaut du premier relevé : une ligne « ne jamais » comptait pour
+    `ne jamais` ET pour `jamais`, d'ou un `jamais: 35` gonfle par son propre
+    sous-marqueur."""
+    assert marqueurs_de("Ne jamais charger ceci") == ["ne jamais"]
+    assert marqueurs_de("Le client n'a jamais commande") == ["jamais"]
+    assert marqueurs_de("Ne pas charger") == ["ne pas"]
+
+
+def test_le_comptage_strict_ecarte_les_marqueurs_faibles(store):
+    """« le client n'a jamais commande » est une condition positive, pas une
+    contre-indication. La decision se prend sur le comptage strict."""
+    peupler(store, {
+        "faible": [("Déclencheurs", "Charger si le client n'a jamais commande.")],
+        "fort": [("Déclencheurs", "Charger pour X.\nNe pas charger pour Y.")],
+    })
+    m = mesurer(store)
+    assert m["negatif_en_prose"] == 2, "comptage large : les deux"
+    assert m["negatif_en_prose_strict"] == 1, "comptage strict : le vrai seul"
+
+
+def test_la_lecture_annonce_la_marge_d_erreur():
+    m = {
+        "skills_au_catalogue": 182, "skills_avec_declencheurs": 65,
+        "negatif_structurel": 3, "negatif_en_prose": 21,
+        "negatif_en_prose_strict": 9, "skills_citant_un_autre_skill": 16,
+    }
+    texte = " ".join(lecture(m))
+    assert "12 skills" in texte, "la decision se prend sur le strict : 3 + 9"
+    assert "Au plus 24" in texte, "et la borne large est dite"
+
+
+# -- gk skill et gk rafraichir --------------------------------------------
+
+
+def test_gk_skill_montre_le_decoupage(tmp_path, capsys, monkeypatch):
+    s = Store(tmp_path / "s.db")
+    peupler(s, {"gm-presta-commande": [
+        ("Déclencheurs", "Charger pour une commande fournisseur.\nNe pas charger pour un avoir."),
+    ]})
+    s.close()
+    monkeypatch.setenv("GK_DATABASE", str(tmp_path / "s.db"))
+    assert cli_main(["--json", "skill", "gm-presta-commande"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["ok"] is True and out["a_jour"] is True
+    rubrique = out["declencheurs"][0]
+    assert "commande fournisseur" in rubrique["positif"]
+    assert "avoir" in rubrique["negatif"]
+    assert "ne pas" in rubrique["marqueurs"]
+
+
+def test_gk_skill_dit_franchement_quand_il_n_y_a_rien(tmp_path, capsys, monkeypatch):
+    s = Store(tmp_path / "s.db")
+    peupler(s, {"gm-sans": []})
+    s.close()
+    monkeypatch.setenv("GK_DATABASE", str(tmp_path / "s.db"))
+    assert cli_main(["--json", "skill", "gm-sans"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["declencheurs"] == []
+    assert "que le nom" in out["remarque"]
+
+
+def test_gk_skill_sur_un_nom_inconnu(tmp_path, capsys, monkeypatch):
+    Store(tmp_path / "s.db").close()
+    monkeypatch.setenv("GK_DATABASE", str(tmp_path / "s.db"))
+    assert cli_main(["--json", "skill", "fantome"]) == 1
+    assert json.loads(capsys.readouterr().out)["ok"] is False
+
+
+def test_rafraichir_fait_reclamer_un_manifeste_au_prochain_message(tmp_path, capsys, monkeypatch):
+    """GK ne parle jamais le premier : il pose un drapeau que le prochain
+    `observe` traduit en besoin, et le pont l'honore sans modification."""
+    from gk.service import Service
+
+    svc = Service.open(tmp_path / "r.db")
+    try:
+        svc.catalog(
+            [{"path": "cat/a/SKILL.md", "name": "a", "fingerprint": "1"}], complete=True
+        )
+        svc.sections([{"path": "cat/a/SKILL.md", "fingerprint": "1", "sections": []}])
+        assert svc.observe("s", "une reponse")["besoins"] == [], "rien a reclamer"
+        svc.catalog_.demander_manifeste()
+        assert svc.observe("s", "une reponse")["besoins"] == ["tranches_attendues"]
+        # Le manifeste arrive : la demande est servie, et le besoin s'eteint.
+        svc.catalog(
+            [{"path": "cat/a/SKILL.md", "name": "a", "fingerprint": "1"}], complete=True
+        )
+        assert svc.observe("s", "une reponse")["besoins"] == []
+    finally:
+        svc.close()
+
+
+def test_la_commande_rafraichir_pose_le_drapeau(tmp_path, capsys, monkeypatch):
+    s = Store(tmp_path / "c.db")
+    peupler(s, {"a": []})
+    s.close()
+    monkeypatch.setenv("GK_DATABASE", str(tmp_path / "c.db"))
+    assert cli_main(["--json", "rafraichir"]) == 0
+    assert json.loads(capsys.readouterr().out)["demande"] is True
+    s = Store(tmp_path / "c.db")
+    assert Catalog(s).manifeste_demande() is True
+    s.close()

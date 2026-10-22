@@ -137,6 +137,8 @@ class Catalog:
                 )
                 disparus = cur.rowcount or 0
             self.store.set_counter("last_catalog_ts", ts)
+            # La demande est servie : le manifeste est arrive.
+            self._oublier_demande()
             self.store.bump("catalog_calls")
             if complete:
                 self.store.set_counter("last_complete_catalog_ts", ts)
@@ -235,6 +237,26 @@ class Catalog:
         }
 
     # -- etat ---------------------------------------------------------------
+
+    # -- rafraichissement a la demande ------------------------------------
+
+    # GK ne parle jamais le premier : il ne peut pas reclamer un manifeste, il
+    # peut seulement le signaler dans une reponse qu'il rend deja. Ce drapeau
+    # fait dire `tranches_attendues` au prochain `observe`, et le pont honore ce
+    # besoin avec un plancher d'une minute -- sans aucune modification du pont.
+    #
+    # C'est ce qui permet a une edition de SKILL.md d'etre prise en compte en
+    # une minute au lieu d'attendre la ronde horaire.
+    DEMANDE = "manifeste_demande"
+
+    def demander_manifeste(self) -> None:
+        self.store.set_counter(self.DEMANDE, now())
+
+    def manifeste_demande(self) -> bool:
+        return self.store.counter(self.DEMANDE) > 0
+
+    def _oublier_demande(self) -> None:
+        self.store.set_counter(self.DEMANDE, 0.0)
 
     def total(self) -> int:
         row = self.store.one("SELECT COUNT(*) c FROM skills WHERE missing_since IS NULL")

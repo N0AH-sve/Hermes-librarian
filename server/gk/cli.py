@@ -23,7 +23,7 @@ from pathlib import Path
 
 from .catalog import Catalog
 from .config import Config
-from .declencheurs import lecture, mesurer
+from .declencheurs import decouper, lecture, mesurer
 from .corrections import (
     BAD_RECOMMENDATION,
     BRIEF_IGNORED,
@@ -255,6 +255,78 @@ def cmd_catalogue(args, cfg: Config) -> int:
     return 0
 
 
+def cmd_skill(args, cfg: Config) -> int:
+    """Les quatre champs tels que GK les a indexes, pour un skill.
+
+    Sert a verifier qu'une section de declencheurs qu'on vient d'ecrire est lue
+    comme on le croit : le decoupage positif/negatif est une devinette sur du
+    texte redige par des humains, et il doit pouvoir se relire.
+    """
+    with Store(cfg.database) as store:
+        nom = args.nom
+        row = store.one(
+            "SELECT * FROM skills WHERE name = ? OR path = ? OR path LIKE ? "
+            "ORDER BY (name = ?) DESC LIMIT 1",
+            (nom, nom, f"%{nom}%", nom),
+        )
+        if row is None:
+            _emit({"ok": False, "erreur": f"aucun skill ne correspond a {nom!r}"}, args)
+            return 1
+        sections = store.query(
+            "SELECT heading, text FROM skill_sections WHERE path = ? ORDER BY heading",
+            (row["path"],),
+        )
+        rubriques = []
+        for s in sections:
+            positif, negatif, marqueurs = decouper(s["heading"], s["text"] or "")
+            rubriques.append({
+                "titre": s["heading"],
+                "positif": positif,
+                "negatif": negatif,
+                "marqueurs": sorted(marqueurs),
+            })
+        a_jour = bool(row["indexed_fingerprint"]) and (
+            row["fingerprint"] == row["indexed_fingerprint"]
+        )
+        _emit({
+            "ok": True,
+            "name": row["name"],
+            "path": row["path"],
+            "category": row["category"],
+            "description": row["description"],
+            "declencheurs": rubriques,
+            "a_jour": a_jour,
+            "disparu": bool(row["missing_since"]),
+            # Dire franchement ce qui manque : un skill sans declencheurs n'est
+            # pas une anomalie, c'est le cas de 117 des 182.
+            "remarque": None if rubriques else (
+                "aucune section de declencheurs : l'index ne portera que le nom "
+                "et la description pour ce skill"
+            ),
+        }, args)
+    return 0
+
+
+def cmd_rafraichir(args, cfg: Config) -> int:
+    """Demande un manifeste au prochain message de l'agent.
+
+    GK ne parle jamais le premier : il pose un drapeau que le prochain `observe`
+    traduit en besoin `tranches_attendues`, que le pont honore avec un plancher
+    d'une minute. Donc apres une edition de SKILL.md, un message a gb suffit a
+    la faire prendre en compte, au lieu d'attendre la ronde horaire.
+    """
+    with Store(cfg.database) as store:
+        catalogue = Catalog(store)
+        catalogue.demander_manifeste()
+        _emit({
+            "ok": True,
+            "demande": True,
+            "suite": "envoyez un message a l'agent : la ronde partira dans la "
+                     "minute qui suit sa reponse",
+        }, args)
+    return 0
+
+
 def cmd_declencheurs(args, cfg: Config) -> int:
     """Mesure avant de trancher : la colonne a poids negatif ne vaut que si les
     skills declarent reellement quand NE PAS les charger. Lecture seule."""
@@ -345,6 +417,15 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser(
         "catalogue", help="l'etat du catalogue recu par manifeste"
     ).set_defaults(func=cmd_catalogue)
+
+    sk = sub.add_parser("skill", help="les quatre champs indexes d'un skill")
+    sk.add_argument("nom", help="nom du skill, ou fragment de son chemin")
+    sk.set_defaults(func=cmd_skill)
+
+    sub.add_parser(
+        "rafraichir",
+        help="demander un manifeste au prochain message de l'agent",
+    ).set_defaults(func=cmd_rafraichir)
 
     d = sub.add_parser(
         "declencheurs",

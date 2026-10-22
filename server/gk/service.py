@@ -266,7 +266,10 @@ class Service:
             besoins: list[str] = []
             if self.catalog_.total() == 0:
                 besoins.append("catalogue_vide")
-            elif self.catalog_.wanted(limite=1):
+            elif self.catalog_.wanted(limite=1) or self.catalog_.manifeste_demande():
+                # `manifeste_demande` est pose par `gk rafraichir`. C'est le seul
+                # moyen pour GK de hater un manifeste sans parler le premier, et
+                # il ne demande aucune modification du pont.
                 besoins.append("tranches_attendues")
             return besoins
         except Exception as exc:  # pragma: no cover - chemin de panne

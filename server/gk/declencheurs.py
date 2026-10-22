@@ -43,8 +43,13 @@ TITRES_NEGATIFS = (
 )
 
 # Marqueurs de contre-indication en prose, comptes separement pour qu'un
-# marqueur bruyant se voie. `jamais` seul est le plus suspect : « charger quand
-# le client n'a jamais commande » est une condition positive.
+# marqueur bruyant se voie.
+#
+# CORRIGE apres le premier relevé reel : les marqueurs se CHEVAUCHENT. Une ligne
+# portant « ne jamais » comptait a la fois pour `ne jamais` et pour `jamais`, et
+# le relevé du 2026-10-22 donnait `jamais: 35` contre `ne jamais: 13` -- un
+# chiffre gonfle par son propre sous-marqueur. Seul le marqueur le plus long est
+# retenu par ligne.
 MARQUEURS = (
     "ne pas",
     "ne jamais",
@@ -66,6 +71,13 @@ MARQUEURS = (
     "except",
 )
 
+# Marqueurs FAIBLES : presents dans des tournures qui ne sont pas des
+# contre-indications. « le client n'a jamais commande » est une condition
+# positive ; « sauf le week-end » precise un declencheur au lieu de l'exclure.
+# Le comptage est rendu avec ET sans eux, pour que la decision connaisse sa
+# propre marge d'erreur.
+MARQUEURS_FAIBLES = ("jamais", "sauf", "except")
+
 # Un extrait de section ne sert qu'au diagnostic, et il est borne.
 MAX_EXEMPLE_CHARS = 120
 
@@ -76,18 +88,37 @@ def titre_negatif(heading: str) -> bool:
 
 
 def marqueurs_de(ligne: str) -> list[str]:
+    """Les marqueurs d'une ligne, **sans chevauchement**.
+
+    Un marqueur qui est un sous-mot d'un autre marqueur trouve est ecarte :
+    « ne jamais charger » rend `ne jamais` et non pas aussi `jamais`. Sans cela
+    le comptage se gonfle tout seul, ce qu'un premier relevé a montre.
+    """
     plie = fold(ligne or "")
-    return [m for m in MARQUEURS if m in plie]
+    trouves = [m for m in MARQUEURS if m in plie]
+    return [
+        m for m in trouves
+        if not any(autre != m and m in autre for autre in trouves)
+    ]
 
 
-def decouper(heading: str, texte: str) -> tuple[str, str, Counter]:
+def marqueurs_forts(ligne: str) -> list[str]:
+    return [m for m in marqueurs_de(ligne) if m not in MARQUEURS_FAIBLES]
+
+
+def decouper(heading: str, texte: str, strict: bool = False) -> tuple[str, str, Counter]:
     """Rend `(positif, negatif, marqueurs_vus)`.
 
     Un titre deja negatif envoie tout son texte du cote negatif. Sinon le
     decoupage est **ligne par ligne** : une ligne qui porte un marqueur passe en
     negatif, les autres restent positives. Grossier a dessein — c'est une mesure
     avant d'etre un mecanisme, et le resultat doit rester lisible a la main.
+
+    `strict=True` ignore les marqueurs faibles (`jamais`, `sauf`, `except`), qui
+    apparaissent dans des tournures positives. L'ecart entre les deux comptages
+    est la marge d'erreur de la mesure, et elle doit etre dite.
     """
+    reperer = marqueurs_forts if strict else marqueurs_de
     vus: Counter = Counter()
     if titre_negatif(heading):
         for ligne in (texte or "").splitlines():
@@ -96,7 +127,7 @@ def decouper(heading: str, texte: str) -> tuple[str, str, Counter]:
     positif: list[str] = []
     negatif: list[str] = []
     for ligne in (texte or "").splitlines():
-        trouves = marqueurs_de(ligne)
+        trouves = reperer(ligne)
         if trouves:
             vus.update(trouves)
             negatif.append(ligne)
@@ -122,6 +153,7 @@ def mesurer(store: Store, exemples: bool = False) -> dict:
     noms_plies = {fold(n): n for n in noms.values() if len(n) >= 6}
 
     par_skill: dict[str, dict] = {}
+    strict_par_skill: set[str] = set()
     marqueurs: Counter = Counter()
     titres: Counter = Counter()
     echantillons: list[str] = []
@@ -138,6 +170,11 @@ def mesurer(store: Store, exemples: bool = False) -> dict:
         etat = par_skill.setdefault(
             path, {"negatif_structurel": False, "negatif_prose": False, "cite": set()}
         )
+        # Le meme decoupage, sans les marqueurs faibles : l'ecart entre les
+        # deux est la marge d'erreur de la mesure.
+        _, negatif_strict, _ = decouper(heading, texte, strict=True)
+        if negatif_strict:
+            strict_par_skill.add(path)
         if titre_negatif(heading):
             sections_titre_negatif += 1
             etat["negatif_structurel"] = True
@@ -162,12 +199,19 @@ def mesurer(store: Store, exemples: bool = False) -> dict:
         if e["negatif_prose"] and not e["negatif_structurel"]
     )
     citants = {p: sorted(e["cite"]) for p, e in par_skill.items() if e["cite"]}
+    prose_strict = sum(
+        1 for p, e in par_skill.items()
+        if p in strict_par_skill and not e["negatif_structurel"]
+    )
     return {
         "skills_au_catalogue": total_skills,
         "skills_avec_declencheurs": avec_section,
         "sections": len(sections),
         "negatif_structurel": structurel,
         "negatif_en_prose": prose,
+        # Hors marqueurs faibles (`jamais`, `sauf`, `except`), qui apparaissent
+        # dans des tournures positives. C'est ce comptage qui porte la decision.
+        "negatif_en_prose_strict": prose_strict,
         "sans_contre_indication": avec_section - structurel - prose,
         "sections_a_titre_negatif": sections_titre_negatif,
         "octets_positifs": octets_positifs,
@@ -185,13 +229,18 @@ def lecture(m: dict) -> list[str]:
     apres coup."""
     lignes: list[str] = []
     avec = m["skills_avec_declencheurs"] or 1
-    negatifs = m["negatif_structurel"] + m["negatif_en_prose"]
-    part = 100.0 * negatifs / avec
     total = m["skills_au_catalogue"] or 1
+    # La decision se prend sur le comptage STRICT : le comptage large inclut
+    # `jamais`, `sauf` et `except`, qui apparaissent dans des tournures
+    # positives. Annoncer le chiffre flatteur serait se tromper soi-meme.
+    large = m["negatif_structurel"] + m["negatif_en_prose"]
+    negatifs = m["negatif_structurel"] + m.get("negatif_en_prose_strict", m["negatif_en_prose"])
+    part = 100.0 * negatifs / avec
     part_catalogue = 100.0 * negatifs / total
     lignes.append(
         f"Contre-indication : {negatifs} skills sur {m['skills_avec_declencheurs']} "
-        f"qui ont des declencheurs ({part:.0f} %), soit {part_catalogue:.0f} % du catalogue."
+        f"qui ont des declencheurs ({part:.0f} %), soit {part_catalogue:.0f} % du "
+        f"catalogue. Au plus {large} en comptant les marqueurs faibles."
     )
     if part_catalogue < 10:
         lignes.append(
