@@ -1737,12 +1737,34 @@ l'instruction. C'est précisément la distinction que la phase 1 mesure déjà :
 | **Le brief de recommandation** | Il répéterait le catalogue |
 | **Le banc d'essai de recherche** | Il n'y a plus de recherche à évaluer |
 
-### La dernière inconnue
+### La dernière inconnue, fermée
 
-`hidden_note` dans `prompt_builder.py`, et `plugins.py:1002` : « Not in
-`~/.hermes/skills/` nor `<available_skills>` — explicit loads only ». Des skills
-**sont donc cachables du catalogue**. S'ils sont nombreux, il reste un trou
-réel et bien délimité ; s'ils sont deux, non.
+`prompt_builder.py:1259` :
+
+```
+``compact_categories`` (coding posture) demotes categories to a names-only line
+— nothing is ever hidden.
+```
+
+**Rien n'est jamais caché.** Le catalogue est exhaustif. `hidden_note` concerne
+les skills enregistrés par des plugins (`plugins.py:1002` : « Not in
+`~/.hermes/skills/` nor `<available_skills>` — explicit loads only »), qui ne
+sont pas des fichiers de la bibliothèque. Aucun trou, donc : l'abandon de la
+phase 2 est sans réserve.
+
+### Le chiffre à produire ensuite
+
+gb dispose de toute l'information et d'un ordre explicite de charger. Si
+`skills_gate.py` a dû être écrit par-dessus, c'est que l'ordre n'est pas suivi —
+et personne n'a jamais mesuré à quelle fréquence.
+
+La phase 1 collecte déjà les deux moitiés du chiffre sans le calculer :
+`observe` compte les tours, `skill_lifecycle` enregistre les skills chargés. La
+différence donne **le nombre de tours où gb a répondu sans charger aucun
+skill**, malgré le « you MUST load it » du prompt système. Aucune nouvelle
+collecte n'est nécessaire, seulement une requête de plus dans `gk stats`. C'est
+probablement la mesure la plus parlante que GK puisse rendre, et elle remplace
+tout le banc d'essai de recherche abandonné.
 
 Note aussi : la branche `is_single_query_session()` rend un prompt différent et
 plus court (`ONESHOT_SKILLS_LOAD_GUIDANCE`), sans le bloc d'instructions. Les
