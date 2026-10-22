@@ -1300,6 +1300,61 @@ matérielle. Deux conséquences de conception :
 divers, 97 entrées. Conséquence : `gk check` ne doit pas supposer un volume
 pristine, et le plugin doit vivre dans un sous-dossier clairement nommé.
 
+## skills_gate.py : la phase 3 existe déjà
+
+Relevé le 2026-10-22 dans `hooks.pre_llm_call` du `config.yaml` de l'agent :
+`/opt/data/hooks/skills_gate.py`, 350 lignes, un hook shell en production.
+
+C'est une implémentation de ce que la conception prévoyait pour la phase 3.
+
+| Décision de conception | Ce que `skills_gate.py` fait déjà |
+|---|---|
+| Injection automatique avant que l'agent réfléchisse | fait, sur `pre_llm_call` |
+| Brief accolé au message utilisateur | fait — et **jamais dans le prompt système, pour ne pas invalider le cache de prompt** |
+| Ignorer les messages triviaux | fait : `EXEMPT_PATTERNS` couvre politesses et questions d'état mesurable |
+| Ne jamais bloquer l'agent | fait : « toute exception => sortie vide + exit 0 » |
+| Rappeler les skills pertinents avant rédaction | fait, par mots-clés d'action et de domaine |
+
+Il déduplique par session. Son contrat est `{session_id, user_message,
+is_first_turn, model, platform}` sur stdin, `{"context": "..."}` sur stdout.
+
+**Une contrainte que la conception ignorait** : le contexte ne doit jamais aller
+dans le prompt système, sous peine d'invalider le cache de prompt. Coût réel,
+non mentionné jusqu'ici.
+
+### Ce que cela change par phase
+
+**Phase 1 — y gagne.** Elle mesure ce qui injecte, quoi que ce soit. La
+référence cesse d'être « l'agent sans aide » pour devenir « l'aide qui existe
+déjà », ce qui est la comparaison honnête. La chaîne déployée peut mesurer
+`skills_gate.py` dès maintenant.
+
+**Phase 2 — devient plus intéressante.** Le banc comparera deux approches
+réelles sur les mêmes tâches : mots-clés écrits à la main contre BM25 sur le
+corps complet. Si les mots-clés gagnent, on le saura sans rien déployer.
+
+**Phase 3 — change de nature.** Non plus « ajouter une injection » mais
+« remplacer ou compléter celle en place ». Deux mécanismes sur `pre_llm_call`
+ajouteraient chacun leur bloc : il faut trancher, pas empiler.
+
+### Ce que GK apporte encore
+
+- **La mesure.** `skills_gate.py` n'a aucun moyen de savoir s'il aide. C'est
+  l'apport irremplaçable, et il est déjà déployé.
+- **L'entretien.** Une table de mots-clés se maintient à la main à chaque skill
+  ajouté ; un index se met à jour depuis le manifeste. À 537 skills et en
+  croissance, l'écart se creuse.
+- **Les faits sourcés**, absents de `skills_gate.py`.
+- **Et peut-être rien sur la recherche elle-même** : si la table de domaines est
+  bien faite, BM25 n'apportera pas grand-chose. Le banc le dira, et cette issue
+  doit être acceptable.
+
+### À reprendre plutôt qu'à réécrire
+
+`ACTION_PATTERNS` et `EXEMPT_PATTERNS` sont le filtre des messages triviaux de
+l'étape 3, déjà écrits en français, avec gestion des accents, éprouvés en
+production. GK les reprend.
+
 ## Points ouverts
 
 Dernière revue : 2026-10-22, après la mise en service partielle de la phase 1.
@@ -1312,7 +1367,7 @@ Dernière revue : 2026-10-22, après la mise en service partielle de la phase 1.
 | **Description GitHub du dépôt** | Annonce encore « FastMCP » et une recherche sémantique, deux choses désormais fausses. Se change dans les réglages du dépôt, hors de portée d'un commit |
 | **Seuil d'acceptation de la v1** | Reporté à dessein (étape 8) : il se fixe devant le chiffre du banc, pas avant |
 | **Volume de la phase de référence** | « 3 semaines » avait été retenu avant l'A/B. Avec l'A/B, la bonne unité est un nombre de tours par bras, pas une durée. À reprendre |
-| **`skills_gate.py`, un hook shell déjà en place sur `pre_llm_call`** | **Le plus structurant des points ouverts.** `hooks.pre_llm_call` du `config.yaml` lance `/opt/data/hooks/skills_gate.py`. Une barrière sur les skills existe donc déjà, sur le hook exact que la phase 3 utilisera. Avant d'écrire la phase 3 : lire ce fichier et décider si GK le remplace, le complète ou doit s'en écarter. Deux mécanismes sur le même point d'accroche produisent un brief perdu |
+| **`skills_gate.py` : la phase 3 existe déjà en production** | Voir la section dédiée ci-dessous. Reste à décider si GK le remplace, le complète, ou se recentre |
 | **Activation d'un plugin** | Résolu, mais il faut le noter : un plugin n'est chargé que s'il figure dans `plugins.enabled`. Copier le dossier ne suffit pas, et `plugin.yaml.inactif` est un second mécanisme observé dont le statut reste flou |
 | **Les quatre plugins adjacents** | `gm-routing`, `gm-provenance`, `gm-discord-cards` et `gm-skill-dup-guard` (inactif) touchent le périmètre de GK. Le recouvrement a été constaté, jamais arbitré — notamment entre le garde anti-doublons et le signalement d'orphelins de GK |
 | **Les 329 SKILL.md hors bibliothèque** | GK les signalera. Décider s'il faut les ranger, et par qui, reste humain |
