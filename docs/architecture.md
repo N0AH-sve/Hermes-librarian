@@ -1309,6 +1309,19 @@ pristine, et le plugin doit vivre dans un sous-dossier clairement nommé.
 
 ## La forme réelle des skills, et ce qu'elle impose
 
+> **PÉRIMÉ — relevé du 2026-10-22, matin.** La bibliothèque est en cours de
+> consolidation : 534 skills le matin, 239 à midi, 185 dans l'après-midi, et des
+> fusions en cours. Tous les comptages de cette section (534 skills, 105 au-delà
+> de 32 Ko, 326 avec `references/`, 537 et 866 `SKILL.md` dans le volume) sont
+> donc des instantanés d'un état révolu. À refaire avec
+> `tools/mesurer-rubriques.py --attendu <le compte de find>` quand la
+> consolidation sera terminée. Ce qui ne dépend pas du dénominateur, en
+> revanche, tient : **aucun fichier sur 239 ne portait les six rubriques**, le
+> vocabulaire des titres est une longue traîne (1724 titres distincts pour 2345
+> occurrences), et **la bibliothèque est bilingue** — `when to use` y est plus
+> fréquent que `Déclencheurs`, ce qui invalide le stemmer français de
+> l'étape de conception 6.
+
 Relevé le 2026-10-22 sur les 534 skills de `/opt/data/skills`.
 
 | Mesure | Valeur |
@@ -1413,6 +1426,15 @@ passe » sans domaine nommé.
 La table `DOMAINS` couvre **12 domaines** et nomme **environ 36 skills**, en
 chaînes écrites à la main. Sur 534 skills, **environ 498 — 93 % de la
 bibliothèque — ne sont jamais recommandés**.
+
+> **Chiffre à corriger.** La consolidation du 2026-10-22 a ramené la
+> bibliothèque à 185 skills en fin de journée, et elle continue. Avec ~36 skills
+> nommés par le gate, le non-couvert passe de 93 % à **environ 80 %**.
+> L'argument tient, il est moins spectaculaire, et c'est le bon chiffre qui doit
+> figurer ici dès que la bibliothèque ne bouge plus. Une consolidation qui
+> continuerait jusqu'à quelques dizaines de skills remettrait la justification
+> de GK en question, et il faudra le dire à ce moment-là plutôt que de laisser
+> le chiffre vieillir.
 
 Le gate n'est donc pas une solution au problème de GK : c'en est une aux douze
 domaines les plus chauds, faite à la main et avec soin, qui laisse le reste sans
