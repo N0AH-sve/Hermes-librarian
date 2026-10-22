@@ -184,7 +184,7 @@ faites, et dit `deja present` pour celles qui l'étaient.
 *Revenir en arrière* : restaurer la sauvegarde horodatée que le script a
 affichée, puis redémarrer l'agent.
 
-## 6. Installer le pont
+## 5. Installer le pont
 
 C'est la première étape qui touche réellement l'agent. Elle est aussi la plus
 facile à défaire.
@@ -239,7 +239,7 @@ foi.
 
 ---
 
-## 7. Redémarrer l'agent
+## 6. Redémarrer l'agent
 
 ```bash
 docker compose -f ~/next_hermes/compose.yaml restart hermes
@@ -258,12 +258,12 @@ curl -fsS http://127.0.0.1:${API_SERVER_PORT:-8742}/health && echo " agent en vi
 On ne sait pas encore si un plugin qui lève une exception au chargement empêche
 l'agent de démarrer. Le pont est écrit pour ne jamais lever, mais c'est la seule
 hypothèse de la conception qui n'a pas été vérifiée dans le code de Hermes.
-**Si l'agent ne démarre pas, désactive le pont** (étape 6, retour en arrière) et
+**Si l'agent ne démarre pas, désactive le pont** (étape 5, retour en arrière) et
 redémarre : tu auras au passage répondu à la question.
 
 ---
 
-## 8. Le premier message
+## 7. Le premier message
 
 Envoie un message quelconque à gb, par le canal habituel. Puis :
 
@@ -278,7 +278,7 @@ C'est le relevé que le pont fait de l'API réelle. Trois lignes à y chercher :
 |---|---|
 | `ctx_trouve` | par où arrive le `PluginContext` — une des deux inconnues restantes |
 | `premier_appel` | les **vrais noms de kwargs** du hook — l'autre inconnue |
-| `refuse` | la liste blanche de l'étape 5 n'est pas prise en compte |
+| `refuse` | la liste blanche de l'étape 4 n'est pas prise en compte |
 | `reponse_introuvable` | la réponse arrive sous un nom que le pont n'essaie pas |
 
 **Renvoie-moi ce fichier.** Il permettra de retirer du pont la recherche à
@@ -288,8 +288,8 @@ supposition dans tout le code.
 Puis, côté serveur :
 
 ```bash
-docker compose -f deploy/compose.gk.yaml exec gk gk check
-docker compose -f deploy/compose.gk.yaml exec gk gk stats
+docker compose -f ~/greenknowledge/deploy/compose.gk.yaml exec gk gk check
+docker compose -f ~/greenknowledge/deploy/compose.gk.yaml exec gk gk stats
 ```
 
 `gk check` doit maintenant se taire sur l'observation. S'il dit encore
@@ -312,12 +312,68 @@ docker compose -f deploy/compose.gk.yaml exec gk gk stats
 
 ---
 
+## Mettre à jour le pont après un correctif
+
+Le pont est le seul morceau de GreenKnowledge qui vit dans le volume de
+l'agent, donc le seul qui ne se met pas à jour en reconstruisant une image.
+Quatre commandes, dans cet ordre.
+
+**1. Récupérer le code corrigé.**
+
+```bash
+cd ~/greenknowledge \
+  && git fetch origin \
+  && git checkout claude/repo-access-2k0hcz \
+  && git pull --ff-only origin claude/repo-access-2k0hcz
+```
+
+**2. Recopier le pont, et vérifier que la copie est bien arrivée.** L'écriture
+passe par le conteneur plutôt que par l'hôte : le démon Docker tourne en
+rootless, donc l'uid de l'hôte et celui du volume ne coïncident pas et un `cp`
+depuis l'hôte peut échouer en « permission non accordée ».
+
+```bash
+docker compose -f ~/next_hermes/compose.yaml exec -T hermes bash -lc \
+  'cat > /opt/data/plugins/gk-bridge/__init__.py' \
+  < ~/greenknowledge/hermes-plugin/gk-bridge/__init__.py
+
+docker compose -f ~/next_hermes/compose.yaml exec hermes bash -lc \
+  'grep -c response_text /opt/data/plugins/gk-bridge/__init__.py'
+# attendu : au moins 1. Si 0, la copie n'a pas eu lieu, ne redemarre pas.
+```
+
+**3. Redémarrer l'agent.** Un plugin n'est relu qu'au démarrage. **Compte deux
+à trois minutes** : `stop_grace_period` vaut 45 s et le `start_period` du
+healthcheck 120 s. Un `ps` qui montre l'agent absent dans les trente premières
+secondes ne veut rien dire.
+
+```bash
+docker compose -f ~/next_hermes/compose.yaml restart hermes
+docker compose -f ~/next_hermes/compose.yaml ps
+```
+
+**4. Envoyer un message à gb, puis lire la mesure.** C'est le message qui
+produit l'observation ; sans lui le compteur reste à zéro, et ce n'est pas une
+panne.
+
+```bash
+docker compose -f ~/greenknowledge/deploy/compose.gk.yaml exec gk gk stats
+```
+
+Attendu : `messages_observes` supérieur à zéro, et `schema` à 2. Si le schéma
+est à 1, le conteneur de GK est antérieur à la migration `turn_id` et demande
+un `up -d --build` sur `~/greenknowledge/deploy/compose.gk.yaml`. Si le compteur
+reste à zéro, lire `/opt/data/gk-bridge.jsonl` dans le conteneur de l'agent :
+c'est lui qui dit pourquoi.
+
+---
+
 ## Ce qui peut mal tourner, et à quoi ça se voit
 
 | Symptôme | Cause probable | Que faire |
 |---|---|---|
-| L'agent ne démarre plus | un plugin qui lève bloque le démarrage | désactiver le pont (étape 6), redémarrer. Et me le dire : c'est une réponse qu'on cherchait |
-| `refuse` dans le journal du pont | `mcp_allowlist` absent ou mal placé | revoir l'étape 5 |
+| L'agent ne démarre plus | un plugin qui lève bloque le démarrage | désactiver le pont (étape 5), redémarrer. Et me le dire : c'est une réponse qu'on cherchait |
+| `refuse` dans le journal du pont | `mcp_allowlist` absent ou mal placé | revoir l'étape 4 |
 | `reponse_introuvable` | la réponse arrive sous un autre nom | m'envoyer la ligne : elle contient les vrais noms |
 | `gk stats` reste à zéro | le pont ne trouve pas son `PluginContext` | m'envoyer `ctx_trouve`, ou son absence |
 | `401` persistant | les deux jetons diffèrent | comparer l'environnement de GK et la config de l'agent |
