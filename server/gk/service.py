@@ -53,7 +53,9 @@ class Service:
 
     # -- outils -------------------------------------------------------------
 
-    def observe(self, session_id: str, reply: str, brief_id: int | None = None) -> dict:
+    def observe(
+        self, session_id: str, reply: str, brief_id: int | None = None, turn_id: str = ""
+    ) -> dict:
         """Recoit la reponse de l'agent et y cherche un aveu.
 
         Branche sur `transform_llm_output` cote plugin, pas sur `post_llm_call`,
@@ -68,7 +70,7 @@ class Service:
         if detection is None:
             return {"v": 1, "correction": False, "besoins": self._besoins()}
         correction_id = self.recorder.record_correction(
-            session_id or "", detection, self.detector.digest
+            session_id or "", detection, self.detector.digest, turn_id=turn_id or ""
         )
         logger.info(
             "correction %s detectee (motif=%r, attendu=%r)",
@@ -112,6 +114,7 @@ class Service:
         session_id: str = "",
         task_id: str = "",
         use_count: int | None = None,
+        turn_id: str = "",
     ) -> dict:
         """Enregistre un evenement de cycle de vie de skill.
 
@@ -123,15 +126,25 @@ class Service:
         if not skill_name:
             return {"v": 1, "ok": False}
         self.recorder.record_skill_use(
-            skill_name, action=action, session_id=session_id, task_id=task_id, use_count=use_count
+            skill_name, action=action, session_id=session_id, task_id=task_id,
+            use_count=use_count, turn_id=turn_id,
         )
         # Si une correction du meme tour attend son attribution, ce skill est
-        # celui qui a reellement servi.
-        pending = self.store.one(
-            "SELECT id FROM corrections WHERE session_id = ? AND classification = 'pending' "
-            "ORDER BY ts DESC LIMIT 1",
-            (session_id,),
-        )
+        # celui qui a reellement servi. `turn_id` rend la correlation exacte ;
+        # sans lui on retombe sur la plus recente de la session, qui peut viser
+        # le mauvais tour quand deux se suivent de pres.
+        if turn_id:
+            pending = self.store.one(
+                "SELECT id FROM corrections WHERE turn_id = ? AND classification = 'pending' "
+                "ORDER BY ts DESC LIMIT 1",
+                (turn_id,),
+            )
+        else:
+            pending = self.store.one(
+                "SELECT id FROM corrections WHERE session_id = ? AND classification = 'pending' "
+                "ORDER BY ts DESC LIMIT 1",
+                (session_id,),
+            )
         attributed = None
         if pending is not None:
             attributed = self.recorder.attribute(int(pending["id"]), skill_name)

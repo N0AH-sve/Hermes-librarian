@@ -18,7 +18,7 @@ import time
 from pathlib import Path
 from typing import Any, Iterable
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 # Chaque migration est une liste d'instructions, appliquee une fois, dans
 # l'ordre. On n'edite JAMAIS une migration deja publiee : on en ajoute une.
@@ -108,6 +108,15 @@ MIGRATIONS: dict[int, tuple[str, ...]] = {
             value   REAL NOT NULL DEFAULT 0
         )
         """,
+    ),
+    # `turn_id` est fourni par les hooks de Hermes, ce qu'on ignorait en
+    # ecrivant la migration 1. Il rend l'attribution d'une correction exacte
+    # au lieu de reposer sur la plus recente de la session. Additive, donc une
+    # version precedente de GK sait encore lire la base.
+    2: (
+        "ALTER TABLE corrections ADD COLUMN turn_id TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE skill_uses ADD COLUMN turn_id TEXT NOT NULL DEFAULT ''",
+        "CREATE INDEX idx_corrections_turn ON corrections(turn_id)",
     ),
 }
 

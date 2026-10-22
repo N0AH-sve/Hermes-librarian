@@ -177,12 +177,12 @@ def test_skill_lifecycle_transmet_les_champs_reels(tmp_path, monkeypatch):
     ctx = FauxCtx()
     mod.on_skill_lifecycle(
         ctx=ctx, skill_name="perf-audit", action="use",
-        session_id="s", task_id="t", use_count=14, provenance="local",
+        session_id="s", task_id="t", turn_id="T7", use_count=14, provenance="local",
     )
     args = attendre(ctx)[0][2]
     assert args == {
         "skill_name": "perf-audit", "action": "use",
-        "session_id": "s", "task_id": "t", "use_count": 14,
+        "session_id": "s", "task_id": "t", "turn_id": "T7", "use_count": 14,
     }
 
 
@@ -250,3 +250,30 @@ def test_un_seul_point_d_entree(tmp_path, monkeypatch):
     assert callable(mod.register)
     for ancien in ("setup", "init", "activate", "on_load"):
         assert not hasattr(mod, ancien), f"{ancien} devrait avoir disparu"
+
+
+# -- la forme reelle des kwargs, relevee en production --------------------
+
+
+def test_la_reponse_arrive_sous_response_text(tmp_path, monkeypatch):
+    """Relevé le 2026-10-22 : les kwargs de `transform_llm_output` sont
+    {model, platform, response_text, session_id, telemetry_schema_version,
+    turn_id}. `response_text` n'etait dans aucune des sept hypotheses."""
+    mod = charger(tmp_path, monkeypatch)
+    ctx = FauxCtx()
+    assert mod.on_transform_llm_output(
+        ctx=ctx, session_id="s", turn_id="T1", response_text="Tu as raison.",
+        model="x", platform="cli", telemetry_schema_version=3,
+    ) is None
+    args = attendre(ctx)[0][2]
+    assert args["reply"] == "Tu as raison."
+    assert args["turn_id"] == "T1", "turn_id doit etre transmis pour l'attribution"
+
+
+def test_les_kwargs_reels_ne_declenchent_plus_reponse_introuvable(tmp_path, monkeypatch):
+    mod = charger(tmp_path, monkeypatch)
+    mod.on_transform_llm_output(
+        ctx=FauxCtx(), session_id="s", turn_id="T1", response_text="bonjour",
+        model="x", platform="cli", telemetry_schema_version=3,
+    )
+    assert not any(e["event"] == "reponse_introuvable" for e in journal(mod))

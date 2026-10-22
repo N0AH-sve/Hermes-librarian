@@ -41,9 +41,11 @@ def build(service: Service, config: Config):
             "Rien n'est injecte en retour : appeler cet outil est sans effet sur l'agent."
         ),
     )
-    def observe(session_id: str, reply: str, brief_id: int | None = None) -> dict:
+    def observe(
+        session_id: str, reply: str, brief_id: int | None = None, turn_id: str = ""
+    ) -> dict:
         try:
-            return service.observe(session_id, reply, brief_id)
+            return service.observe(session_id, reply, brief_id, turn_id)
         except Exception as exc:
             # GK se degrade, il n'echoue pas. Une observation perdue coute une
             # ligne de mesure ; une exception remontee coute un tour a l'agent.
@@ -83,9 +85,12 @@ def build(service: Service, config: Config):
         session_id: str = "",
         task_id: str = "",
         use_count: int | None = None,
+        turn_id: str = "",
     ) -> dict:
         try:
-            return service.skill_lifecycle(skill_name, action, session_id, task_id, use_count)
+            return service.skill_lifecycle(
+                skill_name, action, session_id, task_id, use_count, turn_id
+            )
         except Exception as exc:
             logger.warning("skill_lifecycle a echoue: %r", exc)
             return {"v": 1, "ok": False, "degrade": True}

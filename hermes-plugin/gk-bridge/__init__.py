@@ -35,9 +35,12 @@ JOURNAL = os.environ.get("GK_BRIDGE_LOG", "/opt/data/gk-bridge.jsonl")
 SERVEUR_MCP = "gk"
 TIMEOUT = 1.0  # plancher impose par Hermes : call_mcp borne a 1-600 s
 
-# Noms sous lesquels la reponse de l'agent peut arriver. Le premier present
-# gagne, et le releve dit lequel.
-CLES_REPONSE = ("text", "output", "content", "response", "message", "final_response", "llm_output")
+# `response_text` est le nom reel, releve le 2026-10-22 : les kwargs de
+# `transform_llm_output` sont {model, platform, response_text, session_id,
+# telemetry_schema_version, turn_id}. Les suivants restent en repli au cas ou
+# Hermes renomme — un detecteur aveugle serait pire qu'un detecteur bruyant, et
+# `reponse_introuvable` signale de toute facon l'echec.
+CLES_REPONSE = ("response_text", "text", "output", "content", "response", "message")
 
 _ctx = None          # PluginContext, des qu'on l'a vu passer
 _releve_fait = False
@@ -146,6 +149,9 @@ def on_transform_llm_output(**kwargs):
             return None
         _appeler("observe", {
             "session_id": str(kwargs.get("session_id") or ""),
+            # `turn_id` rend l'attribution exacte au lieu de reposer sur
+            # « la correction en attente la plus recente de la session ».
+            "turn_id": str(kwargs.get("turn_id") or ""),
             "reply": texte,
         })
     except Exception as exc:
@@ -171,6 +177,7 @@ def on_skill_lifecycle(**kwargs):
             "action": str(kwargs.get("action") or ""),
             "session_id": str(kwargs.get("session_id") or ""),
             "task_id": str(kwargs.get("task_id") or ""),
+            "turn_id": str(kwargs.get("turn_id") or ""),
             "use_count": kwargs.get("use_count"),
         })
     except Exception as exc:

@@ -351,3 +351,41 @@ def test_le_conteneur_ecoute_sur_toutes_les_interfaces():
     compose = (Path(__file__).resolve().parents[1] / "deploy" / "compose.gk.yaml").read_text()
     assert "GK_HOST: 0.0.0.0" in compose
     assert '"127.0.0.1:8765:8765"' in compose, "la publication doit rester sur la boucle locale"
+
+
+# -- turn_id : attribution exacte -----------------------------------------
+
+
+def test_migration_2_ajoute_turn_id(tmp_path):
+    """Additive, donc une version precedente de GK sait encore lire la base."""
+    store = Store(tmp_path / "m.db")
+    assert store.migrate() == 2
+    colonnes = {r["name"] for r in store.query("PRAGMA table_info(corrections)")}
+    assert "turn_id" in colonnes
+    assert {"id", "ts", "session_id", "classification"} <= colonnes, "rien supprime"
+    store.close()
+
+
+def test_attribution_exacte_par_turn_id(svc):
+    """Deux tours qui se suivent dans la meme session : sans turn_id,
+    l'attribution viserait la correction la plus recente, donc le mauvais tour."""
+    svc.recorder.record_brief("s", "audit de perf", ["perf-audit"])
+    svc.observe("s", "Tu as raison.", turn_id="T1")
+    svc.recorder.record_brief("s", "autre chose", ["deploy-history"])
+    svc.observe("s", "Tu as raison.", turn_id="T2")
+
+    # Le skill du PREMIER tour arrive en dernier : sans turn_id il serait
+    # attribue a la correction de T2.
+    svc.skill_lifecycle("perf-audit", session_id="s", turn_id="T1")
+    t1 = svc.store.one("SELECT classification FROM corrections WHERE turn_id = 'T1'")
+    t2 = svc.store.one("SELECT classification FROM corrections WHERE turn_id = 'T2'")
+    assert t1["classification"] == C.BAD_RECOMMENDATION, "T1 attribue"
+    assert t2["classification"] == "pending", "T2 ne doit pas avoir bouge"
+
+
+def test_sans_turn_id_on_retombe_sur_la_session(svc):
+    """Hermes le fournit, mais le repli doit rester fonctionnel."""
+    svc.recorder.record_brief("s", "audit", ["perf-audit"])
+    svc.observe("s", "Tu as raison.")
+    out = svc.skill_lifecycle("perf-audit", session_id="s")
+    assert out["attribution"] == C.BAD_RECOMMENDATION

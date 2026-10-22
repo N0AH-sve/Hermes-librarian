@@ -77,7 +77,12 @@ class Recorder:
     # -- corrections --------------------------------------------------------
 
     def record_correction(
-        self, session_id: str, detection: Detection, patterns_digest: str, request: str | None = None
+        self,
+        session_id: str,
+        detection: Detection,
+        patterns_digest: str,
+        request: str | None = None,
+        turn_id: str = "",
     ) -> int:
         """Enregistre une correction en attribution en attente.
 
@@ -97,12 +102,13 @@ class Recorder:
         if brief and brief.get("skills"):
             recommended = brief["skills"].split(",")[0] or None
         cur = self.store.execute(
-            "INSERT INTO corrections (ts, session_id, brief_id, skill_recommended, skill_expected, "
-            "classification, patterns_digest, request_truncated, extract, extract_expires_at, "
-            "pending_until) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO corrections (ts, session_id, turn_id, brief_id, skill_recommended, "
+            "skill_expected, classification, patterns_digest, request_truncated, extract, "
+            "extract_expires_at, pending_until) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 ts,
                 session_id,
+                turn_id,
                 brief["id"] if brief else None,
                 recommended,
                 detection.skill_hint,
@@ -162,12 +168,14 @@ class Recorder:
         session_id: str = "",
         task_id: str = "",
         use_count: int | None = None,
+        turn_id: str = "",
     ) -> None:
         ts = now()
         self.store.execute(
-            "INSERT INTO skill_uses (ts, session_id, task_id, skill_name, action, use_count, "
-            "expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (ts, session_id, task_id, skill_name, action, use_count, ts + USE_DETAIL_TTL_SECONDS),
+            "INSERT INTO skill_uses (ts, session_id, task_id, turn_id, skill_name, action, "
+            "use_count, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (ts, session_id, task_id, turn_id, skill_name, action, use_count,
+             ts + USE_DETAIL_TTL_SECONDS),
         )
         # L'agregat survit a la purge du detail : le compteur du brief se
         # construit des usages ici et des echecs cote corrections.
