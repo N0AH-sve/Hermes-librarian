@@ -11,11 +11,20 @@ de l'etape 5 :
   standard seule, se reecrivent en une heure quand un point d'accroche est
   renomme. C'est la vraie assurance, pas la compatibilite.
 
-IL N'INJECTE RIEN. Aucun `pre_llm_call`, donc le chemin d'entree de l'agent
-n'est pas touche, et un test le verifie. La phase 2 ajoute le **facteur** : le
-pont pousse le catalogue des skills vers GK et lui renvoie les tranches qu'il
-reclame. Toujours apres que l'agent a repondu, sur un fil detache, avec un
-budget de temps. Le comportement de gb reste strictement inchange.
+IL N'INJECTE RIEN, et des tests le verifient : les trois hooks rendent toujours
+`None`, donc le comportement de gb est strictement inchange.
+
+`pre_llm_call` est branche depuis le 2026-10-22, en OBSERVATION SEULE. Motif :
+GK n'avait jamais vu une seule demande reelle. `transform_llm_output` porte la
+reponse, `on_skill_lifecycle` le skill charge ; la demande de l'utilisateur ne
+passe que par `pre_llm_call`. Tout ce qui avait ete mesure venait donc de textes
+ecrits par les auteurs des skills, ce qui repond a la question « retrouve-t-on
+un skill a partir d'une formulation que son auteur a imaginee » et non « a
+partir de ce qu'un collegue tape reellement ».
+
+**Ce hook est le seul sur le chemin critique** : il precede l'appel au modele,
+donc tout ce qui attend ici fait attendre l'utilisateur. Il envoie sur un fil
+detache, ne lit jamais la reponse de GK, et rend `None` immediatement.
 
 Deux details de l'API de Hermes restent inconnus a l'ecriture, et ce fichier les
 decouvre au lieu de les supposer : par ou arrive le `PluginContext`, et sous
@@ -42,6 +51,14 @@ TIMEOUT = 1.0  # plancher impose par Hermes : call_mcp borne a 1-600 s
 # Hermes renomme — un detecteur aveugle serait pire qu'un detecteur bruyant, et
 # `reponse_introuvable` signale de toute facon l'echec.
 CLES_REPONSE = ("response_text", "text", "output", "content", "response", "message")
+
+# Le champ portant la demande de l'utilisateur. Le contrat du hook shell
+# `skills_gate.py` annonce `user_message` ; un hook de plugin peut differer, et
+# la lecon de `response_text` est qu'il ne faut pas le supposer. Le premier appel
+# journalise les noms reels.
+CLES_DEMANDE = (
+    "user_message", "message", "prompt", "user_input", "input", "text", "content",
+)
 
 TIMEOUT_CATALOGUE = 30.0       # rien n'attend : le fil est detache
 INTERVALLE_CATALOGUE = 3600.0  # au plus une ronde par heure en regime normal
@@ -310,6 +327,50 @@ def on_transform_llm_output(**kwargs):
     return None
 
 
+def on_pre_llm_call(**kwargs):
+    """Observe la demande de l'utilisateur. RENVOIE TOUJOURS None.
+
+    OBSERVATION SEULE. Ce hook est celui par lequel on injecterait un brief ;
+    il n'en est utilise que la moitie, et c'est deliberé. Renvoyer None le rend
+    inerte : le chemin d'entree de l'agent n'est pas modifie.
+
+    **Seul hook sur le chemin critique.** Il precede l'appel au modele, donc
+    tout ce qui attend ici fait attendre l'utilisateur. D'ou : envoi sur un fil
+    detache, aucune lecture de la reponse de GK, aucun declenchement de ronde de
+    catalogue, et retour immediat.
+
+    Le nom du champ portant la demande n'est pas connu a l'ecriture. Le contrat
+    du hook shell `skills_gate.py` annonce `user_message`, mais un hook de plugin
+    peut differer -- la lecon de `response_text`, qu'aucune des sept premieres
+    suppositions n'avait trouve. Les candidats sont essayes, et le premier appel
+    journalise les noms reels.
+    """
+    try:
+        _retenir_ctx(kwargs)
+        _releve_unique("pre_llm_call", kwargs)
+        texte = cle = None
+        for candidat in CLES_DEMANDE:
+            valeur = kwargs.get(candidat)
+            if isinstance(valeur, str) and valeur.strip():
+                texte, cle = valeur, candidat
+                break
+        if texte is None:
+            _noter({"event": "demande_introuvable", "cles_kwargs": sorted(kwargs)})
+            return None
+        premier = kwargs.get("is_first_turn")
+        _appeler("request", {
+            "session_id": str(kwargs.get("session_id") or ""),
+            "turn_id": str(kwargs.get("turn_id") or ""),
+            "text": texte,
+            "is_first_turn": bool(premier) if isinstance(premier, bool) else None,
+            "platform": str(kwargs.get("platform") or ""),
+        })
+    except Exception as exc:
+        _noter({"event": "erreur_hook", "hook": "pre_llm_call", "erreur": repr(exc)})
+    # Jamais autre chose que None, quoi qu'il arrive au-dessus.
+    return None
+
+
 def on_skill_lifecycle(**kwargs):
     """Transmet un evenement de cycle de vie de skill.
 
@@ -342,6 +403,9 @@ def on_skill_lifecycle(**kwargs):
 HOOKS = (
     ("transform_llm_output", "on_transform_llm_output"),
     ("on_skill_lifecycle", "on_skill_lifecycle"),
+    # OBSERVATION SEULE. Branche pour voir les demandes, jamais pour injecter :
+    # `on_pre_llm_call` rend toujours None, et un test le verifie.
+    ("pre_llm_call", "on_pre_llm_call"),
 )
 
 def _enregistrer(ctx) -> list[str]:

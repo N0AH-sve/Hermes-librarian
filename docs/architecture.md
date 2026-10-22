@@ -1864,6 +1864,64 @@ sans FTS5 ni BM25 : il vient des 296 phrases écrites à la main. **La valeur es
 dans la bibliothèque ; l'outil la rend utilisable.** C'est ce qu'il faut dire aux
 décideurs, et c'est vérifiable.
 
+## Le fossé de connaissance : GK n'avait jamais vu une demande réelle
+
+**Constat de GM, le 2026-10-22, et il invalide la portée de tout ce qui précède.**
+
+Tout ce qui a été mesuré ce jour-là — les 296 phrases citées, les descriptions,
+les déclencheurs — vient de **textes écrits par les auteurs des skills**. Le
+0,592 de MRR sur le métier répond donc à : « retrouve-t-on un skill à partir
+d'une formulation que son auteur a imaginée ? » Il ne répond pas à : « à partir
+de ce qu'un collègue tape réellement ? »
+
+L'écart entre ces deux questions n'est pas mesuré, et il est probablement grand.
+Les auteurs écrivent « contrôle des factures fournisseurs » ; un collègue tape
+« pourquoi on a payé 40 balles de port chez Adagio ».
+
+**Pourquoi le fossé existait.** Le pont était branché sur
+`transform_llm_output`, qui porte la **réponse**, et sur `on_skill_lifecycle`,
+qui porte le **skill chargé**. La demande de l'utilisateur ne passe que par
+`pre_llm_call` — le hook écarté dès la phase 1, et qu'un test verrouillait comme
+absent. GK était donc **structurellement aveugle aux demandes**. Ce n'était pas
+un oubli : c'est la conséquence directe de la décision de ne rien toucher au
+chemin d'entrée avant d'avoir une mesure.
+
+### `pre_llm_call`, en observation seule
+
+**Décision de GM.** Le pont transmet la demande, GK l'enregistre, et **rien
+n'est injecté**. C'est le hook par lequel on injecterait un brief ; on n'en
+utilise que la moitié, et cette moitié est verrouillée par des tests.
+
+Trois propriétés, chacune tenue par un test plutôt que par la discipline :
+
+* **les trois hooks rendent toujours `None`**, sur une entrée normale, sur une
+  entrée absurde, et quand GK est injoignable ;
+* `request` **ne rend aucun contenu** : la réponse ne porte que `v`, `ok`,
+  `request_id` et `besoins`. La phase d'observation ne peut pas devenir une
+  injection par accident ;
+* `pre_llm_call` est **le seul hook sur le chemin critique** — il précède
+  l'appel au modèle, donc tout ce qui attend là fait attendre l'utilisateur. Le
+  pont envoie sur un fil détaché, ne lit jamais la réponse de GK, ne déclenche
+  aucune ronde de catalogue, et rend `None` immédiatement.
+
+**La donnée, et sa limite.** Aucun texte d'utilisateur n'était entré dans la
+base jusqu'ici : c'est une ligne franchie consciemment. Le texte est **tronqué à
+200 caractères** et **expire au bout de 90 jours**, comme les preuves de
+l'étape 4 ; le compteur, sans texte, reste sans limite. `gk forget --demandes`
+les efface, et `--before` comme `--conv` les couvrent.
+
+**L'appariement est une corrélation, pas une vérité.** `gk demandes` rapproche
+une demande du skill chargé dans les deux minutes qui suivent, par session —
+faute de clef commune, `pre_llm_call` et `on_skill_lifecycle` n'en partageant
+aucune. La commande le dit dans sa sortie, parce qu'un corpus étiqueté par
+corrélation ne vaut pas un corpus étiqueté par construction.
+
+**Ce que ça coûtera de savoir.** Le nom du champ portant la demande n'est pas
+connu : le contrat du hook shell `skills_gate.py` annonce `user_message`, mais un
+hook de plugin peut différer — la leçon de `response_text`, qu'aucune des sept
+premières suppositions n'avait trouvé. Sept candidats sont essayés, et
+`demande_introuvable` est journalisé si aucun ne marche.
+
 ### Trois hypothèses rejetées, et celle qui reste
 
 | Bras | ensemble | métier | générique |

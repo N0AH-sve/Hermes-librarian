@@ -53,6 +53,28 @@ def build(service: Service, config: Config):
             return {"v": 1, "correction": False, "degrade": True, "besoins": []}
 
     @server.tool(
+        name="request",
+        description=(
+            "Recoit la demande de l'utilisateur, avant l'appel au modele. "
+            "OBSERVATION SEULE : rien n'est renvoye qui puisse changer le comportement "
+            "de l'agent. Le texte est tronque a 200 caracteres et expire au bout de "
+            "90 jours."
+        ),
+    )
+    def request(
+        session_id: str,
+        text: str,
+        turn_id: str = "",
+        is_first_turn: bool | None = None,
+        platform: str = "",
+    ) -> dict:
+        try:
+            return service.request(session_id, text, turn_id, is_first_turn, platform)
+        except Exception as exc:
+            logger.warning("request a echoue: %r", exc)
+            return {"v": 1, "ok": False, "degrade": True, "besoins": []}
+
+    @server.tool(
         name="report",
         description=(
             "Enregistre un retour d'usage ou une notation. `source` vaut hook, agent ou human, "

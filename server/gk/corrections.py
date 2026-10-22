@@ -30,6 +30,8 @@ from .store import Store, now
 PENDING_SECONDS = 60.0
 BRIEF_TTL_SECONDS = 7 * 86400.0
 EXTRACT_TTL_SECONDS = 90 * 86400.0
+# Les demandes reelles : meme duree que les preuves, meme troncature.
+REQUEST_TTL_SECONDS = 90 * 86400.0
 USE_DETAIL_TTL_SECONDS = 30 * 86400.0
 REQUEST_TRUNCATE_CHARS = 200
 
@@ -73,6 +75,36 @@ class Recorder:
             "SELECT * FROM briefs WHERE session_id = ? ORDER BY ts DESC LIMIT 1", (session_id,)
         )
         return dict(row) if row else None
+
+    # -- demandes reelles ---------------------------------------------------
+
+    def record_request(
+        self,
+        session_id: str,
+        text: str | None,
+        turn_id: str = "",
+        is_first_turn: bool | None = None,
+        platform: str = "",
+    ) -> int:
+        """Enregistre une demande d'utilisateur, tronquee.
+
+        GK n'avait jamais vu de demande reelle avant le 2026-10-22 : tout ce qui
+        avait ete mesure venait de textes ecrits par les auteurs des skills. Le
+        texte est tronque a 200 caracteres et expire au bout de 90 jours ; le
+        compteur, sans texte, reste sans limite.
+        """
+        ts = now()
+        cur = self.store.execute(
+            "INSERT INTO requests (ts, session_id, turn_id, text_truncated, "
+            "is_first_turn, platform, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                ts, session_id or "", turn_id or "", truncate(text),
+                None if is_first_turn is None else int(bool(is_first_turn)),
+                platform or "", ts + REQUEST_TTL_SECONDS,
+            ),
+        )
+        self.store.bump("requests_total")
+        return int(cur.lastrowid or 0)
 
     # -- corrections --------------------------------------------------------
 
@@ -230,6 +262,8 @@ def tidy(store: Store) -> dict[str, int]:
     result["briefs_purges"] = cur.rowcount or 0
     cur = store.execute("DELETE FROM skill_uses WHERE expires_at <= ?", (ts,))
     result["usages_detail_purges"] = cur.rowcount or 0
+    cur = store.execute("DELETE FROM requests WHERE expires_at <= ?", (ts,))
+    result["demandes_purgees"] = cur.rowcount or 0
     # Niveau 3 : la preuve expire, le compteur et le cas de test restent.
     cur = store.execute(
         "UPDATE corrections SET extract = NULL, extract_expires_at = NULL "

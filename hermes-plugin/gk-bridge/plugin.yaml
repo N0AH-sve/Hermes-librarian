@@ -1,8 +1,10 @@
 name: gk-bridge
 version: 0.1.0
-description: "Pont vers GreenKnowledge. N'INJECTE RIEN : aucun pre_llm_call, transform_llm_output renvoie toujours None, donc le comportement de l'agent est strictement inchange. Observe les reponses, transmet le cycle de vie des skills, et pousse le catalogue des skills vers GK apres que l'agent a repondu, sur un fil detache et avec un budget de temps. Toute exception est avalee."
+description: "Pont vers GreenKnowledge. N'INJECTE RIEN : les trois hooks renvoient toujours None, pre_llm_call compris, qui est branche en observation seule, donc le comportement de l'agent est strictement inchange. Observe les reponses, transmet le cycle de vie des skills, et pousse le catalogue des skills vers GK apres que l'agent a repondu, sur un fil detache et avec un budget de temps. Toute exception est avalee."
 author: "GreenKnowledge"
 kind: standalone
 hooks:
   - transform_llm_output
   - on_skill_lifecycle
+  # OBSERVATION SEULE : on_pre_llm_call rend toujours None.
+  - pre_llm_call

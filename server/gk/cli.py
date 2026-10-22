@@ -159,6 +159,11 @@ def cmd_forget(args, cfg: Config) -> int:
                 "WHERE extract IS NOT NULL"
             )
             done["preuves_effacees"] = cur.rowcount or 0
+        if args.demandes:
+            # Le contenu metier des demandes reelles, efface sans toucher au
+            # compteur : la mesure survit a l'effacement du texte.
+            cur = store.execute("DELETE FROM requests")
+            done["demandes_supprimees"] = cur.rowcount or 0
         if args.before:
             cutoff = _parse_date(args.before)
             cur = store.execute(
@@ -170,6 +175,8 @@ def cmd_forget(args, cfg: Config) -> int:
             done["corrections_anonymisees"] = cur.rowcount or 0
             cur = store.execute("DELETE FROM briefs WHERE ts < ?", (cutoff,))
             done["briefs_supprimes"] = cur.rowcount or 0
+            cur = store.execute("DELETE FROM requests WHERE ts < ?", (cutoff,))
+            done["demandes_supprimees"] = cur.rowcount or 0
         if args.conv:
             cur = store.execute(
                 "UPDATE corrections SET extract = NULL, extract_expires_at = NULL, "
@@ -181,8 +188,15 @@ def cmd_forget(args, cfg: Config) -> int:
             )
             cur = store.execute("DELETE FROM briefs WHERE session_id = ?", (args.conv,))
             done["briefs_supprimes"] = done.get("briefs_supprimes", 0) + (cur.rowcount or 0)
+            cur = store.execute("DELETE FROM requests WHERE session_id = ?", (args.conv,))
+            done["demandes_supprimees"] = (
+                done.get("demandes_supprimees", 0) + (cur.rowcount or 0)
+            )
         if not done:
-            _emit({"ok": False, "erreur": "precisez --extracts, --before ou --conv"}, args)
+            _emit({
+                "ok": False,
+                "erreur": "precisez --extracts, --demandes, --before ou --conv",
+            }, args)
             return 2
         done["note"] = "les compteurs sont intacts : la mesure n'est pas perdue"
         _emit(done, args)
@@ -607,6 +621,74 @@ def _lire_banc(out: dict, gain: float) -> list[str]:
     return lignes
 
 
+def cmd_demandes(args, cfg: Config) -> int:
+    """L'etat des demandes reelles, et le skill charge dans la foulee.
+
+    Le rapprochement se fait par session et par proximite dans le temps, faute
+    de clef commune : `pre_llm_call` ne porte pas de `turn_id` exploitable et
+    `on_skill_lifecycle` n'en porte pas du tout. Ce n'est donc pas une verite,
+    c'est une correlation -- et le dire importe, parce qu'un corpus etiquete par
+    correlation ne vaut pas un corpus etiquete par construction.
+    """
+    with Store(cfg.database) as store:
+        total = int(store.counter("requests_total"))
+        gardees = int(store.one("SELECT COUNT(*) c FROM requests")["c"])
+        dernier = store.counter("last_request_ts")
+        out: dict = {
+            "demandes_observees": total,
+            "demandes_gardees": gardees,
+            "derniere_il_y_a_s": round(now() - dernier, 1) if dernier else None,
+        }
+        if gardees == 0:
+            out["remarque"] = (
+                "aucune demande observee. Le pont les transmet depuis "
+                "`pre_llm_call` : si ce chiffre reste a zero apres un message, "
+                "voir `demande_introuvable` dans /opt/data/gk-bridge.jsonl"
+            )
+            _emit(out, args)
+            return 0
+        out["par_plateforme"] = {
+            (r["platform"] or "(inconnue)"): r["n"]
+            for r in store.query(
+                "SELECT platform, COUNT(*) n FROM requests GROUP BY platform "
+                "ORDER BY n DESC LIMIT 10"
+            )
+        }
+        premiers = store.one(
+            "SELECT COUNT(*) c FROM requests WHERE is_first_turn = 1"
+        )
+        out["premiers_tours"] = int(premiers["c"]) if premiers else 0
+        longueurs = [
+            len(r["text_truncated"] or "")
+            for r in store.query("SELECT text_truncated FROM requests")
+        ]
+        if longueurs:
+            longueurs.sort()
+            out["longueur_medianne"] = longueurs[len(longueurs) // 2]
+            out["tronquees_a_200"] = sum(1 for n in longueurs if n >= 200)
+        # Le rapprochement : quel skill a ete charge juste apres la demande.
+        apparies = store.one(
+            "SELECT COUNT(*) c FROM requests r WHERE EXISTS ("
+            "  SELECT 1 FROM skill_uses u WHERE u.session_id = r.session_id "
+            "  AND u.ts BETWEEN r.ts AND r.ts + 120)"
+        )
+        out["demandes_suivies_d_un_skill"] = int(apparies["c"]) if apparies else 0
+        out["demandes_sans_aucun_skill"] = gardees - out["demandes_suivies_d_un_skill"]
+        out["remarque_appariement"] = (
+            "rapproche par session et proximite dans le temps, faute de clef "
+            "commune : c'est une correlation, pas une verite"
+        )
+        if args.exemples:
+            out["exemples"] = [
+                r["text_truncated"] for r in store.query(
+                    "SELECT text_truncated FROM requests ORDER BY ts DESC LIMIT ?",
+                    (max(1, min(args.exemples, 50)),),
+                )
+            ]
+        _emit(out, args)
+    return 0
+
+
 def cmd_reindexer(args, cfg: Config) -> int:
     """Oublie ce qui a ete indexe, pour que le pont renvoie TOUTES les tranches.
 
@@ -724,6 +806,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     f = sub.add_parser("forget", help="effacer du texte sans perdre la mesure")
     f.add_argument("--extracts", action="store_true", help="effacer toutes les preuves")
+    f.add_argument(
+        "--demandes", action="store_true",
+        help="effacer les demandes reelles des utilisateurs (le compteur reste)",
+    )
     f.add_argument("--before", help="anonymiser avant cette date (AAAA-MM-JJ)")
     f.add_argument("--conv", help="anonymiser une conversation")
     f.set_defaults(func=cmd_forget)
@@ -756,6 +842,16 @@ def build_parser() -> argparse.ArgumentParser:
     b.add_argument("-n", "--limite", type=int, default=5, help="rang maximal compte")
     b.add_argument("--echecs", type=int, default=5, help="nombre d'echecs a montrer")
     b.set_defaults(func=cmd_banc)
+
+    dm = sub.add_parser(
+        "demandes",
+        help="l'etat des demandes reelles observees, et ce qu'elles ont charge",
+    )
+    dm.add_argument(
+        "--exemples", type=int, default=0,
+        help="afficher N demandes tronquees (contenu metier : a utiliser sciemment)",
+    )
+    dm.set_defaults(func=cmd_demandes)
 
     sub.add_parser(
         "reindexer",

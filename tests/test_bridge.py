@@ -186,28 +186,78 @@ def test_skill_lifecycle_transmet_les_champs_reels(tmp_path, monkeypatch):
     }
 
 
-def test_aucun_hook_d_entree(tmp_path, monkeypatch):
-    """Le chemin d'entree de l'agent n'est pas touche : il n'y a pas de
-    pre_llm_call, et le manifeste ne l'ENREGISTRE pas.
+def test_le_hook_d_entree_n_injecte_jamais_rien(tmp_path, monkeypatch):
+    """`pre_llm_call` est branche depuis le 2026-10-22, en observation seule.
 
-    La verification porte sur la liste `hooks` analysee, non sur le texte brut
-    du manifeste : la description y mentionne desormais `pre_llm_call` pour dire
-    qu'il est absent, et une recherche de sous-chaine confondait les deux. Un
-    test qui echoue sur sa propre documentation mesure la mauvaise chose.
+    C'est le hook par lequel on INJECTERAIT un brief. Il n'en est utilise que la
+    moitie, et cette moitie doit etre verrouillee : renvoyer autre chose que
+    None modifierait le chemin d'entree de l'agent. Verifie sur une entree
+    normale, sur une entree absurde, et quand GK est injoignable.
     """
     mod = charger(tmp_path, monkeypatch)
-    assert not hasattr(mod, "on_pre_llm_call")
-    assert "pre_llm_call" not in [h for h, _ in mod.HOOKS], "ni cable dans le code"
+    ctx = FauxCtx()
+    mod.register(ctx)
+
+    assert mod.on_pre_llm_call(session_id="s", user_message="une demande") is None
+    assert mod.on_pre_llm_call() is None, "sans aucun kwarg"
+    assert mod.on_pre_llm_call(user_message=None) is None
+    assert mod.on_pre_llm_call(user_message=12) is None
+    assert mod.on_pre_llm_call(user_message="   ") is None, "une demande vide"
+
+    casse = charger(tmp_path, monkeypatch)
+    casse.register(FauxCtx(leve=RuntimeError("gk est tombe")))
+    assert casse.on_pre_llm_call(session_id="s", user_message="x") is None
+
+
+def test_les_trois_hooks_renvoient_toujours_none(tmp_path, monkeypatch):
+    """La propriete qui rend le pont inoffensif, tenue par un test plutot que
+    par la discipline."""
+    mod = charger(tmp_path, monkeypatch)
+    mod.register(FauxCtx())
+    assert mod.on_transform_llm_output(session_id="s", response_text="une reponse") is None
+    assert mod.on_skill_lifecycle(skill_name="un-skill", session_id="s") is None
+    assert mod.on_pre_llm_call(session_id="s", user_message="une demande") is None
+
+
+def test_la_demande_est_transmise_a_gk(tmp_path, monkeypatch):
+    mod = charger(tmp_path, monkeypatch)
+    ctx = FauxCtx()
+    mod.register(ctx)
+    mod.on_pre_llm_call(
+        session_id="s7", user_message="pourquoi on a paye 40 de port chez Adagio",
+        is_first_turn=True, platform="discord",
+    )
+    appels = attendre(ctx, 1)
+    serveur, outil, args, _ = appels[0]
+    assert (serveur, outil) == ("gk", "request")
+    assert args["text"] == "pourquoi on a paye 40 de port chez Adagio"
+    assert args["session_id"] == "s7"
+    assert args["is_first_turn"] is True
+    assert args["platform"] == "discord"
+
+
+def test_un_nom_de_champ_inconnu_est_journalise(tmp_path, monkeypatch):
+    """La lecon de `response_text` : ne pas supposer le nom du champ, et dire
+    quand aucun candidat ne marche."""
+    mod = charger(tmp_path, monkeypatch)
+    mod.register(FauxCtx())
+    assert mod.on_pre_llm_call(session_id="s", une_cle_inattendue="x") is None
+    evenements = [l["event"] for l in journal(mod)]
+    assert "demande_introuvable" in evenements
+
+
+def test_le_manifeste_declare_le_hook_d_entree(tmp_path, monkeypatch):
+    """Il doit y etre, et le code doit le cabler : le manifeste declare, il ne
+    cable pas -- `gm-routing` en declare deux et en enregistre cinq."""
+    mod = charger(tmp_path, monkeypatch)
+    assert "pre_llm_call" in [h for h, _ in mod.HOOKS]
     lignes = (
         (RACINE / "hermes-plugin" / "gk-bridge" / "plugin.yaml")
         .read_text(encoding="utf-8")
         .splitlines()
     )
-    declares = [
-        l.strip()[2:].strip() for l in lignes if l.startswith("  - ")
-    ]
-    assert declares == ["transform_llm_output", "on_skill_lifecycle"]
-    assert "pre_llm_call" not in declares
+    declares = [l.strip()[2:].strip() for l in lignes if l.startswith("  - ")]
+    assert declares == ["transform_llm_output", "on_skill_lifecycle", "pre_llm_call"]
 
 
 # -- enregistrement des hooks ---------------------------------------------

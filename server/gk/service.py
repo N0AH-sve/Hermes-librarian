@@ -96,6 +96,40 @@ class Service:
             "besoins": self._besoins(),
         }
 
+    def request(
+        self,
+        session_id: str,
+        text: str,
+        turn_id: str = "",
+        is_first_turn: bool | None = None,
+        platform: str = "",
+    ) -> dict:
+        """Enregistre une demande reelle. **N'injecte rien et ne rend rien** qui
+        puisse changer le comportement de l'agent.
+
+        Branche sur `pre_llm_call`, le hook qui porte la demande de
+        l'utilisateur. C'est le seul endroit ou elle passe : `transform_llm_output`
+        porte la reponse, et `on_skill_lifecycle` le skill charge. GK etait donc
+        structurellement aveugle aux demandes, et tout ce qui avait ete mesure
+        venait de textes ecrits par les auteurs des skills.
+
+        **Ce hook est sur le chemin critique** : il precede l'appel au modele,
+        donc tout ce qui attend ici fait attendre l'utilisateur. Le pont envoie
+        sur un fil detache et renvoie None immediatement ; cette methode ne doit
+        de son cote rien faire de lent.
+        """
+        if not isinstance(text, str) or not text.strip():
+            return {"v": 1, "ok": False, "besoins": self._besoins()}
+        self.store.bump("request_calls")
+        self.store.set_counter("last_request_ts", now())
+        request_id = self.recorder.record_request(
+            session_id or "", text, turn_id=turn_id or "",
+            is_first_turn=is_first_turn, platform=platform or "",
+        )
+        # Aucun contenu n'est rendu : la phase d'observation ne doit pas pouvoir
+        # devenir une injection par accident.
+        return {"v": 1, "ok": True, "request_id": request_id, "besoins": self._besoins()}
+
     def report(
         self,
         skill: str | None,

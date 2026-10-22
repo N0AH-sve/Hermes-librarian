@@ -18,7 +18,7 @@ import time
 from pathlib import Path
 from typing import Any, Iterable
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 # Chaque migration est une liste d'instructions, appliquee une fois, dans
 # l'ordre. On n'edite JAMAIS une migration deja publiee : on en ajoute une.
@@ -167,6 +167,34 @@ MIGRATIONS: dict[int, tuple[str, ...]] = {
         )
         """,
         "CREATE INDEX idx_sections_kind ON skill_sections(kind)",
+    ),
+    # Les demandes reelles des utilisateurs.
+    #
+    # Pourquoi cette table n'existait pas avant le 2026-10-22 : GK n'avait
+    # jamais vu une seule demande reelle. Tout ce qui avait ete mesure venait de
+    # textes ecrits par les auteurs des skills -- descriptions, declencheurs,
+    # phrases citees. Cela repond a "retrouve-t-on un skill a partir d'une
+    # formulation que son auteur a imaginee", pas a "a partir de ce qu'un
+    # collegue tape reellement". L'ecart entre les deux n'etait pas mesure.
+    #
+    # Le texte est TRONQUE a 200 caracteres et expire : c'est du contenu metier,
+    # et la retention a trois niveaux de l'etape 4 s'applique ici comme ailleurs.
+    # Le compteur, lui, ne porte aucun texte et reste sans limite.
+    4: (
+        """
+        CREATE TABLE requests (
+            id              INTEGER PRIMARY KEY,
+            ts              REAL NOT NULL,
+            session_id      TEXT NOT NULL DEFAULT '',
+            turn_id         TEXT NOT NULL DEFAULT '',
+            text_truncated  TEXT,
+            is_first_turn   INTEGER,
+            platform        TEXT NOT NULL DEFAULT '',
+            expires_at      REAL NOT NULL
+        )
+        """,
+        "CREATE INDEX idx_requests_session ON requests(session_id, ts)",
+        "CREATE INDEX idx_requests_expiry ON requests(expires_at)",
     ),
 }
 
