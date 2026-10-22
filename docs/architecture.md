@@ -1374,6 +1374,164 @@ Et les **105 skills de plus de 32 Ko** sont des candidats au `skill-cleaner` dé
 présent dans la bibliothèque. GK est bien placé pour les signaler, comme il
 signale les orphelins.
 
+## skills_gate.py : ce qu'il couvre, et ce qu'il laisse
+
+Relevé le 2026-10-22 : `/opt/data/hooks/skills_gate.py`, 350 lignes, hook shell
+sur `pre_llm_call`, en production. Il implémente une partie de ce que la
+conception prévoyait pour la phase 3 — et il fallait le lire en entier avant de
+conclure quoi que ce soit.
+
+### Ce qu'il fait
+
+Contrat : `{session_id, user_message, is_first_turn, model, platform}` sur
+stdin, `{"context": "..."}` sur stdout, ajouté **à la fin du message
+utilisateur** et jamais dans le prompt système, pour ne pas invalider le cache
+de prompt. Contrainte réelle que la conception ignorait.
+
+| Décision de conception | Déjà fait par le gate |
+|---|---|
+| Injection automatique avant que l'agent réfléchisse | oui |
+| Brief accolé au message utilisateur | oui, et jamais dans le prompt système |
+| Ignorer les messages triviaux | oui : `EXEMPT_PATTERNS`, politesses et questions d'état mesurable |
+| Ne jamais bloquer l'agent | oui : toute exception donne une sortie vide et `exit 0` |
+| Rappeler les skills pertinents | oui, pour **douze domaines** |
+
+Il déduplique par session via `~/.hermes/hooks_state`, et rattrape deux cas que
+les mots-clés métier ne capturent pas : `META_PATTERNS` pour les demandes qui
+parlent *des* skills ou de la méthode, `SYMPTOM_PATTERNS` pour « rien ne se
+passe » sans domaine nommé.
+
+### Le chiffre décisif
+
+La table `DOMAINS` couvre **12 domaines** et nomme **environ 36 skills**, en
+chaînes écrites à la main. Sur 534 skills, **environ 498 — 93 % de la
+bibliothèque — ne sont jamais recommandés**.
+
+Le gate n'est donc pas une solution au problème de GK : c'en est une aux douze
+domaines les plus chauds, faite à la main et avec soin, qui laisse le reste sans
+aucun mécanisme. **GK ne le remplace pas, il couvre ce qu'il ne couvre pas.**
+
+### Trois fragilités que le code avoue
+
+**Le premier domaine qui matche gagne**, et un commentaire l'assume : « AVANT
+prestashop-catalogue : une commande fournisseur mentionne presque toujours un
+produit ». C'est une collision réglée à la main par un ordre de priorité. À
+douze domaines c'est tenable ; à vingt-cinq, l'ordre devient combinatoire et
+chaque ajout peut casser un arbitrage antérieur sans qu'aucun test le dise.
+BM25 **score** au lieu de choisir un casier, donc il n'a pas ce problème.
+
+**Les noms de skills sont des chaînes.** Un skill renommé ou supprimé laisse un
+nom mort dans la table, et rien ne le vérifie.
+
+**Il ne mesure rien.** Aucun comptage, aucune trace de ce que l'injection
+produit.
+
+### La division du travail retenue
+
+GK lit la même table `DOMAINS` et **se tait quand un de ces douze domaines
+matche**.
+
+| Demande | Qui répond |
+|---|---|
+| Un des 12 domaines | `skills_gate.py`, sa précision réglée à la main |
+| Tout le reste | GK, sur les ~498 skills orphelins |
+| Dans les deux cas | GK mesure |
+
+Aucun conflit, aucune duplication, et la précision artisanale préservée là où
+elle existe. Si le banc montre plus tard que GK égale le gate sur ces douze
+domaines, le gate pourra être retiré — avec un chiffre pour le justifier.
+
+### Deux gains avant même la phase 2
+
+**Auditer la table du gate.** GK a le catalogue réel via le manifeste : il peut
+signaler les noms cités qui n'existent plus, et les ~498 skills que personne ne
+nomme. Code trivial, service que rien ne rend aujourd'hui.
+
+**Un A/B sans confondant.** Le mener sur les domaines **non couverts
+uniquement** : une population où il n'existe aucune intervention. Non pas « GK
+contre le gate » mais « GK contre rien », sur 93 % des demandes.
+
+### À reprendre plutôt qu'à réécrire
+
+`ACTION_PATTERNS` et `EXEMPT_PATTERNS` sont le filtre des messages triviaux de
+l'étape 3, déjà écrits en français, avec normalisation des accents, éprouvés en
+production. GK les reprend. `META_PATTERNS` et `SYMPTOM_PATTERNS` couvrent deux
+trous que la conception n'avait pas vus.
+
+## La forme réelle des skills, et ce qu'elle impose
+
+Relevé le 2026-10-22 sur les 534 skills de `/opt/data/skills`.
+
+| Mesure | Valeur |
+|---|---|
+| Disposition | 30 % `SKILL.md + references/ + scripts/`, 28 % `SKILL.md` seul, 25 % `+ references/`, le reste mixte |
+| Taille d'un `SKILL.md` | médiane **15 Ko**, moyenne 20, max 84 ; **105 skills dépassent 32 Ko** |
+| Frontmatter | `name` et `description` **partout** ; `version` 156, `platforms` 140, `metadata` 128, `category` 112 |
+
+Squelette type, et c'est lui qui porte les conséquences :
+
+```
+---
+name: domaine-sujet
+description: "<déclencheur concret> — <ce que le skill contient>"
+---
+## Déclencheurs      quand charger / quand NE PAS charger
+## Règle             la règle métier, à l'impératif
+## Procédure         commandes exactes, chemins, ordre
+## Pièges            ce qui ressemble à X mais est Y
+## Vérification      preuve mesurable
+## Références        references/*.md datés, scripts/
+```
+
+Quatre familles en usage : procédural métier, incident et forensics, outillage
+et API, campagne récurrente. Les titres varient donc d'une famille à l'autre, et
+le découpage doit le tolérer.
+
+### Quatre conséquences pour la phase 2
+
+**1. `Déclencheurs` reçoit le poids le plus élevé**, pas le nom ni la
+description. Les skills déclarent eux-mêmes quand les charger : c'est le signal
+le plus fort possible, écrit par l'auteur, et structuré. La conception traitait
+le corps comme un bloc homogène, ce qui était faux — une section a précisément
+pour propos la question que GK pose.
+
+**2. Le « quand NE PAS charger » est un signal NÉGATIF**, et aucune des huit
+étapes ne l'avait envisagé. Un skill dont les contre-indications correspondent à
+la demande doit être **écarté**, pas remonté. BM25 ne sait faire que de
+l'affinité positive, donc cette section se découpe à part et se **soustrait**.
+Sans cela, un skill qui dit « ne me charge pas pour les commandes fournisseurs »
+remonte en tête sur « commande fournisseur », avec les mots au meilleur endroit
+possible — un classement inversé sur les cas les plus nets.
+
+**3. Le découpage par titre est une nécessité, pas une optimisation.** Une
+médiane de 15 Ko fait environ 4 000 jetons : indexé d'un bloc, un skill noie
+BM25. Le squelette fournit de vraies frontières sémantiques.
+
+**4. `references/` n'est pas indexé en v1.** 326 skills en ont ; ce sont des
+annexes datées qui multiplieraient le corpus sans décider du choix, puisque
+`Déclencheurs` décide. À rouvrir si le banc montre des manques.
+
+### Deux effets sur les décisions antérieures
+
+**Le bras « métadonnées seules » du banc est exactement reproductible**, puisque
+`name` et `description` sont présents partout. La comparaison de l'étape 8 n'a
+aucune ambiguïté de définition.
+
+**Le pari « sans embeddings » sort renforcé.** Le squelette impose
+`description: "<déclencheur concret> — ..."`, donc les auteurs écrivent déjà les
+mots que les utilisateurs emploient plutôt qu'un résumé abstrait. C'est la
+condition pour que le lexical suffise. Renforcé, pas prouvé.
+
+### Un écart non résolu
+
+Le comptage donne **534** ici et **537** par `find -name SKILL.md` dans
+`/opt/data/skills`. Trois dossiers qui n'en sont probablement pas. Sans
+conséquence, noté plutôt que corrigé en silence.
+
+Et les **105 skills de plus de 32 Ko** sont des candidats au `skill-cleaner` déjà
+présent dans la bibliothèque. GK est bien placé pour les signaler, comme il
+signale les orphelins.
+
 ## skills_gate.py : la phase 3 existe déjà
 
 Relevé le 2026-10-22 dans `hooks.pre_llm_call` du `config.yaml` de l'agent :
