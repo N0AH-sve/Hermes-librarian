@@ -186,69 +186,34 @@ HOOKS = (
     ("on_skill_lifecycle", "on_skill_lifecycle"),
 )
 
-# Noms possibles de la methode d'enregistrement. `PluginContext` se decrit
-# comme « facade given to plugins so they can register tools and hooks », donc
-# elle en porte une ; son nom exact n'est pas confirme.
-METHODES_ENREGISTREMENT = ("register_hook", "add_hook", "hook", "on", "subscribe")
-
-
 def _enregistrer(ctx) -> list[str]:
-    """Enregistre les hooks via la methode que `ctx` expose reellement.
+    """Branche les hooks par `ctx.register_hook`, verifie dans la source de
+    Hermes (`hermes_cli/plugins.py:916`) et dans le `register()` de
+    `gm-routing`.
 
     Declarer les hooks dans `plugin.yaml` ne suffit pas : `gm-routing` declare
-    `pre_verify` et `pre_tool_call` dans son manifeste tout en implementant
-    `on_post_tool_call`, donc le manifeste ne cable rien — il declare.
+    `pre_verify` et `pre_tool_call` dans son manifeste tout en en enregistrant
+    cinq ici. Le manifeste declare, il ne cable pas.
     """
     faits = []
-    for methode in METHODES_ENREGISTREMENT:
-        fn = getattr(ctx, methode, None)
-        if not callable(fn):
+    for hook, nom_fonction in HOOKS:
+        cible = globals().get(nom_fonction)
+        if cible is None:
             continue
-        for hook, nom_fonction in HOOKS:
-            cible = globals().get(nom_fonction)
-            if cible is None:
-                continue
-            try:
-                fn(hook, cible)
-                faits.append(f"{methode}({hook})")
-            except Exception as exc:
-                _noter({"event": "enregistrement_refuse", "methode": methode,
-                        "hook": hook, "erreur": repr(exc)})
-        if faits:
-            return faits
+        try:
+            ctx.register_hook(hook, cible)
+            faits.append(hook)
+        except Exception as exc:
+            _noter({"event": "enregistrement_refuse", "hook": hook, "erreur": repr(exc)})
     return faits
 
 
-def _relever_api(ctx) -> dict:
-    """Consigne ce que `ctx` offre vraiment, une fois.
-
-    Deux inconnues de l'API de Hermes ont deja coute un aller-retour chacune.
-    Autant les relever au chargement plutot que de les deviner.
-    """
-    try:
-        membres = sorted(n for n in dir(ctx) if not n.startswith("_"))
-    except Exception as exc:
-        return {"erreur": repr(exc)}
-    out = {"membres": membres}
-    for nom in ("register_hook", "add_hook", "register_tool", "call_mcp", "get_config"):
-        fn = getattr(ctx, nom, None)
-        if fn is None:
-            continue
-        try:
-            import inspect
-
-            out[nom] = str(inspect.signature(fn))
-        except Exception:
-            out[nom] = "presente, signature illisible"
-    return out
-
-
 def register(ctx=None, *args, **kwargs):
-    """Point d'entree. Il ENREGISTRE les hooks, et ne se contente pas de garder
-    le contexte.
+    """Point d'entree. Signature verifiee : `register(ctx)`, comme `gm-routing`.
 
-    C'est le defaut qui a empeche le premier essai de fonctionner : le contexte
-    etait bien recu, mais jamais utilise pour brancher quoi que ce soit.
+    Il ENREGISTRE les hooks au lieu de seulement garder le contexte. C'est le
+    defaut qui a fait echouer le premier essai : le contexte etait bien recu,
+    jamais utilise pour brancher quoi que ce soit.
 
     Il ne leve jamais rien : on ne sait pas si un plugin qui plante au
     chargement empeche l'agent de demarrer, donc on se comporte comme si oui —
@@ -258,36 +223,13 @@ def register(ctx=None, *args, **kwargs):
     try:
         if ctx is not None and hasattr(ctx, "call_mcp"):
             _ctx = ctx
-            _noter({"event": "ctx_trouve", "ou": "argument du point d'entree"})
         else:
             _retenir_ctx(kwargs)
-        if _ctx is not None:
-            _noter({"event": "api_ctx", **_relever_api(_ctx)})
-            faits = _enregistrer(_ctx)
-            _noter({"event": "hooks_enregistres", "faits": faits or "AUCUN"})
-        _noter({"event": "charge", "ctx_present": _ctx is not None})
+        if _ctx is None:
+            _noter({"event": "charge", "ctx_present": False})
+            return None
+        faits = _enregistrer(_ctx)
+        _noter({"event": "charge", "ctx_present": True, "hooks": faits or "AUCUN"})
     except Exception as exc:
         _noter({"event": "erreur_chargement", "erreur": repr(exc)})
     return None
-
-
-# Le nom attendu n'est pas confirme. Des enveloppes distinctes plutot que des
-# alias, pour que le releve dise LEQUEL Hermes appelle.
-def setup(ctx=None, *a, **k):
-    _noter({"event": "point_entree", "nom": "setup"})
-    return register(ctx, *a, **k)
-
-
-def init(ctx=None, *a, **k):
-    _noter({"event": "point_entree", "nom": "init"})
-    return register(ctx, *a, **k)
-
-
-def activate(ctx=None, *a, **k):
-    _noter({"event": "point_entree", "nom": "activate"})
-    return register(ctx, *a, **k)
-
-
-def on_load(ctx=None, *a, **k):
-    _noter({"event": "point_entree", "nom": "on_load"})
-    return register(ctx, *a, **k)

@@ -223,27 +223,13 @@ def test_register_enregistre_vraiment_les_hooks(tmp_path, monkeypatch):
     assert attendre(ctx)
 
 
-@pytest.mark.parametrize("methode", ["register_hook", "add_hook", "hook", "on", "subscribe"])
-def test_trouve_la_methode_d_enregistrement_quel_que_soit_son_nom(tmp_path, monkeypatch, methode):
-    """Le nom exact de la methode n'est pas confirme dans la source de Hermes."""
-    mod = charger(tmp_path, monkeypatch)
-    recus = []
-
-    class Ctx(FauxCtx):
-        pass
-
-    setattr(Ctx, methode, lambda self, n, f: recus.append(n))
-    mod.register(Ctx())
-    assert "transform_llm_output" in recus, f"non enregistre via {methode}"
-
-
-def test_sans_methode_d_enregistrement_le_pont_le_dit(tmp_path, monkeypatch):
+def test_sans_register_hook_le_pont_le_dit(tmp_path, monkeypatch):
+    """FauxCtx n'a pas register_hook : le pont doit le signaler, pas se taire."""
     mod = charger(tmp_path, monkeypatch)
     mod.register(FauxCtx())
-    entrees = journal(mod)
-    assert any(e["event"] == "hooks_enregistres" and e["faits"] == "AUCUN" for e in entrees)
-    # Et il releve l'API pour qu'on sache quoi chercher
-    assert any(e["event"] == "api_ctx" and "membres" in e for e in entrees)
+    assert any(
+        e["event"] == "charge" and e.get("hooks") == "AUCUN" for e in journal(mod)
+    )
 
 
 def test_un_enregistrement_qui_leve_ne_remonte_pas(tmp_path, monkeypatch):
@@ -257,12 +243,10 @@ def test_un_enregistrement_qui_leve_ne_remonte_pas(tmp_path, monkeypatch):
     assert any(e["event"] == "enregistrement_refuse" for e in journal(mod))
 
 
-def test_les_points_d_entree_sont_distinguables(tmp_path, monkeypatch):
-    """Alias sur une meme fonction, on ne savait pas lequel Hermes appelle.
-    Des enveloppes distinctes le disent."""
-    for nom in ("setup", "init", "activate", "on_load"):
-        mod = charger(tmp_path, monkeypatch)
-        getattr(mod, nom)(FauxCtx())
-        assert any(
-            e["event"] == "point_entree" and e["nom"] == nom for e in journal(mod)
-        ), nom
+def test_un_seul_point_d_entree(tmp_path, monkeypatch):
+    """`register(ctx)` est verifie dans la source et dans gm-routing. Les alias
+    de tatonnement sont retires : ils n'ont plus lieu d'etre."""
+    mod = charger(tmp_path, monkeypatch)
+    assert callable(mod.register)
+    for ancien in ("setup", "init", "activate", "on_load"):
+        assert not hasattr(mod, ancien), f"{ancien} devrait avoir disparu"

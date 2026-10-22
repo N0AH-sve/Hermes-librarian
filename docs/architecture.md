@@ -1612,7 +1612,8 @@ Dernière revue : 2026-10-22, après la mise en service partielle de la phase 1.
 | Sujet | État |
 |---|---|
 | **Un plugin qui lève à l'import bloque-t-il le démarrage de gb ?** | Jamais vérifié. C'est le contrôle le plus important de l'étape 7 de la mise en service : si gb ne redémarre pas, désactiver le pont répond à la question |
-| Par où arrive le `PluginContext` | `class PluginContext` existe (`hermes_cli/plugins.py:225`) et porte `call_mcp`, mais ce qui le passe au plugin n'a pas été lu. Le pont le cherche à ce qu'il sait faire et journalise ce qui a marché |
+| ~~Par où arrive le `PluginContext`~~ | **Clos.** Point d'entrée `register(ctx)`, et `ctx.register_hook(nom, callback)` (`plugins.py:916`), confirmé par le `register()` de `gm-routing`. **Déclarer les hooks dans `plugin.yaml` ne câble rien** : `gm-routing` en déclare deux au manifeste et en enregistre cinq dans le code |
+| **Trois mécanismes sur `pre_llm_call`** | `gm-routing` l'enregistre, et le hook shell `skills_gate.py` y est branché. GK serait le **troisième**. Les contextes se concatènent, donc l'exigence « brief court » devient plus importante, pas moins : trois blocs s'ajoutent au message avant que l'agent lise sa demande |
 | Sous quel nom la réponse arrive à `transform_llm_output` | Idem : plusieurs noms plausibles essayés, le relevé dira lequel |
 | Clés exactes de `_mcp_envelope` | Le retour est un dictionnaire ; ses clés se lisent dans la même source. Sans conséquence en phase 1, qui n'utilise aucun retour |
 | URL des docs Hermes | `hermes-agent.nousresearch.com` ne résout pas depuis l'environnement de conception. La source dans l'image a servi de substitut, et s'est révélée plus fiable |
