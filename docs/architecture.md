@@ -1312,6 +1312,8 @@ Dernière revue : 2026-10-22, après la mise en service partielle de la phase 1.
 | **Description GitHub du dépôt** | Annonce encore « FastMCP » et une recherche sémantique, deux choses désormais fausses. Se change dans les réglages du dépôt, hors de portée d'un commit |
 | **Seuil d'acceptation de la v1** | Reporté à dessein (étape 8) : il se fixe devant le chiffre du banc, pas avant |
 | **Volume de la phase de référence** | « 3 semaines » avait été retenu avant l'A/B. Avec l'A/B, la bonne unité est un nombre de tours par bras, pas une durée. À reprendre |
+| **`skills_gate.py`, un hook shell déjà en place sur `pre_llm_call`** | **Le plus structurant des points ouverts.** `hooks.pre_llm_call` du `config.yaml` lance `/opt/data/hooks/skills_gate.py`. Une barrière sur les skills existe donc déjà, sur le hook exact que la phase 3 utilisera. Avant d'écrire la phase 3 : lire ce fichier et décider si GK le remplace, le complète ou doit s'en écarter. Deux mécanismes sur le même point d'accroche produisent un brief perdu |
+| **Activation d'un plugin** | Résolu, mais il faut le noter : un plugin n'est chargé que s'il figure dans `plugins.enabled`. Copier le dossier ne suffit pas, et `plugin.yaml.inactif` est un second mécanisme observé dont le statut reste flou |
 | **Les quatre plugins adjacents** | `gm-routing`, `gm-provenance`, `gm-discord-cards` et `gm-skill-dup-guard` (inactif) touchent le périmètre de GK. Le recouvrement a été constaté, jamais arbitré — notamment entre le garde anti-doublons et le signalement d'orphelins de GK |
 | **Les 329 SKILL.md hors bibliothèque** | GK les signalera. Décider s'il faut les ranger, et par qui, reste humain |
 | Embeddings | Écartés de la v1. À rouvrir en v2 seulement si le banc l'exige |

@@ -200,6 +200,27 @@ cp -r ~/greenknowledge/hermes-plugin/gk-bridge \
 > Le chemin hôte du volume est `./data` à côté du `compose.yaml` de l'agent,
 > monté sur `/opt/data` dans le conteneur. Adapte si ton arborescence diffère.
 
+**Puis l'activer**, et c'est ce qui manquait : copier le dossier ne suffit pas.
+Un plugin n'est chargé que s'il figure dans la liste `plugins.enabled` du
+`config.yaml`.
+
+```yaml
+# dans /opt/data/config.yaml, en ajoutant a la liste existante
+plugins:
+  enabled:
+    - gm-discord-cards
+    - gm-routing
+    - gk-bridge
+  entries:
+    gk-bridge:
+      allow_tool_override: false
+      mcp_allowlist: ["gk"]
+```
+
+Ne reconstruis pas ces listes : ajoute `gk-bridge` à celle qui existe, sans
+toucher aux autres entrées. Un plugin figure soit dans `enabled`, soit dans
+`disabled`.
+
 **Vérifier** que le manifeste est bien là et qu'il ne déclare aucun hook
 d'entrée :
 
@@ -210,13 +231,10 @@ docker compose -f ~/next_hermes/compose.yaml exec hermes bash -lc \
 # Si "pre_llm_call" apparait, n'installe pas : ce n'est pas la phase 1.
 ```
 
-*Revenir en arrière*, et c'est la convention locale :
-
-```bash
-docker compose -f ~/next_hermes/compose.yaml exec hermes bash -lc \
-  'mv /opt/data/plugins/gk-bridge/plugin.yaml \
-      /opt/data/plugins/gk-bridge/plugin.yaml.inactif'
-```
+*Revenir en arrière* : retirer `gk-bridge` de `plugins.enabled`, ce qui est le
+mécanisme officiel. Renommer le manifeste en `plugin.yaml.inactif` est un
+second mécanisme observé sur un plugin du serveur, mais c'est la liste qui fait
+foi.
 
 ---
 
