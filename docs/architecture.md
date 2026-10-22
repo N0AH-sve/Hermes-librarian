@@ -1668,9 +1668,29 @@ description que le prompt système escamote**, pour les catégories qu'il
 déclasse. Cela explique aussi pourquoi `skills_gate.py` a été écrit par-dessus
 un catalogue qui liste déjà tout : il ne listait pas tout de la même façon.
 
-À confirmer sur le bloc réel avant d'en faire une décision : combien de skills
-dans `<available_skills>`, combien avec description, quelles catégories
-déclassées, et le coût en jetons — ce que `prompt_size` sait calculer.
+**CORRIGÉ une heure plus tard, et la correction annule la conséquence
+ci-dessus.** `/opt/hermes/agent/coding_context.py:410` :
+
+```python
+"""Skill categories the active posture demotes to names-only (empty outside ``focus``)."""
+```
+
+Le déclassement en noms-seuls n'existe **que dans la posture `focus`**, et la
+liste est vide partout ailleurs. Hors de cette posture, chaque skill porte donc
+bien sa description. Il n'y a pas de trou d'information à combler, et
+l'objection de GM reprend toute sa force, avec une réserve de moins.
+
+La méthode qui a produit l'erreur mérite d'être notée, parce qu'elle s'est
+répétée trois fois dans la même journée : un mécanisme trouvé a été pris pour
+l'explication, alors que la porteé réelle du mécanisme était écrite une ligne
+plus loin. Avant de conclure d'un relevé, lire ce qui le borne.
+
+Le constructeur est trouvé : `/opt/hermes/agent/prompt_builder.py:1370` et
+`:1388`, deux chemins de rendu. `index_lines` à la ligne 1370 est ce que GM
+appelle « l'étape d'index » du prompt système.
+
+Reste à vérifier, et c'est la dernière chose : **quelle posture gb utilise**. S'il
+n'est pas en `focus`, la phase 2 reste suspendue pour de bon.
 
 **Deux inconnues fermées au passage.** `plugins.py:940` définit
 `register_system_prompt_section` : un plugin **peut** ajouter une section au
