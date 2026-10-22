@@ -256,3 +256,82 @@ def test_le_banc_distingue_les_deux_sortes_d_echec(tmp_path, capsys, monkeypatch
     causes = {e["cause"] for e in out["echecs"]}
     assert "aucun resultat" in causes
     assert any("REDACTION" in l for l in out["lecture"])
+
+
+# -- les deux populations, et les demandes peu informatives ----------------
+
+
+def test_le_banc_separe_le_metier_du_generique(tmp_path, capsys, monkeypatch):
+    """Les cinq premiers echecs du relevé du 2026-10-22 etaient TOUS des skills
+    generiques. Une moyenne des deux populations ne decrit ni l'une ni l'autre."""
+    store = Store(tmp_path / "p.db")
+    cat = Catalog(store)
+    cat.ingest([
+        {"path": "greenmusic/gm-factures/SKILL.md", "name": "gm-factures",
+         "description": "Factures fournisseurs et dettes.",
+         "category": "greenmusic", "fingerprint": "1"},
+        {"path": "software-development/plan/SKILL.md", "name": "plan",
+         "description": "Planifier un travail.",
+         "category": "software-development", "fingerprint": "1"},
+    ], complete=True)
+    cat.store_sections([
+        {"path": "greenmusic/gm-factures/SKILL.md", "fingerprint": "1",
+         "sections": [{"heading": "Déclencheurs",
+                       "text": '- « point dettes fournisseurs »'}]},
+        # Deux jetons au moins, sinon `corpus()` ecarte la phrase : une
+        # citation d'un seul mot ne fait pas un cas de test.
+        {"path": "software-development/plan/SKILL.md", "fingerprint": "1",
+         "sections": [{"heading": "Déclencheurs", "text": '- « planifier le travail »'}]},
+    ])
+    store.close()
+    monkeypatch.setenv("GK_DATABASE", str(tmp_path / "p.db"))
+    assert cli_main(["--json", "banc"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    pop = out["par_population"]
+    assert "metier" in pop and "generique" in pop
+    assert pop["metier"]["cas"] + pop["generique"]["cas"] == out["cas"]
+    # Chaque population porte aussi son bras temoin.
+    assert "mrr_nom_description" in pop["metier"]
+
+
+def test_les_demandes_peu_informatives_sont_comptees_a_part(tmp_path, capsys, monkeypatch):
+    """« etape 1 validee, go » ne porte aucun mot de domaine : ce sont des
+    declencheurs d'etat de conversation, qu'aucune recherche par les mots ne
+    peut servir. Les noyer dans la moyenne serait trompeur ; les ecarter du
+    jugement serait malhonnete. On les compte a part."""
+    store = Store(tmp_path / "i.db")
+    cat = Catalog(store)
+    skills = {
+        f"s{i}": f"Description du domaine numero {i} avec des mots propres{i}."
+        for i in range(12)
+    }
+    cat.ingest([
+        {"path": f"cat/{n}/SKILL.md", "name": n, "description": d,
+         "category": "greenmusic", "fingerprint": "1"}
+        for n, d in skills.items()
+    ], complete=True)
+    cat.store_sections([
+        {"path": f"cat/{n}/SKILL.md", "fingerprint": "1",
+         "sections": [{"heading": "Déclencheurs",
+                       "text": f'- « propres{i} du domaine »' if i else '- « go et voila »'}]}
+        for i, n in enumerate(skills)
+    ])
+    store.close()
+    monkeypatch.setenv("GK_DATABASE", str(tmp_path / "i.db"))
+    assert cli_main(["--json", "banc"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert "peu_informative" in out["par_population"]
+    assert "informative" in out["par_population"]
+    assert out["seuil_information"] > 0
+
+
+def test_l_information_d_une_demande_se_mesure(tmp_path):
+    store = Store(tmp_path / "x.db")
+    peupler(store, BIBLIOTHEQUE)
+    index = Index.construire(store)
+    try:
+        # Un mot rare porte plus qu'une tournure sans domaine.
+        assert index.information("proforma") > index.information("et le la")
+        assert index.information("et le la") == 0.0, "que des mots vides"
+    finally:
+        store.close()

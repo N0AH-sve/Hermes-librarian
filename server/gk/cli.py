@@ -391,7 +391,20 @@ def cmd_banc(args, cfg: Config) -> int:
                 "suite": "voir `gk declencheurs`",
             }, args)
             return 1
+        # Les deux populations sont deux problemes de recherche differents :
+        # les skills metier (categorie `greenmusic`) et les skills generiques
+        # herites. Une moyenne des deux ne decrit ni l'un ni l'autre, et les cinq
+        # premiers echecs du relevé du 2026-10-22 etaient TOUS generiques.
+        categorie = {s.name: s.category for s in index.skills}
+        # Et le seuil d'information : une demande dont la somme des IDF est
+        # faible ne porte aucun mot de domaine. L'ecarter du jugement serait
+        # malhonnete, la noyer dans la moyenne serait trompeur : on la compte a
+        # part.
+        informations = [index.information(d) for d, _, _ in cas]
+        informations_triees = sorted(informations)
+        seuil = informations_triees[max(0, len(informations_triees) // 10)]
         rangs: dict[str, list[int | None]] = {"tous": [], "sans": []}
+        groupes: dict[str, dict[str, list]] = {}
         echecs: list[dict] = []
         # Deux echecs tres differents, qu'il ne faut pas confondre : aucun
         # skill ne remonte, ou un autre gagne. Le premier dit que les mots de la
@@ -400,7 +413,12 @@ def cmd_banc(args, cfg: Config) -> int:
         # redaction. Le second dit que le classement se trompe, ce qui est une
         # remarque sur le score.
         aucun = mauvais = 0
-        for demande, attendu, ligne in cas:
+        for (demande, attendu, ligne), info in zip(cas, informations):
+            metier = categorie.get(attendu) == "greenmusic"
+            etiquettes = [
+                "metier" if metier else "generique",
+                "peu_informative" if info <= seuil else "informative",
+            ]
             for bras, sans in (("tous", False), ("sans", True)):
                 sortie = index.chercher(
                     demande, limite=args.limite, sans_declencheurs=sans,
@@ -409,6 +427,8 @@ def cmd_banc(args, cfg: Config) -> int:
                 noms = [r["name"] for r in sortie]
                 rang = noms.index(attendu) + 1 if attendu in noms else None
                 rangs[bras].append(rang)
+                for etiquette in etiquettes:
+                    groupes.setdefault(etiquette, {}).setdefault(bras, []).append(rang)
                 if bras == "tous" and rang is None:
                     if noms:
                         mauvais += 1
@@ -429,6 +449,17 @@ def cmd_banc(args, cfg: Config) -> int:
                 f"rappel_{args.limite}": round(len(trouves) / len(cas), 3),
                 "mrr": round(sum(1.0 / r for r in trouves) / len(cas), 3),
             }
+        out["par_population"] = {
+            etiquette: {
+                "cas": len(bras_rangs["tous"]),
+                "rappel_1": _taux(bras_rangs["tous"], 1),
+                f"rappel_{args.limite}": _taux(bras_rangs["tous"], args.limite),
+                "mrr": _mrr(bras_rangs["tous"]),
+                "mrr_nom_description": _mrr(bras_rangs["sans"]),
+            }
+            for etiquette, bras_rangs in sorted(groupes.items())
+        }
+        out["seuil_information"] = round(seuil, 2)
         gain = out["tous_les_champs"]["mrr"] - out["nom_description"]["mrr"]
         out["gain_mrr_des_declencheurs"] = round(gain, 3)
         out["echecs_sans_aucun_resultat"] = aucun
@@ -437,6 +468,20 @@ def cmd_banc(args, cfg: Config) -> int:
         out["echecs"] = echecs
         _emit(out, args)
     return 0
+
+
+def _taux(rangs: list, limite: int) -> float:
+    if not rangs:
+        return 0.0
+    return round(
+        sum(1 for r in rangs if r is not None and r <= limite) / len(rangs), 3
+    )
+
+
+def _mrr(rangs: list) -> float:
+    if not rangs:
+        return 0.0
+    return round(sum(1.0 / r for r in rangs if r is not None) / len(rangs), 3)
 
 
 def _lire_banc(out: dict, gain: float) -> list[str]:
@@ -458,6 +503,22 @@ def _lire_banc(out: dict, gain: float) -> list[str]:
         lignes.append(
             "=> Les declencheurs apportent nettement. C'est le travail de "
             "redaction de la bibliotheque qui paie, pas le moteur."
+        )
+    pop = out.get("par_population") or {}
+    metier, generique = pop.get("metier"), pop.get("generique")
+    if metier and generique:
+        lignes.append(
+            f"Metier {metier['mrr']} de MRR sur {metier['cas']} cas, generique "
+            f"{generique['mrr']} sur {generique['cas']}. Ce sont deux problemes "
+            "de recherche differents, et la moyenne ne decrit ni l'un ni l'autre."
+        )
+    peu = pop.get("peu_informative")
+    if peu:
+        lignes.append(
+            f"{peu['cas']} demandes portent peu de mots de domaine (MRR "
+            f"{peu['mrr']}) : des declencheurs d'etat de conversation comme "
+            "\u00ab etape 1 validee, go \u00bb. Aucune recherche par les mots ne peut les "
+            "servir, et les corriger n'est pas un travail de score."
         )
     aucun = out.get("echecs_sans_aucun_resultat", 0)
     mauvais = out.get("echecs_mauvais_skill", 0)

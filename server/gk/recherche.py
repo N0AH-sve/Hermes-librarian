@@ -248,6 +248,18 @@ class Index:
 
     # -- le corpus du banc ---------------------------------------------------
 
+    def information(self, demande: str) -> float:
+        """La somme des IDF d'une demande : ce qu'elle porte d'exploitable.
+
+        Relevé du 2026-10-22 : des phrases comme « let me try this and check »
+        ou « etape 1 validee, go » figurent dans les declencheurs. Elles ne
+        contiennent aucun mot de domaine : ce sont des declencheurs d'ETAT DE
+        CONVERSATION, pas de sujet. Aucune recherche par les mots ne peut les
+        servir, et les compter comme des echecs de classement designe le mauvais
+        remede.
+        """
+        return sum(self.idf(j) for j in jetons(demande))
+
     def corpus(self) -> list[tuple[str, str, str]]:
         """Les lignes citees, comme corpus etiquete : `(demande, skill, ligne)`.
 
