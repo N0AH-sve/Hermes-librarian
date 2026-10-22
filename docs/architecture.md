@@ -6,9 +6,16 @@ divergence avec le README ou le code, c'est lui qui a raison.
 
 Langue de travail : français. Le README reste en anglais.
 
+**Deux numérotations, qui ne se recouvrent pas.** Les **étapes de conception**
+1 à 8 listées ici sont des décisions. Les **phases de construction** 1 à 4
+(1 chaîne de mesure, 2 index et banc, 3 brief et A/B, 4 faits sourcés) sont du
+code livré. Une décision prise à l'étape de conception 5 peut ne se réaliser
+qu'en phase de construction 3 : dire « étape » seul pour les deux est une source
+de confusion, et ce document ne le fait pas.
+
 ## Statut des étapes
 
-| | Étape | Statut |
+| | Étape de conception | Statut |
 |---|---|---|
 | 1 | Besoins | close |
 | 2 | Responsabilités | close |
@@ -1457,135 +1464,6 @@ contre le gate » mais « GK contre rien », sur 93 % des demandes.
 l'étape 3, déjà écrits en français, avec normalisation des accents, éprouvés en
 production. GK les reprend. `META_PATTERNS` et `SYMPTOM_PATTERNS` couvrent deux
 trous que la conception n'avait pas vus.
-
-## La forme réelle des skills, et ce qu'elle impose
-
-Relevé le 2026-10-22 sur les 534 skills de `/opt/data/skills`.
-
-| Mesure | Valeur |
-|---|---|
-| Disposition | 30 % `SKILL.md + references/ + scripts/`, 28 % `SKILL.md` seul, 25 % `+ references/`, le reste mixte |
-| Taille d'un `SKILL.md` | médiane **15 Ko**, moyenne 20, max 84 ; **105 skills dépassent 32 Ko** |
-| Frontmatter | `name` et `description` **partout** ; `version` 156, `platforms` 140, `metadata` 128, `category` 112 |
-
-Squelette type, et c'est lui qui porte les conséquences :
-
-```
----
-name: domaine-sujet
-description: "<déclencheur concret> — <ce que le skill contient>"
----
-## Déclencheurs      quand charger / quand NE PAS charger
-## Règle             la règle métier, à l'impératif
-## Procédure         commandes exactes, chemins, ordre
-## Pièges            ce qui ressemble à X mais est Y
-## Vérification      preuve mesurable
-## Références        references/*.md datés, scripts/
-```
-
-Quatre familles en usage : procédural métier, incident et forensics, outillage
-et API, campagne récurrente. Les titres varient donc d'une famille à l'autre, et
-le découpage doit le tolérer.
-
-### Quatre conséquences pour la phase 2
-
-**1. `Déclencheurs` reçoit le poids le plus élevé**, pas le nom ni la
-description. Les skills déclarent eux-mêmes quand les charger : c'est le signal
-le plus fort possible, écrit par l'auteur, et structuré. La conception traitait
-le corps comme un bloc homogène, ce qui était faux — une section a précisément
-pour propos la question que GK pose.
-
-**2. Le « quand NE PAS charger » est un signal NÉGATIF**, et aucune des huit
-étapes ne l'avait envisagé. Un skill dont les contre-indications correspondent à
-la demande doit être **écarté**, pas remonté. BM25 ne sait faire que de
-l'affinité positive, donc cette section se découpe à part et se **soustrait**.
-Sans cela, un skill qui dit « ne me charge pas pour les commandes fournisseurs »
-remonte en tête sur « commande fournisseur », avec les mots au meilleur endroit
-possible — un classement inversé sur les cas les plus nets.
-
-**3. Le découpage par titre est une nécessité, pas une optimisation.** Une
-médiane de 15 Ko fait environ 4 000 jetons : indexé d'un bloc, un skill noie
-BM25. Le squelette fournit de vraies frontières sémantiques.
-
-**4. `references/` n'est pas indexé en v1.** 326 skills en ont ; ce sont des
-annexes datées qui multiplieraient le corpus sans décider du choix, puisque
-`Déclencheurs` décide. À rouvrir si le banc montre des manques.
-
-### Deux effets sur les décisions antérieures
-
-**Le bras « métadonnées seules » du banc est exactement reproductible**, puisque
-`name` et `description` sont présents partout. La comparaison de l'étape 8 n'a
-aucune ambiguïté de définition.
-
-**Le pari « sans embeddings » sort renforcé.** Le squelette impose
-`description: "<déclencheur concret> — ..."`, donc les auteurs écrivent déjà les
-mots que les utilisateurs emploient plutôt qu'un résumé abstrait. C'est la
-condition pour que le lexical suffise. Renforcé, pas prouvé.
-
-### Un écart non résolu
-
-Le comptage donne **534** ici et **537** par `find -name SKILL.md` dans
-`/opt/data/skills`. Trois dossiers qui n'en sont probablement pas. Sans
-conséquence, noté plutôt que corrigé en silence.
-
-Et les **105 skills de plus de 32 Ko** sont des candidats au `skill-cleaner` déjà
-présent dans la bibliothèque. GK est bien placé pour les signaler, comme il
-signale les orphelins.
-
-## skills_gate.py : la phase 3 existe déjà
-
-Relevé le 2026-10-22 dans `hooks.pre_llm_call` du `config.yaml` de l'agent :
-`/opt/data/hooks/skills_gate.py`, 350 lignes, un hook shell en production.
-
-C'est une implémentation de ce que la conception prévoyait pour la phase 3.
-
-| Décision de conception | Ce que `skills_gate.py` fait déjà |
-|---|---|
-| Injection automatique avant que l'agent réfléchisse | fait, sur `pre_llm_call` |
-| Brief accolé au message utilisateur | fait — et **jamais dans le prompt système, pour ne pas invalider le cache de prompt** |
-| Ignorer les messages triviaux | fait : `EXEMPT_PATTERNS` couvre politesses et questions d'état mesurable |
-| Ne jamais bloquer l'agent | fait : « toute exception => sortie vide + exit 0 » |
-| Rappeler les skills pertinents avant rédaction | fait, par mots-clés d'action et de domaine |
-
-Il déduplique par session. Son contrat est `{session_id, user_message,
-is_first_turn, model, platform}` sur stdin, `{"context": "..."}` sur stdout.
-
-**Une contrainte que la conception ignorait** : le contexte ne doit jamais aller
-dans le prompt système, sous peine d'invalider le cache de prompt. Coût réel,
-non mentionné jusqu'ici.
-
-### Ce que cela change par phase
-
-**Phase 1 — y gagne.** Elle mesure ce qui injecte, quoi que ce soit. La
-référence cesse d'être « l'agent sans aide » pour devenir « l'aide qui existe
-déjà », ce qui est la comparaison honnête. La chaîne déployée peut mesurer
-`skills_gate.py` dès maintenant.
-
-**Phase 2 — devient plus intéressante.** Le banc comparera deux approches
-réelles sur les mêmes tâches : mots-clés écrits à la main contre BM25 sur le
-corps complet. Si les mots-clés gagnent, on le saura sans rien déployer.
-
-**Phase 3 — change de nature.** Non plus « ajouter une injection » mais
-« remplacer ou compléter celle en place ». Deux mécanismes sur `pre_llm_call`
-ajouteraient chacun leur bloc : il faut trancher, pas empiler.
-
-### Ce que GK apporte encore
-
-- **La mesure.** `skills_gate.py` n'a aucun moyen de savoir s'il aide. C'est
-  l'apport irremplaçable, et il est déjà déployé.
-- **L'entretien.** Une table de mots-clés se maintient à la main à chaque skill
-  ajouté ; un index se met à jour depuis le manifeste. À 537 skills et en
-  croissance, l'écart se creuse.
-- **Les faits sourcés**, absents de `skills_gate.py`.
-- **Et peut-être rien sur la recherche elle-même** : si la table de domaines est
-  bien faite, BM25 n'apportera pas grand-chose. Le banc le dira, et cette issue
-  doit être acceptable.
-
-### À reprendre plutôt qu'à réécrire
-
-`ACTION_PATTERNS` et `EXEMPT_PATTERNS` sont le filtre des messages triviaux de
-l'étape 3, déjà écrits en français, avec gestion des accents, éprouvés en
-production. GK les reprend.
 
 ## Points ouverts
 
