@@ -164,9 +164,13 @@ def _charger_catalogue():
     peut de toute facon pas changer a chaud puisque les hooks sont enregistres au
     chargement.
 
-    Deux voies d'import : relatif d'abord — releve du 2026-10-22, `gk-bridge`
-    est bien importe comme un paquet malgre le tiret — puis par chemin. Un echec
-    est sans consequence : l'observation de la phase 1 continue sans le facteur.
+    L'import se fait **par chemin et jamais par import relatif**, bien que le
+    relatif marche (releve du 2026-10-22 : `gk-bridge` est importe comme un
+    paquet malgre le tiret). Un module importe reste dans `sys.modules` et ne
+    serait donc jamais relu : le rechargement a chaud exige un `exec_module` sur
+    une specification neuve.
+
+    Un echec est sans consequence : l'observation continue sans le facteur.
     """
     global _catalogue_mod, _catalogue_mtime
     chemin = os.path.join(os.path.dirname(os.path.abspath(__file__)), "catalogue.py")

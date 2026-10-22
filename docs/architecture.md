@@ -1831,6 +1831,47 @@ C'est exactement la distinction que la phase 1 mesure déjà —
 | **Les faits sourcés** (phase 4) | Indépendant de la recherche. `RÈGLE ABSOLUE` datée et attribuée en est l'amorce |
 | **Le rangement** | Auditer les noms écrits à la main dans `DOMAINS`, signaler orphelins, doublons et skills trop gros |
 
+### Le catalogue, mesuré en production le 2026-10-22
+
+Premier relevé réel après la mise en service du facteur. Il remplace les
+estimations de la journée.
+
+| Mesure | Valeur |
+|---|---|
+| Skills au catalogue | **182** (disque 185, dont 3 que Hermes considère inactifs) |
+| Indexes | 182, `a_indexer` à 0 |
+| **Skills avec une section de déclencheurs** | **65, soit 36 %** |
+| Poids des sections | **66 Ko**, ~1 Ko par skill |
+| Durée d'une ronde complète | **0,19 s**, 182 tranches en 5 tours |
+| `sans_description` | 0 — `name` et `description` sont bien partout |
+
+Répartition : `greenmusic` 86, `devops` 24, `productivity` 20,
+`software-development` 18, puis une longue traîne de categories à 1-6 skills.
+Le métier GM est donc 47 % de la bibliothèque, et la moitié restante est de
+l'outillage générique — ce qui confirme que le préfixe `gm-` sépare deux
+populations et que le banc doit rendre deux chiffres.
+
+**Les 66 Ko invalident deux inquiétudes de la journée** : le transfert de corps
+par MCP (il n'y en a pas, et les sections tiennent dans un appel) et la version
+de SQLite (aucun FTS5 nécessaire). Ce qui restait des « trous de conception »
+de la phase 2 n'existe plus.
+
+**Et les 36 % sont le chiffre qui compte.** Pour **117 skills sur 182**, l'index
+ne portera que `name` et `description` : il n'y a pas de déclencheurs rédigés à
+indexer. Cela valide la consigne de GM — un index qui dépendrait des
+déclencheurs serait bancal sur les deux tiers de la bibliothèque — et cela
+donne au gabarit `gm-skill-template` une cible mesurable : faire monter ces
+36 %.
+
+**La question du verrou, tranchée.** Après le `chown`, `host-gateway.json` est
+réécrit en `1001 1001` : gb réécrit le contenu sans recréer le fichier, donc le
+propriétaire est préservé et la réparation tient. Mais les verrous de jetons
+Discord et Telegram sont **recréés en `root:root` à chaque redémarrage** : un
+composant de gb qui gère les jetons de plateforme tourne donc en root. Cela ne
+casse rien aujourd'hui, le même composant les relisant ; c'est une fragilité de
+Hermes à signaler, qui redonnerait la panne du matin si une version faisait
+passer cette lecture en 1001.
+
 ### L'incident du 2026-10-22 : gb a cessé de répondre
 
 À consigner parce que c'est la panne la plus coûteuse du projet, qu'elle vient
