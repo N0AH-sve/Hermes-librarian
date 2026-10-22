@@ -192,6 +192,7 @@ class Catalog:
         """
         ts = now()
         traites = tronques = inconnus = obsoletes = sections_ecrites = 0
+        titres_repetes = 0
         self.store.execute("BEGIN")
         try:
             for item in items or []:
@@ -208,17 +209,29 @@ class Catalog:
                     continue
                 traites += 1
                 self.store.execute("DELETE FROM skill_sections WHERE path = ?", (path,))
+                # Deux sections d'un meme skill peuvent porter le MEME titre --
+                # GM ecrit 82 sections intitulees `## Declencheur :`. La clef
+                # etant (path, kind, heading), la seconde ecrasait la premiere
+                # en silence. `kind` porte donc un rang pour les repetitions :
+                # rien n'est perdu, le titre reste fidele, et aucune migration
+                # n'est necessaire puisque `kind` est deja dans la clef.
+                vus: dict[str, int] = {}
                 for section in item.get("sections") or []:
                     heading = str((section or {}).get("heading") or "").strip()
                     texte = str((section or {}).get("text") or "")
                     if len(texte) > MAX_SECTION_CHARS:
                         texte = texte[:MAX_SECTION_CHARS]
                         tronques += 1
+                    rang = vus.get(heading, 0)
+                    vus[heading] = rang + 1
+                    kind = KIND_RAW if rang == 0 else f"{KIND_RAW}#{rang + 1}"
+                    if rang:
+                        titres_repetes += 1
                     self.store.execute(
                         "INSERT INTO skill_sections (path, kind, heading, text, ts) "
                         "VALUES (?, ?, ?, ?, ?) ON CONFLICT(path, kind, heading) DO UPDATE "
                         "SET text = excluded.text, ts = excluded.ts",
-                        (path, KIND_RAW, heading, texte, ts),
+                        (path, kind, heading, texte, ts),
                     )
                     sections_ecrites += 1
                 fournie = str(item.get("fingerprint") or "")
@@ -238,6 +251,10 @@ class Catalog:
         return {
             "traites": traites,
             "sections_ecrites": sections_ecrites,
+            # Combien de sections partageaient le titre d'une autre dans le meme
+            # skill. Ce chiffre aurait du exister des le debut : sans lui, une
+            # perte par collision de clef ne laisse aucune trace.
+            "titres_repetes": titres_repetes,
             "tronques": tronques,
             "inconnus": inconnus,
             "obsoletes": obsoletes,
@@ -265,6 +282,24 @@ class Catalog:
 
     def _oublier_demande(self) -> None:
         self.store.set_counter(self.DEMANDE, 0.0)
+
+    def reindexer(self) -> int:
+        """Oublie ce qui a ete indexe, pour que tout soit relu.
+
+        Necessaire chaque fois qu'une regle de LECTURE change -- un intitule
+        rapproche autrement, une collision de titres corrigee -- parce que les
+        empreintes des fichiers n'ont pas bouge : GK ne redemanderait rien, et
+        le correctif ne s'appliquerait qu'aux skills edites ensuite.
+
+        Ne touche ni les corrections ni les compteurs : seul le catalogue se
+        reconstruit, et il se reconstruit depuis le pont.
+        """
+        cur = self.store.execute(
+            "UPDATE skills SET indexed_fingerprint = '', indexed_at = NULL "
+            "WHERE missing_since IS NULL"
+        )
+        self.demander_manifeste()
+        return cur.rowcount or 0
 
     def total(self) -> int:
         row = self.store.one("SELECT COUNT(*) c FROM skills WHERE missing_since IS NULL")
@@ -308,6 +343,9 @@ class Catalog:
         avec_sections = int(
             un("SELECT COUNT(DISTINCT path) c FROM skill_sections")["c"]
         )
+        repetes = int(
+            un("SELECT COUNT(*) c FROM skill_sections WHERE kind <> ?", (KIND_RAW,))["c"]
+        )
         octets = int(un("SELECT COALESCE(SUM(LENGTH(text)), 0) o FROM skill_sections")["o"])
         dernier = self.store.counter("last_catalog_ts")
         return {
@@ -316,6 +354,7 @@ class Catalog:
             "indexes": indexes,
             "a_indexer": max(0, vivants - indexes),
             "skills_avec_sections": avec_sections,
+            "sections_a_titre_repete": repetes,
             "sections_octets": octets,
             "dernier_manifeste_il_y_a_s": round(now() - dernier, 1) if dernier else None,
             "manifeste_perime": bool(

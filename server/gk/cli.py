@@ -336,6 +336,24 @@ def cmd_skill(args, cfg: Config) -> int:
     return 0
 
 
+def cmd_reindexer(args, cfg: Config) -> int:
+    """Oublie ce qui a ete indexe, pour que le pont renvoie TOUTES les tranches.
+
+    A lancer apres tout changement d'une regle de lecture : les empreintes des
+    fichiers n'ayant pas bouge, GK ne redemanderait rien de lui-meme.
+    """
+    with Store(cfg.database) as store:
+        catalogue = Catalog(store)
+        touches = catalogue.reindexer()
+        _emit({
+            "ok": True,
+            "skills_a_relire": touches,
+            "suite": "envoyez un message a l'agent : la relecture part dans la "
+                     "minute qui suit sa reponse, par paquets de 40",
+        }, args)
+    return 0
+
+
 def cmd_rafraichir(args, cfg: Config) -> int:
     """Demande un manifeste au prochain message de l'agent.
 
@@ -450,6 +468,11 @@ def build_parser() -> argparse.ArgumentParser:
     sk = sub.add_parser("skill", help="les quatre champs indexes d'un skill")
     sk.add_argument("nom", help="nom du skill, ou fragment de son chemin")
     sk.set_defaults(func=cmd_skill)
+
+    sub.add_parser(
+        "reindexer",
+        help="tout relire : oublie ce qui a ete indexe et reclame un manifeste",
+    ).set_defaults(func=cmd_reindexer)
 
     sub.add_parser(
         "rafraichir",

@@ -286,3 +286,108 @@ def test_gk_check_se_plaint_d_un_catalogue_vide(tmp_path, capsys, monkeypatch):
     # Et plus de plainte sur une racine de skills illisible : GK ne lit plus le
     # disque de l'agent, donc une racine absente est l'etat normal.
     assert "racine_skills" not in out
+
+
+# -- deux sections, un seul titre -----------------------------------------
+
+
+def test_deux_sections_du_meme_titre_ne_s_ecrasent_pas(cat):
+    """GM ecrit 82 sections intitulees `## Declencheur :`. La clef etant
+    (path, kind, heading), la seconde ecrasait la premiere EN SILENCE -- et
+    aucun comptage ne permettait de s'en apercevoir, puisque les doublons
+    disparaissaient avant d'etre comptes."""
+    cat.ingest(manifeste("a"), complete=True)
+    out = cat.store_sections([{
+        "path": "cat/a/SKILL.md", "fingerprint": "1",
+        "sections": [
+            {"heading": "Déclencheur :", "text": "« commande fournisseur »"},
+            {"heading": "Déclencheur :", "text": "« point dettes »"},
+            {"heading": "Déclencheur :", "text": "« reappro »"},
+        ],
+    }])
+    assert out["sections_ecrites"] == 3
+    assert out["titres_repetes"] == 2
+    rows = cat.store.query("SELECT kind, text FROM skill_sections ORDER BY kind")
+    assert len(rows) == 3, "les trois sont gardees"
+    assert [r["kind"] for r in rows] == ["brut", "brut#2", "brut#3"]
+    textes = " ".join(r["text"] for r in rows)
+    for attendu in ("commande fournisseur", "point dettes", "reappro"):
+        assert attendu in textes
+    # Et le titre reste fidele : c'est `kind` qui porte le rang.
+    assert {r["heading"] for r in cat.store.query("SELECT heading FROM skill_sections")} == {
+        "Déclencheur :"
+    }
+
+
+def test_les_titres_repetes_se_comptent_dans_l_etat(cat):
+    cat.ingest(manifeste("a"), complete=True)
+    cat.store_sections([{
+        "path": "cat/a/SKILL.md", "fingerprint": "1",
+        "sections": [
+            {"heading": "Déclencheur :", "text": "un"},
+            {"heading": "Déclencheur :", "text": "deux"},
+        ],
+    }])
+    assert cat.stats()["sections_a_titre_repete"] == 1
+
+
+def test_une_nouvelle_livraison_remplace_les_rangs(cat):
+    """Le DELETE par chemin precede l'insertion : pas d'accumulation de rangs."""
+    cat.ingest(manifeste("a"), complete=True)
+    for n in (3, 1):
+        cat.store_sections([{
+            "path": "cat/a/SKILL.md", "fingerprint": "1",
+            "sections": [{"heading": "D :", "text": str(i)} for i in range(n)],
+        }])
+    rows = cat.store.query("SELECT kind FROM skill_sections")
+    assert [r["kind"] for r in rows] == ["brut"], "une seule section reste"
+
+
+# -- tout relire apres un changement de regle -----------------------------
+
+
+def test_reindexer_fait_tout_redemander(cat):
+    """Les empreintes des fichiers ne bougent pas quand c'est NOTRE regle de
+    lecture qui change. Sans cette commande, un correctif de decoupage ne
+    s'appliquerait qu'aux skills edites ensuite."""
+    cat.ingest(manifeste("a", "b"), complete=True)
+    for nom in ("a", "b"):
+        cat.store_sections([
+            {"path": f"cat/{nom}/SKILL.md", "fingerprint": "1", "sections": []}
+        ])
+    assert cat.wanted() == [], "tout est indexe"
+    assert cat.reindexer() == 2
+    assert sorted(cat.wanted()) == ["cat/a/SKILL.md", "cat/b/SKILL.md"]
+    # Et il reclame un manifeste, sinon il faudrait attendre la ronde horaire.
+    assert cat.manifeste_demande() is True
+
+
+def test_reindexer_ne_touche_pas_les_disparus(cat):
+    cat.ingest(manifeste("a", "b"), complete=True)
+    cat.ingest(manifeste("a"), complete=True)
+    assert cat.reindexer() == 1, "seuls les vivants"
+
+
+def test_reindexer_ne_touche_ni_les_corrections_ni_les_compteurs(cat):
+    cat.store.execute(
+        "INSERT INTO corrections (ts, session_id, skill_expected, classification, "
+        "patterns_digest) VALUES (1.0, 's', 'un-skill', 'unattributable', 'd')"
+    )
+    cat.store.bump("observe_calls", by=7)
+    cat.ingest(manifeste("a"), complete=True)
+    cat.reindexer()
+    assert cat.store.one("SELECT COUNT(*) c FROM corrections")["c"] == 1
+    assert cat.store.counter("observe_calls") == 7
+
+
+def test_la_commande_reindexer_dit_combien_de_skills(tmp_path, capsys, monkeypatch):
+    import json as _json
+
+    from gk.cli import main as cli_main
+
+    s = Store(tmp_path / "ri.db")
+    Catalog(s).ingest(manifeste("a", "b", "c"), complete=True)
+    s.close()
+    monkeypatch.setenv("GK_DATABASE", str(tmp_path / "ri.db"))
+    assert cli_main(["--json", "reindexer"]) == 0
+    assert _json.loads(capsys.readouterr().out)["skills_a_relire"] == 3
