@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -31,7 +32,7 @@ from .corrections import (
     retire_testcases,
     tidy,
 )
-from .patterns import Detector
+from .patterns import Detector, fold
 from .service import Service
 from .store import Store, now
 
@@ -270,7 +271,35 @@ def cmd_skill(args, cfg: Config) -> int:
             (nom, nom, f"%{nom}%", nom),
         )
         if row is None:
-            _emit({"ok": False, "erreur": f"aucun skill ne correspond a {nom!r}"}, args)
+            # Proposer des candidats plutot que de laisser chercher : les noms
+            # reels sont longs et prefixes, et une faute de frappe ne doit pas
+            # couter un `gk catalogue` complet.
+            plie = fold(nom)
+            candidats = [
+                r["name"] for r in store.query(
+                    "SELECT name FROM skills WHERE missing_since IS NULL AND name <> ''"
+                )
+                if plie and (plie in fold(r["name"]) or fold(r["name"]) in plie)
+            ]
+            if not candidats:
+                # Decoupe aussi sur les tirets : les noms reels sont
+                # `gm-supplier-invoice-control`, donc un mot utile est separe
+                # par un tiret et non par une espace.
+                morceaux = [
+                    m for m in re.split(r"[^a-z0-9]+", plie) if len(m) >= 4
+                ] or [plie]
+                candidats = [
+                    r["name"] for r in store.query(
+                        "SELECT name FROM skills WHERE missing_since IS NULL AND name <> ''"
+                    )
+                    if any(m in fold(r["name"]) for m in morceaux)
+                ]
+            _emit({
+                "ok": False,
+                "erreur": f"aucun skill ne correspond a {nom!r}",
+                "candidats": sorted(candidats)[:10],
+                "remarque": None if candidats else "voir `gk catalogue` pour la liste",
+            }, args)
             return 1
         sections = store.query(
             "SELECT heading, text FROM skill_sections WHERE path = ? ORDER BY heading",

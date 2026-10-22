@@ -323,3 +323,45 @@ def test_la_commande_rafraichir_pose_le_drapeau(tmp_path, capsys, monkeypatch):
     s = Store(tmp_path / "c.db")
     assert Catalog(s).manifeste_demande() is True
     s.close()
+
+
+def test_gk_skill_propose_des_candidats_sur_une_faute(tmp_path, capsys, monkeypatch):
+    """Les noms reels sont longs et prefixes ; une faute de frappe ne doit pas
+    couter la lecture d'un `gk catalogue` complet.
+
+    Le decoupage se fait sur les tirets et non sur les espaces : un mot utile
+    d'un nom comme `gm-supplier-invoice-control` est separe par un tiret.
+    """
+    s = Store(tmp_path / "s.db")
+    peupler(s, {
+        "gm-supplier-invoice-control": [],
+        "gm-supplier-orders": [],
+        "creative-claude-design": [],
+    })
+    s.close()
+    monkeypatch.setenv("GK_DATABASE", str(tmp_path / "s.db"))
+
+    # Un fragment suffit, sans passer par les candidats.
+    assert cli_main(["--json", "skill", "invoice"]) == 0
+    assert json.loads(capsys.readouterr().out)["name"] == "gm-supplier-invoice-control"
+
+    # Une faute : un mot du nom reste reconnaissable.
+    assert cli_main(["--json", "skill", "gm-supplier-invoic-controle"]) == 1
+    out = json.loads(capsys.readouterr().out)
+    assert out["ok"] is False
+    assert out["candidats"] == ["gm-supplier-invoice-control", "gm-supplier-orders"]
+    assert "creative-claude-design" not in out["candidats"]
+
+
+def test_gk_skill_renvoie_au_catalogue_quand_rien_ne_ressemble(tmp_path, capsys, monkeypatch):
+    """Et il ne faut pas inventer une ressemblance : `gm-presta-commande`, nom
+    employe dans les exemples du document d'architecture, n'existe pas dans la
+    bibliotheque reelle. La bonne reponse est de le dire."""
+    s = Store(tmp_path / "s.db")
+    peupler(s, {"gm-supplier-invoice-control": [], "gm-amazon-seller-central": []})
+    s.close()
+    monkeypatch.setenv("GK_DATABASE", str(tmp_path / "s.db"))
+    assert cli_main(["--json", "skill", "gm-presta-commande"]) == 1
+    out = json.loads(capsys.readouterr().out)
+    assert out["candidats"] == []
+    assert "gk catalogue" in out["remarque"]

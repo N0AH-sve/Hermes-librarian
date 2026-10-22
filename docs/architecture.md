@@ -1831,6 +1831,47 @@ C'est exactement la distinction que la phase 1 mesure déjà —
 | **Les faits sourcés** (phase 4) | Indépendant de la recherche. `RÈGLE ABSOLUE` datée et attribuée en est l'amorce |
 | **Le rangement** | Auditer les noms écrits à la main dans `DOMAINS`, signaler orphelins, doublons et skills trop gros |
 
+### Le tri des déclencheurs, mesuré : la colonne négative est gardée
+
+Relevé du 2026-10-22 sur les 65 sections reçues, après correction du comptage.
+
+| Mesure | Valeur |
+|---|---|
+| Skills avec des déclencheurs | 65 sur 182 (36 %) |
+| Contre-indication **structurelle** (titre dédié) | **3** |
+| Contre-indication **en prose** (strict) | **18** |
+| En prose, comptage large | 21 |
+| Sans contre-indication | 41 |
+| Poids positif / négatif | 48 Ko / 20 Ko |
+| **Skills citant un autre skill** | **16 sur 65, soit 25 %** |
+
+**Décision : on garde la colonne négative.** 21 skills en strict, soit 12 % du
+catalogue, ce qui la place dans la bande « marginale, à garder seulement si elle
+est gratuite ». Et elle l'est : les tranches brutes sont déjà en base, le
+découpage se calcule à l'indexation, la soustraction est un coefficient dans la
+requête. Aucune table, aucun transfert, aucun mécanisme séparé. Elle devient de
+plus **nécessaire** dès que les déclencheurs sont indexés, sans quoi une ligne
+« ne pas charger pour X » fait remonter le skill sur X.
+
+**Un pronostic faux, à noter.** J'annonçais que la correction du chevauchement
+des marqueurs ferait tomber le chiffre sous 10 % et conduirait à l'abandon. Elle
+ne l'a fait passer que de 13 à 12 % : `jamais` n'était le marqueur **unique** que
+pour 3 skills, les autres portant aussi un `ne pas` ou un `ne jamais`. La
+correction était juste, le pronostic ne l'était pas.
+
+**Les 25 % de citations croisées sont le vrai sujet.** `gm-amazon-seller-central`
+cite `prestashop` dans ses déclencheurs, `gm-supplier-invoice-control` cite
+`pennylane`. Indexées comme texte positif, ces lignes font remonter le mauvais
+skill. Deux conséquences : c'est à surveiller au banc, et c'est une consigne de
+rédaction — un renvoi vers un voisin appartient à la moitié négative
+(« ne pas charger pour les fiches produits : voir gm-presta-catalogue »), où il
+reste utile à l'humain et cesse de polluer l'index.
+
+**Et trois contre-indications structurelles sur 182 skills** : tout repose
+aujourd'hui sur le reniflage de marqueurs. C'est l'argument chiffré de la
+demande faite à `gm-skill-template` — un titre dédié transforme une devinette
+en lecture, et il n'y a que trois skills à ne pas rattraper.
+
 ### Le catalogue, mesuré en production le 2026-10-22
 
 Premier relevé réel après la mise en service du facteur. Il remplace les
