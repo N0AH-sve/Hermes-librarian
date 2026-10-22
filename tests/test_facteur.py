@@ -19,6 +19,7 @@ import importlib.util
 import json
 import os
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -292,17 +293,27 @@ class CtxFactice:
 
 @pytest.fixture()
 def ronde(tmp_path, monkeypatch):
-    """Prepare une bibliotheque, un GK reel, et un pont branche sur lui."""
+    """Prepare une bibliotheque, un GK reel, et un pont branche sur lui.
+
+    La racine passe par **la variable d'environnement** et non par un attribut
+    de module : depuis que le pont relit `catalogue.py` quand il change, un
+    attribut rapiece est perdu au rechargement. Le premier jet de cette fixture
+    rapiecait `_catalogue_mod`, et la suite passait ou echouait selon l'ordre
+    des tests, parce que l'etat du module fuyait de l'un a l'autre.
+    """
     racine = tmp_path / "skills"
     ecrire(racine, "prestashop/commande")
     ecrire(racine, "compta/tva", "---\nname: gm-compta-tva\ndescription: \"TVA\"\n---\n## When to use\nTaux de TVA incorrect.\n")
     svc = Service.open(tmp_path / "gk.db")
     ctx = CtxFactice(svc)
-    monkeypatch.setattr(pont, "_ctx", ctx)
-    monkeypatch.setattr(pont, "_dernier_catalogue", 0.0)
+    monkeypatch.setenv("GK_SKILLS_ROOT", str(racine))
     monkeypatch.setattr(pont, "JOURNAL", str(tmp_path / "journal.jsonl"))
-    monkeypatch.setattr(cat, "RACINE_DEFAUT", str(racine))
-    monkeypatch.setattr(pont, "_catalogue_mod", cat)
+    monkeypatch.setattr(pont, "_ctx", ctx)
+    # Isolation explicite : ces trois globales portent l'etat du processus.
+    monkeypatch.setattr(pont, "_catalogue_mod", None)
+    monkeypatch.setattr(pont, "_catalogue_mtime", 0.0)
+    monkeypatch.setattr(pont, "_dernier_catalogue", 0.0)
+    monkeypatch.setattr(pont, "_ronde_active", False)
     yield svc, ctx, racine, tmp_path
     svc.close()
 
@@ -337,7 +348,7 @@ def test_une_seconde_ronde_ne_redemande_rien(ronde):
     svc, ctx, _, _ = ronde
     pont._ronde_catalogue(force=True)
     ctx.appels.clear()
-    pont._dernier_catalogue = 0.0
+    pont._dernier_catalogue = 0.0  # la cadence est a nous ici
     pont._ronde_catalogue(force=True)
     assert ctx.appels == ["catalog"], "rien n'a bouge, donc aucune tranche redemandee"
 
@@ -347,7 +358,7 @@ def test_une_modification_est_reprise_a_la_ronde_suivante(ronde):
     pont._ronde_catalogue(force=True)
     ecrire(racine, "prestashop/commande", SKILL + "\n## Déclencheurs bis\nautre\n")
     ctx.appels.clear()
-    pont._dernier_catalogue = 0.0
+    pont._dernier_catalogue = 0.0  # la cadence est a nous ici
     pont._ronde_catalogue(force=True)
     assert "sections" in ctx.appels
     assert svc.catalog_.stats()["a_indexer"] == 0
@@ -372,6 +383,63 @@ def test_le_besoin_catalogue_vide_declenche_une_ronde(ronde):
 def test_une_ronde_sans_contexte_ne_leve_pas(monkeypatch):
     monkeypatch.setattr(pont, "_ctx", None)
     pont._ronde_catalogue(force=True)  # ne doit rien faire, ni lever
+
+
+def test_catalogue_py_est_relu_quand_il_change(tmp_path, monkeypatch):
+    """Le rechargement a chaud : une correction se deploie par une copie de
+    fichier, sans redemarrer l'agent — deux a trois minutes pendant lesquelles
+    personne ne peut travailler."""
+    import shutil
+
+    dossier = tmp_path / "gk-bridge"
+    dossier.mkdir()
+    source = RACINE_DEPOT / "hermes-plugin" / "gk-bridge"
+    for nom in ("__init__.py", "catalogue.py"):
+        shutil.copy(source / nom, dossier / nom)
+    monkeypatch.setenv("GK_BRIDGE_LOG", str(tmp_path / "j.jsonl"))
+    spec = importlib.util.spec_from_file_location("gkb_chaud", dossier / "__init__.py")
+    assert spec and spec.loader
+    local = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(local)
+
+    premier = local._charger_catalogue()
+    assert premier is not None
+    assert local._charger_catalogue() is premier, "inchange, donc pas relu"
+
+    # Une nouvelle version, avec un marqueur observable.
+    texte = (dossier / "catalogue.py").read_text(encoding="utf-8")
+    (dossier / "catalogue.py").write_text(
+        texte + "\n\nMARQUEUR = 'nouvelle version'\n", encoding="utf-8"
+    )
+    os.utime(dossier / "catalogue.py", (time.time() + 2, time.time() + 2))
+
+    second = local._charger_catalogue()
+    assert getattr(second, "MARQUEUR", None) == "nouvelle version"
+    lignes = [json.loads(l) for l in open(tmp_path / "j.jsonl", encoding="utf-8")]
+    assert any(l.get("event") == "catalogue_charge" and l.get("recharge") for l in lignes)
+
+
+def test_une_version_cassee_ne_fait_pas_perdre_celle_qui_marchait(tmp_path, monkeypatch):
+    import shutil
+
+    dossier = tmp_path / "gk-bridge"
+    dossier.mkdir()
+    source = RACINE_DEPOT / "hermes-plugin" / "gk-bridge"
+    for nom in ("__init__.py", "catalogue.py"):
+        shutil.copy(source / nom, dossier / nom)
+    monkeypatch.setenv("GK_BRIDGE_LOG", str(tmp_path / "j.jsonl"))
+    spec = importlib.util.spec_from_file_location("gkb_casse", dossier / "__init__.py")
+    assert spec and spec.loader
+    local = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(local)
+
+    bon = local._charger_catalogue()
+    assert bon is not None
+    (dossier / "catalogue.py").write_text("ceci n'est pas du python (", encoding="utf-8")
+    os.utime(dossier / "catalogue.py", (time.time() + 2, time.time() + 2))
+    assert local._charger_catalogue() is bon, "on garde la version qui marchait"
+    lignes = [json.loads(l) for l in open(tmp_path / "j.jsonl", encoding="utf-8")]
+    assert any(l.get("event") == "recharge_refusee" for l in lignes)
 
 
 def test_un_refus_de_la_liste_blanche_est_journalise(ronde, monkeypatch):

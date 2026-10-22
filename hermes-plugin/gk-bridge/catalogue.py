@@ -24,6 +24,7 @@ Trois contraintes dictent la forme du code :
 
 from __future__ import annotations
 
+import json
 import os
 import time
 import unicodedata
@@ -262,3 +263,177 @@ def tranches_pour(racine: str, chemins: list[str], intitules: list[str]) -> list
             "sections": trancher(texte, intitules),
         })
     return sorties
+
+
+# -- lecture du resultat MCP ------------------------------------------------
+
+
+def extraire(resultat, noter=None) -> dict:
+    """Ramene la charge utile d'un appel MCP a un dictionnaire.
+
+    Vit ICI et non dans `__init__.py` parce que c'est le code le plus fragile du
+    pont : il depend de la forme que Hermes donne a ses resultats, et cette
+    forme nous a deja echappe deux fois. Place dans ce fichier, il se corrige
+    par une copie, sans redemarrer l'agent.
+
+    La forme est connue depuis le 2026-10-22
+    (`hermes_cli/plugins.py`, `PluginContext._mcp_envelope`) : `call_mcp` rend
+    toujours une **enveloppe**
+
+        {"ok": True,  "result": <charge utile>}
+        {"ok": True,  "result": ..., "structuredContent": ...}
+        {"ok": False, "error": ...}
+        {..., "truncated": True}            # au-dela de 64 Ko
+
+    Le premier jet sondait `("wanted", "besoins", "ok", "v")` et rendait le
+    dictionnaire des qu'une clef y figurait. `ok` appartient a l'enveloppe : il
+    rendait donc l'enveloppe en croyant rendre la charge, `wanted` valait None,
+    et la premiere ronde a envoye 182 skills, recu la reponse, n'en a rien
+    compris et journalise `restants: 0` -- ce qui se lit comme un succes.
+    L'enveloppe se defait AVANT toute sonde, et `ok` n'est plus une sonde.
+
+    Consequence a ne pas perdre : une charge utile portant `error` ou `result`
+    au premier niveau serait mangee par l'enveloppe. Les outils de GK nomment
+    leurs champs en francais (`erreur`), ce qui les protege par accident -- et
+    c'est pour cela que c'est ecrit ici.
+    """
+    def _dire(record: dict) -> None:
+        if noter is not None:
+            try:
+                noter(record)
+            except Exception:
+                pass
+
+    def _charge(valeur):
+        if isinstance(valeur, dict):
+            return valeur
+        if isinstance(valeur, str) and valeur.strip().startswith("{"):
+            try:
+                lu = json.loads(valeur)
+            except Exception:
+                return None
+            return lu if isinstance(lu, dict) else None
+        return None
+
+    try:
+        if resultat is None:
+            return {}
+        contenus = None
+        if isinstance(resultat, dict):
+            if resultat.get("truncated"):
+                _dire({"event": "resultat_tronque", "cles": sorted(resultat)})
+            if resultat.get("ok") is False or "error" in resultat:
+                _dire({"event": "erreur_mcp", "erreur": repr(resultat.get("error"))})
+                return {}
+            for cle in ("result", "structuredContent", "structured_content", "data"):
+                charge = _charge(resultat.get(cle))
+                if charge is not None:
+                    return charge
+            if any(c in resultat for c in ("wanted", "headings", "besoins", "v")):
+                return resultat
+            contenus = resultat.get("content")
+        else:
+            charge = _charge(getattr(resultat, "structuredContent", None))
+            if charge is not None:
+                return charge
+            contenus = getattr(resultat, "content", None)
+        if isinstance(contenus, (list, tuple)):
+            for bloc in contenus:
+                texte = (
+                    bloc.get("text") if isinstance(bloc, dict)
+                    else getattr(bloc, "text", None)
+                )
+                charge = _charge(texte)
+                if charge is not None:
+                    return charge
+    except Exception as exc:
+        _dire(_apercu(resultat, repr(exc)))
+        return {}
+    # Rien trouve, et il faut que ca se voie : c'est le cas qui a fait passer la
+    # premiere ronde pour un succes.
+    _dire(_apercu(resultat, "aucune charge utile reconnue"))
+    return {}
+
+
+def _apercu(resultat, raison: str) -> dict:
+    record = {"event": "forme_inconnue", "type": repr(type(resultat)), "raison": raison}
+    try:
+        if isinstance(resultat, dict):
+            record["cles"] = sorted(resultat)[:12]
+        else:
+            record["attributs"] = sorted(
+                a for a in dir(resultat) if not a.startswith("_")
+            )[:12]
+    except Exception:
+        pass
+    return record
+
+
+# -- la ronde ---------------------------------------------------------------
+
+
+def ronde(ctx, noter, serveur: str = "gk", timeout: float = 30.0,
+          budget: float = 25.0, racine: str | None = None) -> dict:
+    """Une ronde complete : le manifeste, puis les tranches tant que GK en veut.
+
+    Rend le resume a journaliser. L'appelant tient le verrou et la cadence ;
+    cette fonction ne fait que le travail, pour qu'elle soit remplacable a
+    chaud.
+
+    Bornee par `budget` : ce qui ne passe pas cette fois passera a la ronde
+    suivante, le manifeste etant auto-reparateur.
+    """
+    debut = time.monotonic()
+    resume: dict = {"event": "ronde_catalogue"}
+    try:
+        entrees, complet, diag = manifeste(racine)
+        resume.update(diag)
+        resume["complet"] = complet
+        if not entrees:
+            resume["abandon"] = "manifeste vide"
+            return resume
+        reponse = extraire(
+            ctx.call_mcp(serveur, "catalog",
+                         {"skills": entrees, "complete": complet}, timeout=timeout),
+            noter,
+        )
+        resume["manifeste_envoye"] = len(entrees)
+        resume["nouveaux"] = reponse.get("nouveaux")
+        resume["modifies"] = reponse.get("modifies")
+        voulus = list(reponse.get("wanted") or [])
+        intitules = list(reponse.get("headings") or [])
+        resume["intitules"] = len(intitules)
+        if voulus and not intitules:
+            # GK veut des tranches mais n'a pas dit lesquelles : c'est un defaut
+            # de GK, et il doit se voir plutot que de se traduire par zero
+            # tranche envoyee sans explication.
+            resume["anomalie"] = "wanted sans headings"
+        envoyees = tours = 0
+        base = diag.get("racine") or racine or RACINE_DEFAUT
+        while voulus and intitules and (time.monotonic() - debut) < budget:
+            items = tranches_pour(base, voulus, intitules)
+            if not items:
+                break
+            suivant = extraire(
+                ctx.call_mcp(serveur, "sections", {"items": items}, timeout=timeout),
+                noter,
+            )
+            envoyees += len(items)
+            tours += 1
+            restants = list(suivant.get("wanted") or [])
+            if restants == voulus:
+                # GK redemande exactement la meme chose : on s'arrete plutot que
+                # de boucler. La ronde suivante reessaiera.
+                resume["bloque_sur"] = len(restants)
+                break
+            voulus = restants
+        resume["tranches_envoyees"] = envoyees
+        resume["tours"] = tours
+        resume["restants"] = len(voulus)
+    except PermissionError as exc:
+        resume["erreur"] = "refuse: %r" % (exc,)
+    except Exception as exc:
+        resume["erreur"] = repr(exc)
+    finally:
+        resume["duree_s"] = round(time.monotonic() - debut, 2)
+    return resume

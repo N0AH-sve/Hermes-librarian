@@ -53,6 +53,7 @@ _releve_fait = False
 _forme_relevee = False
 _lock = threading.Lock()
 _catalogue_mod = None
+_catalogue_mtime = 0.0
 _dernier_catalogue = 0.0
 _ronde_active = False
 
@@ -113,110 +114,6 @@ def _releve_unique(hook: str, kwargs: dict) -> None:
     })
 
 
-def _extraire(resultat) -> dict:
-    """Ramene la charge utile d'un appel MCP a un dictionnaire.
-
-    La forme est connue depuis le 2026-10-22, relevee dans
-    `hermes_cli/plugins.py` (`PluginContext._mcp_envelope`) : `call_mcp` rend
-    toujours une **enveloppe**
-
-        {"ok": True, "result": <la charge utile>}          # cas normal
-        {"ok": True, "result": ..., "structuredContent": ...}
-        {"ok": False, "error": ...}                        # erreur rapportee
-        {..., "truncated": True}                           # au-dela de 64 Ko
-
-    Le premier jet sondait `("wanted", "besoins", "ok", "v")` et rendait le
-    dictionnaire des qu'une clef y figurait. `ok` appartient a l'enveloppe, donc
-    il rendait l'enveloppe en croyant rendre la charge : `wanted` et `headings`
-    valaient None, et aucune tranche ne partait jamais. L'enveloppe se defait
-    donc AVANT toute sonde.
-
-    Consequence a ne pas perdre : une charge utile qui porterait `error` ou
-    `result` au premier niveau serait mangee par l'enveloppe. Les outils de GK
-    nomment leurs champs en francais (`erreur`), ce qui les protege par accident
-    -- et c'est pour cela que c'est ecrit ici.
-    """
-    global _forme_relevee
-
-    def _peut_etre_charge(valeur):
-        if isinstance(valeur, dict):
-            return valeur
-        if isinstance(valeur, str) and valeur.strip().startswith("{"):
-            try:
-                charge = json.loads(valeur)
-            except Exception:
-                return None
-            return charge if isinstance(charge, dict) else None
-        return None
-
-    try:
-        if resultat is None:
-            return {}
-        contenus = None
-        if isinstance(resultat, dict):
-            if resultat.get("truncated"):
-                _noter({"event": "resultat_tronque", "cles": sorted(resultat)})
-            if resultat.get("ok") is False or "error" in resultat:
-                _noter({"event": "erreur_mcp", "erreur": repr(resultat.get("error"))})
-                return {}
-            # L'enveloppe d'abord.
-            for cle in ("result", "structuredContent", "structured_content", "data"):
-                charge = _peut_etre_charge(resultat.get(cle))
-                if charge is not None:
-                    return charge
-            # Charge utile directe : utile aux tests, et au cas ou l'enveloppe
-            # disparaitrait. `ok` n'en fait PAS partie : elle est a l'enveloppe.
-            if any(c in resultat for c in ("wanted", "headings", "besoins", "v")):
-                return resultat
-            contenus = resultat.get("content")
-        else:
-            charge = _peut_etre_charge(getattr(resultat, "structuredContent", None))
-            if charge is not None:
-                return charge
-            contenus = getattr(resultat, "content", None)
-        if isinstance(contenus, (list, tuple)):
-            for bloc in contenus:
-                texte = (
-                    bloc.get("text") if isinstance(bloc, dict)
-                    else getattr(bloc, "text", None)
-                )
-                charge = _peut_etre_charge(texte)
-                if charge is not None:
-                    return charge
-    except Exception as exc:
-        _releve_forme(resultat, repr(exc))
-        return {}
-    # Rien trouve. Le journaliser : c'est exactement le cas qui a fait echouer
-    # la premiere ronde en silence, et le premier jet ne le disait pas.
-    _releve_forme(resultat, "aucune charge utile reconnue")
-    return {}
-
-
-def _releve_forme(resultat, raison: str) -> None:
-    """Consigne une fois la forme reellement rencontree.
-
-    Une extraction qui rend {} doit se voir. Sans cela, la premiere ronde a
-    envoye 182 skills, recu la reponse, n'en a rien compris, et a journalise
-    « restants: 0 » -- ce qui se lit comme un succes.
-    """
-    global _forme_relevee
-    if _forme_relevee:
-        return
-    _forme_relevee = True
-    apercu = {}
-    try:
-        if isinstance(resultat, dict):
-            apercu = {"cles": sorted(resultat)[:12]}
-        else:
-            apercu = {"attributs": sorted(
-                a for a in dir(resultat) if not a.startswith("_")
-            )[:12]}
-    except Exception:
-        pass
-    _noter({"event": "forme_inconnue", "type": repr(type(resultat)),
-            "raison": raison, **apercu})
-
-
 def _appeler(outil: str, arguments: dict, suite=None) -> None:
     """Envoie sur un fil detache. Jamais d'attente sur le chemin d'une reponse.
 
@@ -254,39 +151,68 @@ def _appeler(outil: str, arguments: dict, suite=None) -> None:
 
 
 def _charger_catalogue():
-    """Charge `catalogue.py`, voisin de ce fichier.
+    """Charge `catalogue.py`, voisin de ce fichier, et le **relit quand il
+    change**.
 
-    Deux voies, parce que le dossier s'appelle `gk-bridge` : un tiret n'est pas
-    un nom de module valide, donc on ne sait pas sous quel nom Hermes a importe
-    ce paquet. L'echec est sans consequence : le pont de la phase 1 continue de
-    fonctionner sans le facteur.
+    C'est ce qui rend les corrections suivantes deployables par une simple copie
+    de fichier, sans redemarrer l'agent — contrainte reelle : un redemarrage
+    coute deux a trois minutes pendant lesquelles personne ne peut travailler.
+
+    Tout ce qui est susceptible de bouger vit donc dans `catalogue.py` : la
+    lecture du resultat MCP, le manifeste, le decoupage, la ronde. Ce fichier-ci
+    ne garde que les hooks, le journal et la cadence, c'est-a-dire ce qui ne
+    peut de toute facon pas changer a chaud puisque les hooks sont enregistres au
+    chargement.
+
+    Deux voies d'import : relatif d'abord — releve du 2026-10-22, `gk-bridge`
+    est bien importe comme un paquet malgre le tiret — puis par chemin. Un echec
+    est sans consequence : l'observation de la phase 1 continue sans le facteur.
     """
-    global _catalogue_mod
-    if _catalogue_mod is not None:
-        return _catalogue_mod
+    global _catalogue_mod, _catalogue_mtime
+    chemin = os.path.join(os.path.dirname(os.path.abspath(__file__)), "catalogue.py")
     try:
-        from . import catalogue as module  # type: ignore
-
-        _catalogue_mod = module
-        _noter({"event": "catalogue_charge", "voie": "relatif"})
+        mtime = os.stat(chemin).st_mtime
+    except OSError:
+        mtime = 0.0
+    if _catalogue_mod is not None and mtime == _catalogue_mtime:
         return _catalogue_mod
-    except Exception:
-        pass
+    recharge = _catalogue_mod is not None
     try:
         import importlib.util
 
-        chemin = os.path.join(os.path.dirname(os.path.abspath(__file__)), "catalogue.py")
         spec = importlib.util.spec_from_file_location("gk_bridge_catalogue", chemin)
         if spec is None or spec.loader is None:
             raise ImportError(chemin)
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
-        _catalogue_mod = module
-        _noter({"event": "catalogue_charge", "voie": "chemin"})
+        _catalogue_mod, _catalogue_mtime = module, mtime
+        _noter({"event": "catalogue_charge", "voie": "chemin", "recharge": recharge,
+                "mtime": mtime})
         return _catalogue_mod
     except Exception as exc:
+        if _catalogue_mod is not None:
+            # Une version cassee ne doit pas faire perdre celle qui marchait.
+            _noter({"event": "recharge_refusee", "erreur": repr(exc)})
+            return _catalogue_mod
         _noter({"event": "catalogue_absent", "erreur": repr(exc)})
         return None
+
+
+def _extraire(resultat) -> dict:
+    """Delegue a `catalogue.extraire`, qui est remplacable a chaud.
+
+    Le repli minimal ne sert qu'au cas ou `catalogue.py` manquerait : il defait
+    l'enveloppe de Hermes et rien de plus. L'observation de la phase 1 ne doit
+    jamais dependre du fichier rechargeable.
+    """
+    module = _charger_catalogue()
+    if module is not None and hasattr(module, "extraire"):
+        return module.extraire(resultat, _noter)
+    if isinstance(resultat, dict):
+        charge = resultat.get("result")
+        if isinstance(charge, dict):
+            return charge
+    return {}
 
 
 def _ronde_due(force: bool) -> bool:
@@ -306,66 +232,33 @@ def _ronde_due(force: bool) -> bool:
 
 
 def _ronde_catalogue(force: bool = False) -> None:
-    """Une ronde complete : le manifeste, puis les tranches tant que GK en veut.
+    """Declenche une ronde. Le travail est dans `catalogue.ronde`, remplacable a
+    chaud ; ce qui reste ici est la cadence et le verrou, qui tiennent l'etat du
+    processus et ne peuvent donc pas vivre dans un module recharge.
 
     Tourne sur le fil detache de l'appel qui l'a declenchee, donc apres que
-    l'agent a repondu. Bornee par `BUDGET_RONDE` : ce qui ne passe pas cette
-    fois passera a la ronde suivante, le manifeste etant auto-reparateur.
+    l'agent a repondu.
     """
     global _ronde_active
     ctx = _ctx
     if ctx is None or not _ronde_due(force):
         return
-    debut = time.monotonic()
-    resume = {"event": "ronde_catalogue", "force": force}
+    resume: dict = {"event": "ronde_catalogue", "force": force}
     try:
         module = _charger_catalogue()
         if module is None:
-            return
-        entrees, complet, diag = module.manifeste()
-        resume.update(diag)
-        resume["complet"] = complet
-        if not entrees:
-            resume["abandon"] = "manifeste vide"
-            return
-        reponse = _extraire(ctx.call_mcp(
-            SERVEUR_MCP, "catalog",
-            {"skills": entrees, "complete": complet},
-            timeout=TIMEOUT_CATALOGUE,
-        ))
-        resume["manifeste_envoye"] = len(entrees)
-        resume["nouveaux"] = reponse.get("nouveaux")
-        resume["modifies"] = reponse.get("modifies")
-        voulus = list(reponse.get("wanted") or [])
-        intitules = list(reponse.get("headings") or [])
-        resume["intitules"] = len(intitules)
-        envoyees = tours = 0
-        racine = diag.get("racine") or module.RACINE_DEFAUT
-        while voulus and intitules and (time.monotonic() - debut) < BUDGET_RONDE:
-            items = module.tranches_pour(racine, voulus, intitules)
-            if not items:
-                break
-            suivant = _extraire(ctx.call_mcp(
-                SERVEUR_MCP, "sections", {"items": items}, timeout=TIMEOUT_CATALOGUE
-            ))
-            envoyees += len(items)
-            tours += 1
-            restants = list(suivant.get("wanted") or [])
-            if restants == voulus:
-                # GK redemande exactement la meme chose : on s'arrete plutot que
-                # de boucler. La ronde suivante reessaiera.
-                resume["bloque_sur"] = len(restants)
-                break
-            voulus = restants
-        resume["tranches_envoyees"] = envoyees
-        resume["tours"] = tours
-        resume["restants"] = len(voulus)
-    except PermissionError as exc:
-        resume["erreur"] = "refuse: %r" % (exc,)
+            resume["abandon"] = "catalogue.py indisponible"
+        else:
+            resume = dict(
+                module.ronde(
+                    ctx, _noter, serveur=SERVEUR_MCP,
+                    timeout=TIMEOUT_CATALOGUE, budget=BUDGET_RONDE,
+                ),
+                force=force,
+            )
     except Exception as exc:
         resume["erreur"] = repr(exc)
     finally:
-        resume["duree_s"] = round(time.monotonic() - debut, 2)
         with _lock:
             _ronde_active = False
         _noter(resume)
