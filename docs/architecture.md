@@ -1831,6 +1831,57 @@ C'est exactement la distinction que la phase 1 mesure déjà —
 | **Les faits sourcés** (phase 4) | Indépendant de la recherche. `RÈGLE ABSOLUE` datée et attribuée en est l'amorce |
 | **Le rangement** | Auditer les noms écrits à la main dans `DOMAINS`, signaler orphelins, doublons et skills trop gros |
 
+### Deux relevés de la mise en service du facteur
+
+**L'enveloppe de `call_mcp`.** `hermes_cli/plugins.py`
+(`PluginContext._mcp_envelope`) normalise tout résultat MCP en une enveloppe :
+
+```python
+{"ok": True,  "result": <charge utile>}          # cas normal
+{"ok": True,  "result": ..., "structuredContent": ...}
+{"ok": False, "error": ...}                      # erreur rapportée
+{..., "truncated": True}                         # au-delà de 64 Ko
+```
+
+Conséquence à écrire plutôt qu'à subir : **une charge utile qui porterait
+`error` ou `result` au premier niveau serait mangée par l'enveloppe.** Les
+outils de GK nomment leurs champs en français (`erreur`, `ok`), ce qui les
+protège par accident. C'est désormais une règle : aucun outil de GK ne rend un
+champ nommé `error` ni `result` au premier niveau.
+
+Le premier jet du pont sondait `("wanted", "besoins", "ok", "v")` et rendait le
+dictionnaire dès qu'une clef y figurait. `ok` appartient à l'enveloppe : il
+rendait donc l'enveloppe en croyant rendre la charge, `wanted` valait `None`, et
+la première ronde a envoyé 182 skills, reçu la réponse, n'en a rien compris et
+journalisé `restants: 0` — ce qui se lit comme un succès. Le test de bout en
+bout passait parce qu'il rendait la charge **nue** : il ne reproduisait pas la
+production, donc il ne pouvait pas voir le défaut.
+
+**`on_skill_lifecycle` ne porte pas de `turn_id`.** Relevé par le journal du
+pont, ses kwargs réels :
+
+```
+action, provenance, reuse_after_patch, reused, session_id, skill_name,
+task_id, telemetry_schema_version, use_count
+```
+
+Or `transform_llm_output` porte `{model, platform, response_text, session_id,
+telemetry_schema_version, turn_id}`. **Les deux événements qu'il faut rapprocher
+n'ont aucune clef commune hors `session_id`** : `turn_id` n'existe que d'un
+côté, `task_id` que de l'autre.
+
+Donc l'attribution exacte par `turn_id` — conçue, écrite, migrée (migration 2)
+et testée — **ne peut structurellement pas fonctionner**. `skill_uses.turn_id`
+restera vide et l'attribution retombe toujours sur « la correction en attente
+la plus récente de la session », c'est-à-dire exactement ce qu'elle devait
+corriger. La colonne garde son sens du côté `corrections`, où elle identifie le
+tour d'où vient l'aveu.
+
+Ce que vaut le repli : `on_skill_lifecycle` précède la réponse, donc le dernier
+skill chargé avant une correction est vraisemblablement le bon. Il devient faux
+si gb traite deux tours en parallèle dans une même session — ce qu'on ne sait
+pas encore.
+
 ### La barre réelle, et ce que GK peut encore ajouter
 
 GK doit améliorer une situation où gb voit déjà tout et reçoit déjà l'ordre de

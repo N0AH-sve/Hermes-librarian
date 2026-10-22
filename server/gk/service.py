@@ -141,9 +141,22 @@ class Service:
             use_count=use_count, turn_id=turn_id,
         )
         # Si une correction du meme tour attend son attribution, ce skill est
-        # celui qui a reellement servi. `turn_id` rend la correlation exacte ;
-        # sans lui on retombe sur la plus recente de la session, qui peut viser
-        # le mauvais tour quand deux se suivent de pres.
+        # celui qui a reellement servi.
+        #
+        # RELEVE DU 2026-10-22 : `on_skill_lifecycle` NE PORTE PAS `turn_id`.
+        # Ses kwargs reels sont {action, provenance, reuse_after_patch, reused,
+        # session_id, skill_name, task_id, telemetry_schema_version, use_count}.
+        # `transform_llm_output` en a un, lui. Les deux evenements qu'il faut
+        # rapprocher n'ont donc aucune clef commune hors `session_id`, et le
+        # chemin par `turn_id` ci-dessous ne se declenche jamais en production.
+        # Il est garde parce qu'il ne coute rien et marcherait si Hermes
+        # ajoutait la clef.
+        #
+        # Le repli par session est acceptable tant que les tours d'une meme
+        # session ne se chevauchent pas : `on_skill_lifecycle` precede la
+        # reponse, donc le dernier skill charge avant une correction est
+        # vraisemblablement le bon. Il devient faux si gb traite deux tours en
+        # parallele dans une seule session.
         if turn_id:
             pending = self.store.one(
                 "SELECT id FROM corrections WHERE turn_id = ? AND classification = 'pending' "

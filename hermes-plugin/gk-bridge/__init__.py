@@ -116,30 +116,63 @@ def _releve_unique(hook: str, kwargs: dict) -> None:
 def _extraire(resultat) -> dict:
     """Ramene la charge utile d'un appel MCP a un dictionnaire.
 
-    La forme exacte que Hermes rend n'est pas connue a l'ecriture : ce peut etre
-    le dictionnaire de l'outil, un `structuredContent`, ou une liste de contenus
-    dont le premier porte du JSON en texte. On essaie, et la forme reellement
-    rencontree est journalisee une fois. Meme methode que pour `response_text`,
-    qu'aucune de nos sept suppositions n'avait trouve.
+    La forme est connue depuis le 2026-10-22, relevee dans
+    `hermes_cli/plugins.py` (`PluginContext._mcp_envelope`) : `call_mcp` rend
+    toujours une **enveloppe**
+
+        {"ok": True, "result": <la charge utile>}          # cas normal
+        {"ok": True, "result": ..., "structuredContent": ...}
+        {"ok": False, "error": ...}                        # erreur rapportee
+        {..., "truncated": True}                           # au-dela de 64 Ko
+
+    Le premier jet sondait `("wanted", "besoins", "ok", "v")` et rendait le
+    dictionnaire des qu'une clef y figurait. `ok` appartient a l'enveloppe, donc
+    il rendait l'enveloppe en croyant rendre la charge : `wanted` et `headings`
+    valaient None, et aucune tranche ne partait jamais. L'enveloppe se defait
+    donc AVANT toute sonde.
+
+    Consequence a ne pas perdre : une charge utile qui porterait `error` ou
+    `result` au premier niveau serait mangee par l'enveloppe. Les outils de GK
+    nomment leurs champs en francais (`erreur`), ce qui les protege par accident
+    -- et c'est pour cela que c'est ecrit ici.
     """
     global _forme_relevee
+
+    def _peut_etre_charge(valeur):
+        if isinstance(valeur, dict):
+            return valeur
+        if isinstance(valeur, str) and valeur.strip().startswith("{"):
+            try:
+                charge = json.loads(valeur)
+            except Exception:
+                return None
+            return charge if isinstance(charge, dict) else None
+        return None
+
     try:
         if resultat is None:
             return {}
         contenus = None
         if isinstance(resultat, dict):
-            for cle in ("wanted", "besoins", "ok", "v"):
-                if cle in resultat:
-                    return resultat
-            for cle in ("structuredContent", "structured_content", "result", "data"):
-                interne = resultat.get(cle)
-                if isinstance(interne, dict):
-                    return interne
+            if resultat.get("truncated"):
+                _noter({"event": "resultat_tronque", "cles": sorted(resultat)})
+            if resultat.get("ok") is False or "error" in resultat:
+                _noter({"event": "erreur_mcp", "erreur": repr(resultat.get("error"))})
+                return {}
+            # L'enveloppe d'abord.
+            for cle in ("result", "structuredContent", "structured_content", "data"):
+                charge = _peut_etre_charge(resultat.get(cle))
+                if charge is not None:
+                    return charge
+            # Charge utile directe : utile aux tests, et au cas ou l'enveloppe
+            # disparaitrait. `ok` n'en fait PAS partie : elle est a l'enveloppe.
+            if any(c in resultat for c in ("wanted", "headings", "besoins", "v")):
+                return resultat
             contenus = resultat.get("content")
         else:
-            struct = getattr(resultat, "structuredContent", None)
-            if isinstance(struct, dict):
-                return struct
+            charge = _peut_etre_charge(getattr(resultat, "structuredContent", None))
+            if charge is not None:
+                return charge
             contenus = getattr(resultat, "content", None)
         if isinstance(contenus, (list, tuple)):
             for bloc in contenus:
@@ -147,15 +180,41 @@ def _extraire(resultat) -> dict:
                     bloc.get("text") if isinstance(bloc, dict)
                     else getattr(bloc, "text", None)
                 )
-                if isinstance(texte, str) and texte.strip().startswith("{"):
-                    return json.loads(texte)
-        return {}
+                charge = _peut_etre_charge(texte)
+                if charge is not None:
+                    return charge
     except Exception as exc:
-        if not _forme_relevee:
-            _forme_relevee = True
-            _noter({"event": "forme_inconnue", "type": repr(type(resultat)),
-                    "erreur": repr(exc)})
+        _releve_forme(resultat, repr(exc))
         return {}
+    # Rien trouve. Le journaliser : c'est exactement le cas qui a fait echouer
+    # la premiere ronde en silence, et le premier jet ne le disait pas.
+    _releve_forme(resultat, "aucune charge utile reconnue")
+    return {}
+
+
+def _releve_forme(resultat, raison: str) -> None:
+    """Consigne une fois la forme reellement rencontree.
+
+    Une extraction qui rend {} doit se voir. Sans cela, la premiere ronde a
+    envoye 182 skills, recu la reponse, n'en a rien compris, et a journalise
+    « restants: 0 » -- ce qui se lit comme un succes.
+    """
+    global _forme_relevee
+    if _forme_relevee:
+        return
+    _forme_relevee = True
+    apercu = {}
+    try:
+        if isinstance(resultat, dict):
+            apercu = {"cles": sorted(resultat)[:12]}
+        else:
+            apercu = {"attributs": sorted(
+                a for a in dir(resultat) if not a.startswith("_")
+            )[:12]}
+    except Exception:
+        pass
+    _noter({"event": "forme_inconnue", "type": repr(type(resultat)),
+            "raison": raison, **apercu})
 
 
 def _appeler(outil: str, arguments: dict, suite=None) -> None:

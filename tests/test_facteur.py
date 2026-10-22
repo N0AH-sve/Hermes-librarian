@@ -222,14 +222,44 @@ def test_un_chemin_qui_sort_de_la_racine_est_refuse(tmp_path):
 # -- la lecture du resultat MCP -------------------------------------------
 
 
-def test_extraire_accepte_les_trois_formes_plausibles():
-    direct = {"v": 1, "wanted": ["a"], "besoins": []}
-    assert pont._extraire(direct) == direct
-    assert pont._extraire({"structuredContent": direct}) == direct
-    enveloppe = {"content": [{"type": "text", "text": json.dumps(direct)}]}
-    assert pont._extraire(enveloppe) == direct
+CHARGE = {"v": 1, "ok": True, "wanted": ["a"], "headings": ["D"], "besoins": []}
+
+
+def test_extraire_defait_l_enveloppe_de_hermes():
+    """La forme reelle, relevee dans `PluginContext._mcp_envelope`.
+
+    C'est le defaut qui a fait echouer la premiere ronde : la sonde comprenait
+    `ok`, qui appartient a l'enveloppe, donc l'enveloppe etait rendue a la place
+    de la charge utile et `wanted` valait None.
+    """
+    assert pont._extraire({"ok": True, "result": CHARGE}) == CHARGE
+    assert pont._extraire({"ok": True, "result": CHARGE, "truncated": True}) == CHARGE
+    assert pont._extraire(
+        {"ok": True, "result": {"autre": 1}, "structuredContent": CHARGE}
+    ) == {"autre": 1}, "result d'abord, il est toujours la"
+
+
+def test_extraire_accepte_aussi_les_formes_de_repli():
+    assert pont._extraire(CHARGE) == CHARGE, "charge directe, pour les tests"
+    assert pont._extraire({"structuredContent": CHARGE}) == CHARGE
+    assert pont._extraire({"content": [{"type": "text", "text": json.dumps(CHARGE)}]}) == CHARGE
+    assert pont._extraire({"ok": True, "result": json.dumps(CHARGE)}) == CHARGE
+
+
+def test_extraire_rend_vide_sur_une_erreur_rapportee():
+    assert pont._extraire({"ok": False, "error": "gk est tombe"}) == {}
     assert pont._extraire(None) == {}
-    assert pont._extraire({"autre": 1}) == {}
+
+
+def test_une_extraction_vide_est_journalisee(tmp_path, monkeypatch):
+    """Le trou du premier jet : la forme n'etait consignee que sur exception,
+    pas quand l'extraction rendait {} en silence -- le cas qui est arrive."""
+    monkeypatch.setattr(pont, "JOURNAL", str(tmp_path / "j.jsonl"))
+    monkeypatch.setattr(pont, "_forme_relevee", False)
+    assert pont._extraire({"inconnu": 1}) == {}
+    lignes = [json.loads(l) for l in open(tmp_path / "j.jsonl", encoding="utf-8")]
+    assert any(l["event"] == "forme_inconnue" for l in lignes)
+    assert any("inconnu" in (l.get("cles") or []) for l in lignes)
 
 
 # -- la ronde complete, de bout en bout -----------------------------------
@@ -243,13 +273,21 @@ class CtxFactice:
         self.appels: list[str] = []
 
     def call_mcp(self, serveur, outil, arguments, timeout=None):
+        """Rend la charge utile DANS l'enveloppe de Hermes.
+
+        Le test de bout en bout passait avant le correctif parce qu'il rendait
+        la charge nue : il ne reproduisait pas la production, donc il ne pouvait
+        pas voir le defaut. C'est le genre de test qui rassure a tort.
+        """
         self.appels.append(outil)
         assert serveur == "gk"
         if outil == "catalog":
-            return self.svc.catalog(arguments["skills"], arguments.get("complete", False))
-        if outil == "sections":
-            return self.svc.sections(arguments["items"])
-        raise AssertionError(f"outil inattendu: {outil}")
+            charge = self.svc.catalog(arguments["skills"], arguments.get("complete", False))
+        elif outil == "sections":
+            charge = self.svc.sections(arguments["items"])
+        else:
+            raise AssertionError(f"outil inattendu: {outil}")
+        return {"ok": True, "result": charge}
 
 
 @pytest.fixture()
@@ -327,7 +365,7 @@ def test_le_besoin_catalogue_vide_declenche_une_ronde(ronde):
     svc, ctx, _, _ = ronde
     resultat = svc.observe("s", "une reponse quelconque")
     assert resultat["besoins"] == ["catalogue_vide"]
-    pont._suite_observe(resultat)
+    pont._suite_observe({"ok": True, "result": resultat})
     assert svc.catalog_.stats()["skills"] == 2, "GK reclame, le pont repond"
 
 

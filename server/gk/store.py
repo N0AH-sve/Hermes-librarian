@@ -109,10 +109,15 @@ MIGRATIONS: dict[int, tuple[str, ...]] = {
         )
         """,
     ),
-    # `turn_id` est fourni par les hooks de Hermes, ce qu'on ignorait en
-    # ecrivant la migration 1. Il rend l'attribution d'une correction exacte
-    # au lieu de reposer sur la plus recente de la session. Additive, donc une
-    # version precedente de GK sait encore lire la base.
+    # `turn_id` est fourni par `transform_llm_output`, ce qu'on ignorait en
+    # ecrivant la migration 1.
+    #
+    # CORRIGE le 2026-10-22 : il ne rend PAS l'attribution exacte, contrairement
+    # a ce que cette migration annoncait. `on_skill_lifecycle` ne porte pas de
+    # `turn_id`, donc `skill_uses.turn_id` reste vide et l'attribution retombe
+    # toujours sur la session. La colonne garde son sens du cote `corrections`,
+    # ou elle identifie le tour d'ou vient l'aveu. Additive, donc une version
+    # precedente de GK sait encore lire la base.
     2: (
         "ALTER TABLE corrections ADD COLUMN turn_id TEXT NOT NULL DEFAULT ''",
         "ALTER TABLE skill_uses ADD COLUMN turn_id TEXT NOT NULL DEFAULT ''",
