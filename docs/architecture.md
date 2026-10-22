@@ -1569,9 +1569,89 @@ l'étape 3, déjà écrits en français, avec normalisation des accents, éprouv
 production. GK les reprend. `META_PATTERNS` et `SYMPTOM_PATTERNS` couvrent deux
 trous que la conception n'avait pas vus.
 
+## Revirement du 2026-10-22 : la phase 2 suspendue
+
+**Décision prise par GM**, consignée ici parce qu'elle renverse trois étapes
+closes : **la phase 2 — index plein texte, BM25, découpage par rubrique,
+tokenizer, colonne à poids négatif — est suspendue au profit de la mesure.**
+
+### L'objection, et pourquoi elle porte
+
+GM : « notre bibliothécaire a seulement besoin de nom + description ».
+
+L'objection est juste, et elle va plus loin que son énoncé. 177 skills × (un nom
++ une phrase) ≈ 25 Ko, soit ~7 000 jetons : cela tient dans un prompt. Donc pas
+d'index, pas de recherche, pas de corpus de banc à constituer. La prémisse
+fondatrice — « 537 skills, 10 Mo, impossible à mettre en contexte » — est vraie
+du **corps** des skills et fausse de leurs **métadonnées**. La consolidation l'a
+rendue plus fausse encore. L'étape 8 avait défini un bras « métadonnées seules »
+comme point de comparaison à battre, sans envisager qu'il puisse être la réponse.
+
+Elle résout au passage la décision rouverte sur le prompt système : un catalogue
+de 177 lignes est **stable**, donc mis en cache une fois. C'est le contenu qui
+change à chaque tour — un résultat de recherche — qui coûte le cache de prompt.
+L'approche la plus simple est aussi la plus économe.
+
+### Le relevé qui change la prémisse, arrivé dans le même échange
+
+`/opt/hermes/hermes_cli/cli_info_mixin.py:1018` :
+
+```
+# Same shape as the system prompt's skill catalog (``    - name: description``).
+```
+
+**Hermes construit déjà un catalogue `nom : description` dans le prompt
+système.** L'approche n'est donc pas à essayer : elle est en production depuis
+le début. Et `skills_gate.py` a été écrit quand même — 350 lignes à la main pour
+réinjecter des noms de skills par mots-clés, par-dessus un prompt système qui
+les liste tous. On n'écrit pas cela si le catalogue suffit. C'est une
+présomption forte, pas une preuve : le gate a peut-être été écrit pour forcer le
+*chargement* plutôt que pour informer le *choix*.
+
+### Quatre conséquences
+
+**1. GK ne peut pas « injecter le catalogue »** : ce serait le répéter. Ce que
+les descriptions portent est acquis, et n'est pas le levier.
+
+**2. L'A/B de l'étape 8 avait un témoin trop faible.** Il était décrit comme
+« GK contre rien » sur les domaines non couverts par le gate. Il n'y a pas de
+« rien » : le témoin inclut le catalogue complet. Toute contribution de GK doit
+battre ce catalogue, pas le vide. La barre est plus haute que ce que le document
+annonçait.
+
+**3. La question utile se déplace** vers ce qu'une phrase de description ne peut
+pas porter : la désambiguïsation entre deux skills voisins (la collision
+« commande fournisseur » / « commande client » que le gate règle à la main par
+un ordre de priorité), le « quand NE PAS charger », et **quel fichier de
+`references/` lire** parmi 46.
+
+**4. La phase 1 est déjà l'instrument de la décision.** `on_skill_lifecycle`
+enregistre le skill réellement chargé à chaque tour ; les corrections
+enregistrent quand c'était le mauvais. Rien à construire pour savoir s'il y a un
+problème : laisser gb travailler et lire `gk stats`. Corrections à zéro sur
+plusieurs centaines de tours = la sélection marche = la phase 2 n'a pas lieu
+d'exister.
+
+### Ce qui survit dans tous les cas
+
+Indépendant de la question de la recherche : la **mesure** (phase 1, déployée et
+qui compte), les **faits sourcés** (phase 4, dont `RÈGLE ABSOLUE` datée et
+attribuée est l'amorce), et le **rangement** — auditer les noms de skills écrits
+à la main dans `DOMAINS`, signaler les orphelins et les skills trop gros.
+
+### Dernière inconnue avant de trancher
+
+Le catalogue du prompt système est-il **complet** ? Tous les skills ou ceux d'un
+profil, description entière ou tronquée. S'il est tronqué ou partiel, le manque
+est réel et identifié. S'il est complet, le problème n'est pas l'information
+mais son format — et ce n'est pas un moteur de recherche qui le résoudra.
+
+---
+
 ## Points ouverts
 
-Dernière revue : 2026-10-22, après la mise en service partielle de la phase 1.
+Dernière revue : 2026-10-22, après la mise en service partielle de la phase 1
+et le revirement sur la phase 2.
 
 ### Décisions à prendre
 
