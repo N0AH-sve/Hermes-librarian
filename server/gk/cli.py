@@ -666,18 +666,57 @@ def cmd_demandes(args, cfg: Config) -> int:
             longueurs.sort()
             out["longueur_medianne"] = longueurs[len(longueurs) // 2]
             out["tronquees_a_200"] = sum(1 for n in longueurs if n >= 200)
-        # Le rapprochement : quel skill a ete charge juste apres la demande.
+        # Deux rapprochements, et c'est le second qui porte la question.
+        #
+        # Le premier regarde les skills charges dans les deux minutes qui
+        # suivent la demande. Il ne vaut que pour un premier tour : au dixieme
+        # message d'une conversation, le skill charge au debut sert encore, et
+        # cette fenetre ne le voit pas. Un premier releve a donne 0 sur 6
+        # demandes, toutes en milieu de conversation -- un artefact du
+        # fenetrage, qu'il aurait ete facile de lire comme un resultat.
         apparies = store.one(
             "SELECT COUNT(*) c FROM requests r WHERE EXISTS ("
             "  SELECT 1 FROM skill_uses u WHERE u.session_id = r.session_id "
             "  AND u.ts BETWEEN r.ts AND r.ts + 120)"
         )
-        out["demandes_suivies_d_un_skill"] = int(apparies["c"]) if apparies else 0
-        out["demandes_sans_aucun_skill"] = gardees - out["demandes_suivies_d_un_skill"]
-        out["remarque_appariement"] = (
-            "rapproche par session et proximite dans le temps, faute de clef "
-            "commune : c'est une correlation, pas une verite"
+        out["demandes_suivies_d_un_skill_sous_2min"] = (
+            int(apparies["c"]) if apparies else 0
         )
+        # Le second regarde la SESSION entiere : cette conversation a-t-elle
+        # charge un skill, a un moment quelconque ? C'est la vraie forme de la
+        # question « gb repond-il sans rien charger, malgre le « you MUST load
+        # it » de son prompt systeme ? »
+        sessions = {
+            r["session_id"] for r in store.query(
+                "SELECT DISTINCT session_id FROM requests WHERE session_id <> ''"
+            )
+        }
+        avec_skill = {
+            r["session_id"] for r in store.query(
+                "SELECT DISTINCT session_id FROM skill_uses WHERE session_id <> ''"
+            )
+        }
+        out["sessions_observees"] = len(sessions)
+        out["sessions_sans_aucun_skill"] = len(sessions - avec_skill)
+        sans = store.one(
+            "SELECT COUNT(*) c FROM requests r WHERE NOT EXISTS ("
+            "  SELECT 1 FROM skill_uses u WHERE u.session_id = r.session_id)"
+        )
+        out["demandes_dans_une_session_sans_skill"] = int(sans["c"]) if sans else 0
+        out["remarque_appariement"] = (
+            "deux mesures : la fenetre de deux minutes ne vaut que pour un "
+            "premier tour, et c'est le compte par SESSION qui porte la question. "
+            "Dans les deux cas c'est une correlation et non une verite, faute de "
+            "clef commune entre pre_llm_call et on_skill_lifecycle"
+        )
+        if out["sessions_observees"] and out["sessions_sans_aucun_skill"] == out[
+            "sessions_observees"
+        ]:
+            out["remarque_charge"] = (
+                "aucune session observee n'a charge de skill. A confirmer sur du "
+                "volume : six conversations ne disent rien, et des messages "
+                "triviaux n'ont aucune raison d'en charger un."
+            )
         if args.exemples:
             out["exemples"] = [
                 r["text_truncated"] for r in store.query(

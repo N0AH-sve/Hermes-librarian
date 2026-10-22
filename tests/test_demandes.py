@@ -120,11 +120,39 @@ def test_gk_demandes_apparie_le_skill_charge(tmp_path, capsys, monkeypatch):
     monkeypatch.setenv("GK_DATABASE", str(tmp_path / "a.db"))
     assert cli_main(["--json", "demandes"]) == 0
     out = json.loads(capsys.readouterr().out)
-    assert out["demandes_suivies_d_un_skill"] == 1
-    assert out["demandes_sans_aucun_skill"] == 1
+    assert out["demandes_suivies_d_un_skill_sous_2min"] == 1
     assert out["par_plateforme"] == {"discord": 2}
+    # Le compte par SESSION est celui qui porte la question.
+    assert out["sessions_observees"] == 2
+    assert out["sessions_sans_aucun_skill"] == 1
+    assert out["demandes_dans_une_session_sans_skill"] == 1
     # L'appariement est une correlation, et la commande le dit.
-    assert "correlation, pas une verite" in out["remarque_appariement"]
+    assert "correlation et non une verite" in out["remarque_appariement"]
+
+
+def test_un_skill_charge_plus_tot_dans_la_session_compte_quand_meme(
+    tmp_path, capsys, monkeypatch
+):
+    """Le defaut du premier releve : la fenetre de deux minutes ne regarde que
+    l'APRES, donc au dixieme message d'une conversation le skill charge au debut
+    etait invisible. Six demandes en milieu de conversation avaient donne 0, ce
+    qui se lisait comme \u00ab gb ne charge rien \u00bb."""
+    from gk.store import Store as _Store
+
+    s = Service.open(tmp_path / "t.db")
+    s.skill_lifecycle("gm-un-skill", session_id="s1", action="use")
+    store = s.store
+    # La demande arrive bien APRES le chargement, et hors fenetre.
+    store.execute("UPDATE skill_uses SET ts = ?", (now() - 3600,))
+    s.request("s1", "une question de suivi")
+    s.close()
+    monkeypatch.setenv("GK_DATABASE", str(tmp_path / "t.db"))
+    assert cli_main(["--json", "demandes"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["demandes_suivies_d_un_skill_sous_2min"] == 0, "hors fenetre"
+    assert out["sessions_sans_aucun_skill"] == 0, "mais la session a bien charge"
+    assert out["demandes_dans_une_session_sans_skill"] == 0
+    assert _Store is not None
 
 
 def test_gk_demandes_ne_montre_le_texte_que_sur_demande(tmp_path, capsys, monkeypatch):
