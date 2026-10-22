@@ -411,7 +411,9 @@ def cmd_banc(args, cfg: Config) -> int:
         # les scores incomparables, un skill note sur quatre champs battant
         # mecaniquement un skill note sur deux. Il avantageait donc le metier au
         # lieu d'ameliorer la recherche, et son gain de +0,008 etait un artefact.
-        rangs: dict[str, list[int | None]] = {"tous": [], "sans": [], "citations": []}
+        rangs: dict[str, list[int | None]] = {
+            "tous": [], "sans": [], "citations": [], "normalise": [],
+        }
         groupes: dict[str, dict[str, list]] = {}
         echecs: list[dict] = []
         # Deux echecs tres differents, qu'il ne faut pas confondre : aucun
@@ -427,11 +429,15 @@ def cmd_banc(args, cfg: Config) -> int:
                 "metier" if metier else "generique",
                 "peu_informative" if info <= seuil else "informative",
             ]
-            for bras, sans in (("tous", False), ("sans", True), ("citations", False)):
+            for bras, sans in (
+                ("tous", False), ("sans", True),
+                ("citations", False), ("normalise", False),
+            ):
                 sortie = index.chercher(
                     demande, limite=args.limite, sans_declencheurs=sans,
                     exclure_exemple=ligne,
                     sans_prose=(bras == "citations"),
+                    normaliser_longueur=(bras == "normalise"),
                 )
                 noms = [r["name"] for r in sortie]
                 rang = noms.index(attendu) + 1 if attendu in noms else None
@@ -455,6 +461,7 @@ def cmd_banc(args, cfg: Config) -> int:
             ("tous", "tous_les_champs"),
             ("sans", "nom_description"),
             ("citations", "citations_sans_prose"),
+            ("normalise", "normalise_par_longueur"),
         ):
             trouves = [r for r in rangs[bras] if r is not None]
             out[etiquette] = {
@@ -470,6 +477,7 @@ def cmd_banc(args, cfg: Config) -> int:
                 "mrr": _mrr(bras_rangs["tous"]),
                 "mrr_nom_description": _mrr(bras_rangs["sans"]),
                 "mrr_citations_sans_prose": _mrr(bras_rangs["citations"]),
+                "mrr_normalise": _mrr(bras_rangs["normalise"]),
             }
             for etiquette, bras_rangs in sorted(groupes.items())
         }
@@ -553,6 +561,29 @@ def _lire_banc(out: dict, gain: float) -> list[str]:
             lignes.append(
                 f"La prose des declencheurs apporte ({citations['mrr']} sans elle "
                 f"contre {out['tous_les_champs']['mrr']} avec) : la garder."
+            )
+    norm = out.get("normalise_par_longueur")
+    if norm:
+        ecart = round(norm["mrr"] - out["tous_les_champs"]["mrr"], 3)
+        gen = (pop.get("generique") or {}).get("mrr_normalise")
+        gen_sans = (pop.get("generique") or {}).get("mrr_nom_description")
+        if ecart > 0.01:
+            lignes.append(
+                f"La normalisation par la longueur apporte {ecart:+} "
+                f"({norm['mrr']} contre {out['tous_les_champs']['mrr']}). Un "
+                "champ long rencontrait plus de demandes par hasard : c'est la "
+                "partie de BM25 qui avait ete jugee inutile ici."
+            )
+            if gen is not None and gen_sans is not None and gen >= gen_sans:
+                lignes.append(
+                    "Et elle resorbe l'inversion du generique, sans aucune regle "
+                    "par population : le defaut etait la longueur, pas la "
+                    "categorie."
+                )
+        elif ecart < -0.01:
+            lignes.append(
+                f"La normalisation par la longueur nuit ({ecart}) : les champs "
+                "longs portaient donc du signal, pas du bruit."
             )
     peu = pop.get("peu_informative")
     if peu:

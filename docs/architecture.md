@@ -1864,6 +1864,43 @@ sans FTS5 ni BM25 : il vient des 296 phrases écrites à la main. **La valeur es
 dans la bibliothèque ; l'outil la rend utilisable.** C'est ce qu'il faut dire aux
 décideurs, et c'est vérifiable.
 
+### Trois hypothèses rejetées, et celle qui reste
+
+| Bras | ensemble | métier | générique |
+|---|---|---|---|
+| Tous les champs | 0,527 | 0,592 | 0,391 |
+| Nom + description | 0,401 | 0,375 | **0,455** |
+| Déclencheurs métier seulement | 0,535 | 0,603 | 0,395 |
+| Citations sans la prose | 0,494 | 0,544 | 0,388 |
+
+**La prose apporte** : la retirer coûte 0,033 d'ensemble et 0,048 sur le métier.
+Hypothèse rejetée. Et elle ne corrige pas le générique non plus : 0,388 contre
+0,391, autant dire rien.
+
+Mais cet échec élimine la dernière explication « par champ ». Ce n'est ni la
+prose, ni les déclencheurs : pour les skills génériques, **nom + description
+seuls battent toutes les combinaisons essayées**. Le facteur commun est donc
+simplement **le fait d'ajouter du texte**.
+
+Un seul mécanisme produit cela uniformément : un skill qui porte plus de jetons
+distincts rencontre plus de demandes **par hasard**, même sur des mots peu
+discriminants. Les skills génériques hérités de Claude sont longs et verbeux ;
+les descriptions métier sont courtes et précises.
+
+C'est la **normalisation par la longueur**, et elle avait été omise délibérément :
+le module annonce « la présence, pas la fréquence », ce qui corrige la
+répétition d'un mot *dans* un champ mais pas le nombre de mots différents que ce
+champ contient. C'est le biais que BM25 corrige par sa longueur moyenne de
+document — précisément la partie de BM25 jugée inutile ici.
+
+Le facteur est rapporté à la moyenne du champ, pour que les poids gardent leur
+sens : il vaut 1 à la longueur moyenne, plus pour un champ court, moins pour un
+champ long. Il s'applique à **tous** les skills, donc il ne touche pas à la
+comparabilité des scores — contrairement à la pondération par population.
+
+Si ce bras résorbe l'inversion du générique, le défaut était la **longueur** et
+non la catégorie, et aucune règle par population n'est nécessaire.
+
 ### Pondérer par population : mesuré, puis retiré
 
 La règle qui semblait découler du relevé — indexer les déclencheurs du métier

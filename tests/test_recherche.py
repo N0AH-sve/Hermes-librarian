@@ -450,3 +450,73 @@ def test_la_lecture_ne_pretend_plus_les_demandes_introuvables(tmp_path, capsys, 
     texte = " ".join(json.loads(capsys.readouterr().out)["lecture"])
     assert "Aucune recherche par les mots ne peut" not in texte
     assert "plus dures, pas introuvables" in texte
+
+
+# -- la normalisation par la longueur -------------------------------------
+
+
+def test_un_champ_long_perd_son_avantage_de_hasard(tmp_path):
+    """Relevé du 2026-10-22 : pour les skills generiques, nom+description seuls
+    battent toute combinaison essayee. Ni la prose ni les declencheurs n'en sont
+    la cause -- c'est le fait d'AJOUTER DU TEXTE. Un champ qui porte plus de
+    jetons distincts rencontre plus de demandes par hasard."""
+    store = Store(tmp_path / "ln.db")
+    cat = Catalog(store)
+    verbeux = " ".join(f"mot{i}" for i in range(200))
+    cat.ingest([
+        {"path": "cat/precis/SKILL.md", "name": "precis",
+         "description": "zorglub.", "category": "cat", "fingerprint": "1"},
+        {"path": "cat/verbeux/SKILL.md", "name": "verbeux",
+         "description": f"zorglub {verbeux}", "category": "cat", "fingerprint": "1"},
+    ], complete=True)
+    cat.store_sections([
+        {"path": "cat/precis/SKILL.md", "fingerprint": "1", "sections": []},
+        {"path": "cat/verbeux/SKILL.md", "fingerprint": "1", "sections": []},
+    ])
+    index = Index.construire(store)
+    try:
+        # Sans normalisation, les deux ont le meme score sur « zorglub » : la
+        # presence ne distingue pas un champ court d'un champ long.
+        brut = {r["name"]: r["score"] for r in index.chercher("zorglub")}
+        assert brut["precis"] == brut["verbeux"]
+        # Avec, le champ court est avantage, ce qui est le but : il a moins de
+        # chances d'avoir rencontre le mot par hasard.
+        norme = {
+            r["name"]: r["score"]
+            for r in index.chercher("zorglub", normaliser_longueur=True)
+        }
+        assert norme["precis"] > norme["verbeux"]
+    finally:
+        store.close()
+
+
+def test_le_facteur_de_longueur_vaut_un_a_la_moyenne(tmp_path):
+    """Rapportee a la moyenne du champ, pour que les poids gardent leur sens."""
+    store = Store(tmp_path / "fl.db")
+    peupler(store, BIBLIOTHEQUE)
+    index = Index.construire(store)
+    try:
+        moyenne = index.longueur_moyenne["description"]
+        assert moyenne > 0
+        assert index.facteur_longueur("description", round(moyenne)) == pytest.approx(
+            1.0, abs=0.05
+        )
+        assert index.facteur_longueur("description", 1) > 1.0
+        assert index.facteur_longueur("description", 500) < 1.0
+        # Un champ vide ou un champ inconnu ne change rien.
+        assert index.facteur_longueur("description", 0) == 1.0
+        assert index.facteur_longueur("inexistant", 10) == 1.0
+    finally:
+        store.close()
+
+
+def test_le_banc_rend_le_bras_normalise(tmp_path, capsys, monkeypatch):
+    store = Store(tmp_path / "bn.db")
+    peupler(store, BIBLIOTHEQUE)
+    store.close()
+    monkeypatch.setenv("GK_DATABASE", str(tmp_path / "bn.db"))
+    assert cli_main(["--json", "banc"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert "normalise_par_longueur" in out
+    for bloc in out["par_population"].values():
+        assert "mrr_normalise" in bloc

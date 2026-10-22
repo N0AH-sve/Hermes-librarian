@@ -123,6 +123,9 @@ class Index:
     skills: list[Skill]
     df: dict[str, int]                # nombre de skills portant le jeton
     n: int
+    # Nombre moyen de jetons distincts par champ. Sert a normaliser par la
+    # longueur : un champ long rencontre plus de demandes par hasard.
+    longueur_moyenne: dict[str, float] = field(default_factory=dict)
 
     @classmethod
     def construire(cls, store: Store) -> "Index":
@@ -176,7 +179,35 @@ class Index:
                 vus |= jetons_champ
             for j in vus:
                 df[j] = df.get(j, 0) + 1
-        return cls(skills=skills, df=df, n=len(skills))
+        longueurs: dict[str, list[int]] = {}
+        for s in skills:
+            for champ, jetons_champ in s.champs.items():
+                longueurs.setdefault(champ, []).append(len(jetons_champ))
+        moyennes = {
+            champ: (sum(valeurs) / len(valeurs)) if valeurs else 0.0
+            for champ, valeurs in longueurs.items()
+        }
+        return cls(skills=skills, df=df, n=len(skills), longueur_moyenne=moyennes)
+
+    def facteur_longueur(self, champ: str, nombre_de_jetons: int) -> float:
+        """Corrige l'avantage d'un champ long.
+
+        Relevé du 2026-10-22 : pour les skills generiques, nom + description
+        seuls battent toute combinaison essayee. Ni la prose ni les declencheurs
+        n'en sont la cause -- c'est **le fait d'ajouter du texte**. Un champ qui
+        porte plus de jetons distincts rencontre plus de demandes par hasard,
+        meme sur des mots peu discriminants, et les skills generiques herites
+        sont longs et verbeux la ou les descriptions metier sont courtes.
+
+        C'est le biais que BM25 corrige par la longueur moyenne de document, et
+        c'est precisement la partie de BM25 qui avait ete jugee inutile ici. La
+        normalisation est rapportee a la moyenne du champ, pour que les poids
+        gardent leur sens.
+        """
+        moyenne = self.longueur_moyenne.get(champ, 0.0)
+        if moyenne <= 0 or nombre_de_jetons <= 0:
+            return 1.0
+        return math.log(2.0 + moyenne) / math.log(2.0 + nombre_de_jetons)
 
     def idf(self, jeton: str) -> float:
         """Un jeton present partout ne discrimine rien.
@@ -196,6 +227,7 @@ class Index:
         sans_declencheurs: bool = False,
         exclure_exemple: str | None = None,
         sans_prose: bool = False,
+        normaliser_longueur: bool = False,
     ) -> list[dict]:
         """Classe les skills pour une demande.
 
@@ -238,6 +270,8 @@ class Index:
                 gagne = sum(
                     self.idf(j) for j in jetons_demande if j in presents
                 )
+                if gagne and normaliser_longueur:
+                    gagne *= self.facteur_longueur(champ, len(presents))
                 if gagne:
                     detail[champ] = round(poids_champ * gagne, 3)
                     total += poids_champ * gagne
