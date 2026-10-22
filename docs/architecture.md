@@ -1639,6 +1639,46 @@ qui compte), les **faits sourcés** (phase 4, dont `RÈGLE ABSOLUE` datée et
 attribuée est l'amorce), et le **rangement** — auditer les noms de skills écrits
 à la main dans `DOMAINS`, signaler les orphelins et les skills trop gros.
 
+### Le catalogue n'est ni complet ni tronqué : il est variable
+
+Relevé dans `/opt/hermes/hermes_cli/prompt_size.py`, qui analyse le prompt
+système et en livre donc la forme exacte :
+
+```python
+_SKILLS_BLOCK_RE = re.compile(r"<available_skills>.*?</available_skills>", re.DOTALL)
+# A rendered skill entry is ``    - name: desc`` (or ``    - name``); category headers use two
+# leading spaces, so the four-space + ``- `` prefix isolates skill lines.
+# Posture-demoted categories render all visible skill names on one shared line.
+```
+
+Trois faits, et le troisième rouvre la phase 2 :
+
+1. le catalogue existe, balisé `<available_skills>`, **groupé par catégories** ;
+2. une entrée peut être rendue **sans description** (`    - name` seul) ;
+3. une notion de **posture** *déclasse* des catégories entières : leurs skills
+   sont alors réduits à une liste de noms sur une seule ligne. Le mot
+   « visible » suggère en outre que certains peuvent ne pas apparaître du tout.
+
+**Conséquence.** L'objection de GM — « nom + description suffisent » — est
+juste, mais Hermes **ne garantit pas de fournir les deux**. Pour une catégorie
+déclassée, gb choisit sur le nom seul : sans déclencheur, sans « ne pas charger
+pour ». C'est le manque, et il est bien mieux ciblé que ce que la phase 2
+prévoyait : il ne s'agit pas d'indexer 177 corps de skills, mais de **fournir la
+description que le prompt système escamote**, pour les catégories qu'il
+déclasse. Cela explique aussi pourquoi `skills_gate.py` a été écrit par-dessus
+un catalogue qui liste déjà tout : il ne listait pas tout de la même façon.
+
+À confirmer sur le bloc réel avant d'en faire une décision : combien de skills
+dans `<available_skills>`, combien avec description, quelles catégories
+déclassées, et le coût en jetons — ce que `prompt_size` sait calculer.
+
+**Deux inconnues fermées au passage.** `plugins.py:940` définit
+`register_system_prompt_section` : un plugin **peut** ajouter une section au
+prompt système, ce qui restait ouvert à l'étape de conception 5. Et le code des
+skills vit dans un paquet `agent` (`from agent.skill_utils import ...`), non
+dans `hermes_cli` : c'est pourquoi le constructeur du catalogue est resté
+introuvable à trois reprises.
+
 ### Dernière inconnue avant de trancher
 
 Le catalogue du prompt système est-il **complet** ? Tous les skills ou ceux d'un
