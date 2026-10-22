@@ -78,8 +78,42 @@ MARQUEURS = (
 # propre marge d'erreur.
 MARQUEURS_FAIBLES = ("jamais", "sauf", "except")
 
+# Marqueurs de RENVOI : ce qui distingue un vrai renvoi vers un skill voisin de
+# la simple mention d'un outil du metier.
+#
+# Releve du 2026-10-22 : la premiere mesure comptait 16 skills « citant un autre
+# skill », mais `pennylane`, `prestashop`, `linear`, `notion` et `himalaya` sont
+# des OUTILS qui ont un skill portant leur nom. Les mentionner n'est pas se
+# distinguer d'un concurrent, c'est nommer son domaine. Confondre les deux
+# surestime le risque de precision.
+MARQUEURS_RENVOI = (
+    "voir ", "cf ", " vs ", "plutot", "a la place", "preferer",
+    "see ", "instead", "use ", "prefer ", "rather than",
+)
+
+# Les lignes entre guillemets sont des EXEMPLES DE DEMANDE, pas de la prose.
+# Releve du 2026-10-22 : les declencheurs GM sont redigees comme des citations
+# de l'utilisateur -- « point dettes », « ou en sont les factures fournisseurs
+# en attente ». Donc du texte de la meme forme que les requetes, ce qui en fait
+# le signal le plus fort possible pour une recherche lexicale. Les guillemets
+# sont un signal structurel, pas une devinette.
+GUILLEMETS = ("\u00ab", "\u00bb", "\u201c", "\u201d", '"')
+
 # Un extrait de section ne sert qu'au diagnostic, et il est borne.
 MAX_EXEMPLE_CHARS = 120
+
+
+def lignes_citees(texte: str) -> list[str]:
+    """Les lignes qui portent des guillemets, donc des exemples de demande."""
+    return [
+        ligne for ligne in (texte or "").splitlines()
+        if any(g in ligne for g in GUILLEMETS)
+    ]
+
+
+def est_un_renvoi(ligne: str) -> bool:
+    plie = fold(ligne or "")
+    return any(m.strip() and m.strip() in plie for m in MARQUEURS_RENVOI)
 
 
 def titre_negatif(heading: str) -> bool:
@@ -168,7 +202,11 @@ def mesurer(store: Store, exemples: bool = False) -> dict:
         octets_positifs += len(positif.encode("utf-8"))
         octets_negatifs += len(negatif.encode("utf-8"))
         etat = par_skill.setdefault(
-            path, {"negatif_structurel": False, "negatif_prose": False, "cite": set()}
+            path,
+            {
+                "negatif_structurel": False, "negatif_prose": False,
+                "cite": set(), "renvoi": set(), "lignes_citees": 0,
+            },
         )
         # Le meme decoupage, sans les marqueurs faibles : l'ecart entre les
         # deux est la marge d'erreur de la mesure.
@@ -182,12 +220,22 @@ def mesurer(store: Store, exemples: bool = False) -> dict:
             etat["negatif_prose"] = True
             if exemples and len(echantillons) < 8:
                 echantillons.append(negatif.splitlines()[0].strip()[:MAX_EXEMPLE_CHARS])
-        # Citations d'autres skills : le risque de precision de l'ajout.
-        plie = fold(texte)
+        # Exemples de demande entre guillemets : le signal le plus fort.
+        citees = lignes_citees(texte)
+        if citees:
+            etat["lignes_citees"] = etat.get("lignes_citees", 0) + len(citees)
+        # Citations d'autres skills. Deux niveaux, parce que les confondre
+        # surestime le risque : la simple mention, et le RENVOI explicite.
         moi = fold(noms.get(path, ""))
-        for nom_plie, nom in noms_plies.items():
-            if nom_plie != moi and nom_plie in plie:
+        for ligne in (texte or "").splitlines():
+            plie_ligne = fold(ligne)
+            renvoi = est_un_renvoi(ligne)
+            for nom_plie, nom in noms_plies.items():
+                if nom_plie == moi or nom_plie not in plie_ligne:
+                    continue
                 etat["cite"].add(nom)
+                if renvoi or ligne in negatif.splitlines():
+                    etat["renvoi"].add(nom)
 
     total_skills = int(
         store.one("SELECT COUNT(*) c FROM skills WHERE missing_since IS NULL")["c"]
@@ -199,6 +247,9 @@ def mesurer(store: Store, exemples: bool = False) -> dict:
         if e["negatif_prose"] and not e["negatif_structurel"]
     )
     citants = {p: sorted(e["cite"]) for p, e in par_skill.items() if e["cite"]}
+    renvois = {p: sorted(e["renvoi"]) for p, e in par_skill.items() if e["renvoi"]}
+    avec_exemples = sum(1 for e in par_skill.values() if e.get("lignes_citees"))
+    lignes_exemples = sum(e.get("lignes_citees", 0) for e in par_skill.values())
     prose_strict = sum(
         1 for p, e in par_skill.items()
         if p in strict_par_skill and not e["negatif_structurel"]
@@ -218,8 +269,15 @@ def mesurer(store: Store, exemples: bool = False) -> dict:
         "octets_negatifs": octets_negatifs,
         "par_marqueur": dict(marqueurs.most_common()),
         "titres_rencontres": dict(titres.most_common(12)),
-        "skills_citant_un_autre_skill": len(citants),
+        # Deux niveaux : la mention (large, qui inclut les noms d'outils) et le
+        # renvoi explicite (strict, qui est le vrai risque de precision).
+        "skills_mentionnant_un_autre_skill": len(citants),
+        "skills_avec_renvoi_explicite": len(renvois),
         "citations": dict(sorted(citants.items())[:10]),
+        "renvois": dict(sorted(renvois.items())[:10]),
+        # Les exemples de demande entre guillemets : le signal le plus fort.
+        "skills_avec_exemples_cites": avec_exemples,
+        "lignes_entre_guillemets": lignes_exemples,
         "exemples": echantillons,
     }
 
@@ -264,11 +322,28 @@ def lecture(m: dict) -> list[str]:
             "de marqueurs. C'est l'argument pour que gm-skill-template impose un "
             "titre dedie."
         )
-    citants = m["skills_citant_un_autre_skill"]
-    if citants:
+    renvois = m.get("skills_avec_renvoi_explicite")
+    citants = m.get("skills_mentionnant_un_autre_skill", m.get("skills_citant_un_autre_skill", 0))
+    if renvois:
         lignes.append(
-            f"{citants} skills citent un autre skill dans leurs declencheurs "
-            f"({100.0 * citants / avec:.0f} %) : c'est le risque de precision de "
-            "l'ajout des declencheurs, a surveiller au banc."
+            f"{renvois} skills renvoient explicitement a un voisin "
+            f"({100.0 * renvois / avec:.0f} %), sur {citants} qui en mentionnent un. "
+            "Seuls les renvois sont le risque de precision : mentionner "
+            "`pennylane` ou `prestashop`, c'est nommer son domaine, pas se "
+            "distinguer d'un concurrent."
+        )
+    elif citants:
+        lignes.append(
+            f"{citants} skills mentionnent un autre skill, aucun avec un renvoi "
+            "explicite : ce sont des noms d'outils, pas un risque de precision."
+        )
+    exemples = m.get("skills_avec_exemples_cites")
+    if exemples:
+        lignes.append(
+            f"{exemples} skills sur {m['skills_avec_declencheurs']} redigent leurs "
+            f"declencheurs comme des citations de l'utilisateur "
+            f"({m.get('lignes_entre_guillemets', 0)} lignes entre guillemets). "
+            "Ce texte a la meme forme que les demandes : c'est le signal le plus "
+            "fort possible, et il merite le poids le plus eleve."
         )
     return lignes

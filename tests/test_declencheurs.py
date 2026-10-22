@@ -125,26 +125,64 @@ def test_chaque_marqueur_est_compte_a_part(store):
     assert m["par_marqueur"]["ne pas"] == 1
 
 
-def test_les_citations_d_autres_skills_sont_comptees(store):
-    """Le risque de precision de l'ajout des declencheurs : un skill qui cite
-    son voisin remonte sur les demandes du voisin."""
+def test_un_renvoi_explicite_et_une_mention_ne_se_confondent_pas(store):
+    """Le premier releve comptait 16 skills « citant un autre skill », mais
+    `pennylane` et `prestashop` sont des OUTILS qui ont un skill portant leur
+    nom. Les mentionner, c'est nommer son domaine ; renvoyer vers un voisin,
+    c'est le risque de precision. Les confondre le surestime."""
     peupler(store, {
-        "gm-presta-commande": [
-            ("Déclencheurs", "Commande fournisseur. Sinon voir gm-presta-catalogue."),
+        "gm-renvoi": [
+            ("Déclencheurs", "Commande fournisseur. Sinon voir gm-catalogue."),
         ],
-        "gm-presta-catalogue": [("Déclencheurs", "Fiches produits.")],
+        "gm-mention": [
+            ("Déclencheurs", "Croiser les factures Qonto et pennylane."),
+        ],
+        "gm-catalogue": [("Déclencheurs", "Fiches produits.")],
+        "pennylane": [("Déclencheurs", "Comptabilite.")],
     })
     m = mesurer(store)
-    assert m["skills_citant_un_autre_skill"] == 1
-    cite = next(iter(m["citations"].values()))
-    assert cite == ["gm-presta-catalogue"]
+    assert m["skills_mentionnant_un_autre_skill"] == 2, "les deux mentionnent"
+    assert m["skills_avec_renvoi_explicite"] == 1, "un seul renvoie"
+    assert next(iter(m["renvois"].values())) == ["gm-catalogue"]
+
+
+def test_une_citation_du_cote_negatif_compte_comme_un_renvoi(store):
+    """Un renvoi ecrit dans la moitie negative est le bon usage : il reste utile
+    a l'humain et cesse de polluer l'index positif."""
+    peupler(store, {
+        "gm-commande": [
+            ("Déclencheurs", "Commande fournisseur.\nNe pas charger pour les fiches : gm-catalogue."),
+        ],
+        "gm-catalogue": [("Déclencheurs", "Fiches produits.")],
+    })
+    m = mesurer(store)
+    assert m["skills_avec_renvoi_explicite"] == 1
 
 
 def test_un_skill_ne_se_cite_pas_lui_meme(store):
     peupler(store, {
         "gm-presta-commande": [("Déclencheurs", "Voir gm-presta-commande pour le reste.")],
     })
-    assert mesurer(store)["skills_citant_un_autre_skill"] == 0
+    assert mesurer(store)["skills_mentionnant_un_autre_skill"] == 0
+
+
+def test_les_exemples_entre_guillemets_sont_comptes(store):
+    """Releve du 2026-10-22 : les declencheurs GM sont redigees comme des
+    citations de l'utilisateur. Donc du texte de la meme forme que les
+    demandes, ce qui en fait le signal le plus fort possible."""
+    peupler(store, {
+        "gm-factures": [(
+            "Quand charger ce skill",
+            "- \u00ab point dettes \u00bb, \u00ab point compta \u00bb\n"
+            "- \u00ab ou en sont les factures fournisseurs \u00bb\n"
+            "- Audit d'ecart entre Presta et Qonto",
+        )],
+        "gm-sans-exemples": [("Déclencheurs", "Charger pour les audits.")],
+    })
+    m = mesurer(store)
+    assert m["skills_avec_exemples_cites"] == 1
+    assert m["lignes_entre_guillemets"] == 2
+    assert any("poids le plus eleve" in l for l in lecture(m))
 
 
 def test_le_poids_se_repartit_entre_positif_et_negatif(store):
@@ -169,7 +207,7 @@ def test_la_lecture_conclut_a_l_abandon_quand_c_est_marginal():
     m = {
         "skills_au_catalogue": 182, "skills_avec_declencheurs": 65,
         "negatif_structurel": 0, "negatif_en_prose": 5,
-        "skills_citant_un_autre_skill": 0,
+        "skills_mentionnant_un_autre_skill": 0, "skills_avec_renvoi_explicite": 0,
     }
     texte = " ".join(lecture(m))
     assert "couterait plus qu'elle ne rapporte" in texte
@@ -179,7 +217,7 @@ def test_la_lecture_conclut_qu_elle_vaut_son_code_quand_c_est_net():
     m = {
         "skills_au_catalogue": 182, "skills_avec_declencheurs": 65,
         "negatif_structurel": 20, "negatif_en_prose": 40,
-        "skills_citant_un_autre_skill": 10,
+        "skills_mentionnant_un_autre_skill": 12, "skills_avec_renvoi_explicite": 10,
     }
     texte = " ".join(lecture(m))
     assert "vaut son code" in texte
@@ -190,7 +228,7 @@ def test_la_lecture_reclame_un_titre_dedie_si_rien_n_est_structurel():
     m = {
         "skills_au_catalogue": 100, "skills_avec_declencheurs": 50,
         "negatif_structurel": 0, "negatif_en_prose": 30,
-        "skills_citant_un_autre_skill": 0,
+        "skills_mentionnant_un_autre_skill": 0, "skills_avec_renvoi_explicite": 0,
     }
     assert any("gm-skill-template" in l for l in lecture(m))
 
@@ -246,7 +284,8 @@ def test_la_lecture_annonce_la_marge_d_erreur():
     m = {
         "skills_au_catalogue": 182, "skills_avec_declencheurs": 65,
         "negatif_structurel": 3, "negatif_en_prose": 21,
-        "negatif_en_prose_strict": 9, "skills_citant_un_autre_skill": 16,
+        "negatif_en_prose_strict": 9,
+        "skills_mentionnant_un_autre_skill": 16, "skills_avec_renvoi_explicite": 6,
     }
     texte = " ".join(lecture(m))
     assert "12 skills" in texte, "la decision se prend sur le strict : 3 + 9"

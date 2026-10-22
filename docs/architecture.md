@@ -1831,6 +1831,54 @@ C'est exactement la distinction que la phase 1 mesure déjà —
 | **Les faits sourcés** (phase 4) | Indépendant de la recherche. `RÈGLE ABSOLUE` datée et attribuée en est l'amorce |
 | **Le rangement** | Auditer les noms écrits à la main dans `DOMAINS`, signaler orphelins, doublons et skills trop gros |
 
+### Les déclencheurs sont des citations de l'utilisateur
+
+Relevé le 2026-10-22 en lisant un skill réel, `gm-supplier-invoice-control` :
+
+```
+## Quand charger ce skill
+- « contrôle des factures fournisseurs », « vérifier si les fournisseurs nous
+  facturent bien le PA / le port »
+- « point dettes », « point compta », « où en sont les factures fournisseurs
+  en attente »
+- Audit d'écart entre ce qu'on croit payer (Presta) et ce qui est facturé
+```
+
+Ce ne sont pas des descriptions de déclencheurs : ce sont **les phrases de
+l'utilisateur, entre guillemets**. Le texte indexé n'est donc pas « du texte en
+plus », c'est du texte **de la même forme que les demandes**.
+
+**Conséquence pour le score** : les lignes entre guillemets méritent le poids le
+plus élevé de tous, au-dessus de la prose qui les entoure. Et c'est un signal
+**structurel** — la présence de guillemets — non une devinette. `gk declencheurs`
+les compte désormais (`skills_avec_exemples_cites`,
+`lignes_entre_guillemets`).
+
+La `description` va dans le même sens : « PA », « frais de port », « dettes »,
+« Qonto », « Pennylane », « proforma (PRE) », « facture finale (IV) ». Du
+vocabulaire réel, pas un résumé abstrait. **Le pari « sans embeddings » de
+l'étape de conception 6 est désormais appuyé par des données**, et non plus par
+la seule lecture du squelette.
+
+### Le risque de précision était surestimé
+
+La première mesure annonçait « 16 skills sur 65 (25 %) citent un autre skill »,
+présenté comme le risque de précision de l'ajout des déclencheurs. Le chiffre
+confondait deux choses :
+
+* **mentionner un outil** — `pennylane`, `prestashop`, `linear`, `notion`,
+  `himalaya` sont des outils qui ont un skill portant leur nom. Les nommer,
+  c'est nommer son domaine, et c'est exactement le vocabulaire qu'on veut
+  indexer ;
+* **renvoyer vers un voisin** — « sinon voir gm-presta-catalogue ». Là oui, la
+  ligne fait remonter le skill sur les demandes de son voisin.
+
+Les deux sont maintenant comptés séparément, le renvoi étant repéré par un
+marqueur (`voir`, `vs`, `plutôt`, `instead`…) ou par son appartenance à la
+moitié négative. Le risque réel est donc plus petit que ce que le document
+annonçait, et la consigne de rédaction reste la même : un renvoi appartient à la
+moitié négative, où il sert l'humain sans polluer l'index.
+
 ### Le tri des déclencheurs, mesuré : la colonne négative est gardée
 
 Relevé du 2026-10-22 sur les 65 sections reçues, après correction du comptage.
