@@ -1300,6 +1300,80 @@ matérielle. Deux conséquences de conception :
 divers, 97 entrées. Conséquence : `gk check` ne doit pas supposer un volume
 pristine, et le plugin doit vivre dans un sous-dossier clairement nommé.
 
+## La forme réelle des skills, et ce qu'elle impose
+
+Relevé le 2026-10-22 sur les 534 skills de `/opt/data/skills`.
+
+| Mesure | Valeur |
+|---|---|
+| Disposition | 30 % `SKILL.md + references/ + scripts/`, 28 % `SKILL.md` seul, 25 % `+ references/`, le reste mixte |
+| Taille d'un `SKILL.md` | médiane **15 Ko**, moyenne 20, max 84 ; **105 skills dépassent 32 Ko** |
+| Frontmatter | `name` et `description` **partout** ; `version` 156, `platforms` 140, `metadata` 128, `category` 112 |
+
+Squelette type, et c'est lui qui porte les conséquences :
+
+```
+---
+name: domaine-sujet
+description: "<déclencheur concret> — <ce que le skill contient>"
+---
+## Déclencheurs      quand charger / quand NE PAS charger
+## Règle             la règle métier, à l'impératif
+## Procédure         commandes exactes, chemins, ordre
+## Pièges            ce qui ressemble à X mais est Y
+## Vérification      preuve mesurable
+## Références        references/*.md datés, scripts/
+```
+
+Quatre familles en usage : procédural métier, incident et forensics, outillage
+et API, campagne récurrente. Les titres varient donc d'une famille à l'autre, et
+le découpage doit le tolérer.
+
+### Quatre conséquences pour la phase 2
+
+**1. `Déclencheurs` reçoit le poids le plus élevé**, pas le nom ni la
+description. Les skills déclarent eux-mêmes quand les charger : c'est le signal
+le plus fort possible, écrit par l'auteur, et structuré. La conception traitait
+le corps comme un bloc homogène, ce qui était faux — une section a précisément
+pour propos la question que GK pose.
+
+**2. Le « quand NE PAS charger » est un signal NÉGATIF**, et aucune des huit
+étapes ne l'avait envisagé. Un skill dont les contre-indications correspondent à
+la demande doit être **écarté**, pas remonté. BM25 ne sait faire que de
+l'affinité positive, donc cette section se découpe à part et se **soustrait**.
+Sans cela, un skill qui dit « ne me charge pas pour les commandes fournisseurs »
+remonte en tête sur « commande fournisseur », avec les mots au meilleur endroit
+possible — un classement inversé sur les cas les plus nets.
+
+**3. Le découpage par titre est une nécessité, pas une optimisation.** Une
+médiane de 15 Ko fait environ 4 000 jetons : indexé d'un bloc, un skill noie
+BM25. Le squelette fournit de vraies frontières sémantiques.
+
+**4. `references/` n'est pas indexé en v1.** 326 skills en ont ; ce sont des
+annexes datées qui multiplieraient le corpus sans décider du choix, puisque
+`Déclencheurs` décide. À rouvrir si le banc montre des manques.
+
+### Deux effets sur les décisions antérieures
+
+**Le bras « métadonnées seules » du banc est exactement reproductible**, puisque
+`name` et `description` sont présents partout. La comparaison de l'étape 8 n'a
+aucune ambiguïté de définition.
+
+**Le pari « sans embeddings » sort renforcé.** Le squelette impose
+`description: "<déclencheur concret> — ..."`, donc les auteurs écrivent déjà les
+mots que les utilisateurs emploient plutôt qu'un résumé abstrait. C'est la
+condition pour que le lexical suffise. Renforcé, pas prouvé.
+
+### Un écart non résolu
+
+Le comptage donne **534** ici et **537** par `find -name SKILL.md` dans
+`/opt/data/skills`. Trois dossiers qui n'en sont probablement pas. Sans
+conséquence, noté plutôt que corrigé en silence.
+
+Et les **105 skills de plus de 32 Ko** sont des candidats au `skill-cleaner` déjà
+présent dans la bibliothèque. GK est bien placé pour les signaler, comme il
+signale les orphelins.
+
 ## skills_gate.py : la phase 3 existe déjà
 
 Relevé le 2026-10-22 dans `hooks.pre_llm_call` du `config.yaml` de l'agent :
