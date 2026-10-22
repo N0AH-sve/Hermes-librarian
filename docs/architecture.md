@@ -1322,6 +1322,88 @@ pristine, et le plugin doit vivre dans un sous-dossier clairement nommé.
 > fréquent que `Déclencheurs`, ce qui invalide le stemmer français de
 > l'étape de conception 6.
 
+### Relevé du 2026-10-22, fin de journée : la structure, par GM
+
+Fourni par l'équipe après consolidation, sur **177 skills, dont 122 avec
+`references/`**. Le compte continue de bouger ; la structure, elle, est stable
+et c'est elle qui décide de la phase 2.
+
+```
+<catégorie>/<nom-du-skill>/
+  SKILL.md            obligatoire, ~2 à 46 Ko (médiane ~13-20 Ko)
+  references/*.md     1 à 46 fichiers, chargés à la demande
+  scripts/            optionnel
+  templates/          optionnel
+```
+
+Frontmatter : **toujours deux clés**, `name` (= nom du dossier, préfixe `gm-`
+pour le métier) et `description` (une phrase : quoi + déclencheur).
+
+Ordre canonique du corps : `Déclencheurs`, `Règle / RÈGLE ABSOLUE` (décision
+validée, **datée et attribuée**), `Contexte / Architecture / Identifiants`,
+`Procédure / Workflow`, `Pièges` (`🔴 Piège n°N — ...`, un piège = un titre
+autoportant), `Vérification`, `Fichiers liés / Où lire quoi` (table de routage
+vers `references/`), `Historique des cas vécus`.
+
+**Deux profils, et c'est le fait décisif :**
+
+| Profil | Taille | Forme |
+|---|---|---|
+| Gros skill métier | 20-46 Ko | `SKILL.md` = sommaire + règles dures + pointeurs vers 10-46 `references/` |
+| Skill outil générique (hérité Claude) | 6-17 Ko | `Overview / Quick Reference / Procedure / Pitfalls / Verification`, en anglais |
+
+### Cinq conséquences, dont trois corrigent une étape close
+
+**1. `Historique des cas vécus` est un corpus de banc qui existe déjà.**
+L'étape 8 faisait venir le corpus des corrections de la phase 1 : il est vide,
+et la consolidation l'aurait de toute façon mis au rebut par
+`retire_testcases`. Or ces sections sont un journal d'incidents réels, écrits
+par des humains, **avec le bon skill connu par construction** — celui qui
+contient la section. À mesurer en premier : portent-elles la demande d'origine
+ou seulement la résolution ? Si oui, le banc démarre sans attendre des mois
+d'accumulation.
+
+**2. Le préfixe `gm-` sépare deux populations, pas deux styles.** Les deux
+profils sont deux problèmes de recherche différents. Un score moyen sur les
+deux ne voudrait rien dire. Le préfixe est un classificateur gratuit, exact et
+déjà présent : le banc rend deux chiffres, et la pondération peut différer.
+
+**3. Le brief doit citer le fichier de référence, pas seulement le skill**
+— correction de l'étape de conception 5. Pour un gros skill métier, `SKILL.md`
+est un sommaire : s'arrêter au nom du skill laisse l'agent devant 46 fichiers.
+La table `Fichiers liés / Où lire quoi` est déjà dans `SKILL.md`, donc déjà
+indexée : le brief passe de « va voir par là » à « lis ceci » pour zéro
+coût. Et cela **confirme** de ne pas indexer `references/` en v1 : pour choisir
+*quel* skill, le sommaire est le meilleur document possible.
+
+**4. `RÈGLE ABSOLUE` datée et attribuée est l'amorce de la phase 4.** Le magasin
+de faits sourcés devait partir de rien. La bibliothèque contient déjà des
+décisions datées et signées dans une forme reconnaissable (« Hubert
+19/08/2026 »). L'étape 2 prévoyait de montrer deux règles contradictoires avec
+leurs dates sans savoir d'où viendraient les dates : les voilà.
+
+**5. Le découpage descend au niveau 3** — correction de l'étape de conception 6,
+qui ne considérait que les titres de niveau 2. `🔴 Piège n°N` est un titre
+autoportant : c'est l'unité de récupération idéale pour une demande formulée en
+symptôme, soit exactement ce que `SYMPTOM_PATTERNS` de `skills_gate.py` attrape
+aujourd'hui sans savoir quoi en faire.
+
+### Une demande au gabarit `gm-skill-template`
+
+GM propose d'écrire ce gabarit pour standardiser les nouveaux skills. Une seule
+demande de la part de GK : **séparer les deux moitiés des déclencheurs en deux
+titres**, par exemple `## Déclencheurs` et `## Ne pas charger si`. Le « quand NE
+PAS charger » est aujourd'hui noyé dans la prose et se devine par reniflage de
+négations — 36 % de détection, et rien qui puisse se tester. Avec deux titres,
+la colonne à poids négatif devient une lecture structurelle.
+
+Limite à ne pas perdre de vue : un gabarit standardise les nouveaux skills, pas
+les 177 existants. Si l'index dépend d'une convention que seuls les nouveaux
+respectent, GK marchera bien sur les nouveaux et mal sur les anciens, ce qui se
+lira comme un défaut de GK. L'index tolère donc les deux formes et **mesure la
+couverture par convention** ; `tools/mesurer-rubriques.py` rend déjà les titres
+non classés par poids pour cela.
+
 Relevé le 2026-10-22 sur les 534 skills de `/opt/data/skills`.
 
 | Mesure | Valeur |
