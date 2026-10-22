@@ -1768,6 +1768,92 @@ C'est exactement la distinction que la phase 1 mesure déjà —
 | **Les faits sourcés** (phase 4) | Indépendant de la recherche. `RÈGLE ABSOLUE` datée et attribuée en est l'amorce |
 | **Le rangement** | Auditer les noms écrits à la main dans `DOMAINS`, signaler orphelins, doublons et skills trop gros |
 
+### La barre réelle, et ce que GK peut encore ajouter
+
+GK doit améliorer une situation où gb voit déjà tout et reçoit déjà l'ordre de
+charger. La barre tient en trois éléments : le **catalogue complet**
+(`nom : description`, groupé par catégories décrites), une **instruction
+maximaliste** (scanner avant de répondre, charger si même partiellement
+pertinent, « err on the side of loading »), et le fait que ce bloc vit dans le
+**« stable tier »** du prompt (`context_breakdown.py:49`) — donc identique à
+chaque tour, dans le préfixe mis en cache.
+
+C'est ce troisième élément qui ouvre la brèche.
+
+| Apport possible | Déjà dans le prompt ? | Verdict |
+|---|---|---|
+| Savoir quels skills existent | **Oui, exhaustif** | Mort |
+| Le déclencheur en une phrase | **Oui**, c'est la `description` | Mort |
+| Le déclencheur détaillé (`## Déclencheurs`) | Non, il est dans le corps | Vivant, mais demande d'indexer le corps |
+| Les contre-indications | Non, et l'instruction pousse à charger | Vivant, même remarque |
+| **Proximité** : 3 lignes contre la question au lieu de la ligne 94 d'une liste | **Non** | Vivant, et le plus solide |
+| **Désambiguïsation** entre deux voisins qui matchent tous les deux | Non : le catalogue les liste à égalité | Vivant |
+| Quel fichier de `references/` lire | Non | Vivant, petit |
+| Les faits sourcés | Non | Vivant, indépendant |
+
+**Le levier principal n'est pas informationnel, c'est l'attention.** Scanner 177
+lignes avant chaque réponse est un coût, et un bloc rigoureusement identique à
+chaque tour s'apprend à survoler. Ce n'est pas une spéculation : `skills_gate.py`
+accole son contexte **au message utilisateur** et non au prompt système. Son
+auteur le justifie par le cache de prompt, mais l'effet est aussi de le placer
+là où il sera lu. Quelqu'un en production a jugé le catalogue stable
+insuffisant, et a atteint la proximité comme remède.
+
+Noter la fragilité de cette position : l'attention est l'hypothèse qui reste
+debout après élimination des autres. Elle doit être mesurée avant d'être
+défendue.
+
+#### Le risque jamais nommé : GK peut nuire
+
+L'instruction dit « charge au moindre doute ». Un brief qui désigne trois skills
+peut agir comme un **plafond** : gb charge les trois nommés et ne cherche pas le
+quatrième, qui était le bon. GK transformerait une consigne large en sélection
+étroite.
+
+Deux conséquences de conception. La formulation du brief est **explicitement
+additive** — jamais « ces skills », toujours « ces skills semblent pertinents,
+en plus de ce que tu juges utile ». Et **l'A/B doit pouvoir détecter une
+dégradation**, pas seulement un gain : l'étape 8 ne l'avait conçu que pour
+mesurer une amélioration, ce qui est un biais de conception.
+
+#### Le second mode de panne, que personne ne mesure
+
+« Err on the side of loading » a un coût que rien ne compte. Médiane 13-20 Ko
+par skill, maxima à 46 : trois gros skills chargés font plus de 30 000 jetons.
+Si gb surcharge, personne ne le sait — et GK est le seul à pouvoir le savoir,
+puisque `on_skill_lifecycle` enregistre déjà chaque chargement.
+
+GK a donc peut-être **deux métiers opposés**, et le second est plus facile à
+gagner : non pas faire charger davantage, mais chiffrer le coût d'une
+instruction délibérément biaisée vers le chargement, et le réduire.
+
+#### L'expérience tourne déjà
+
+`skills_gate.py` injecte un contexte à côté du message utilisateur pour **12
+domaines sur ~40**. C'est structurellement le **bras de traitement** de l'A/B
+qu'on voulait monter, et il tourne en production depuis des mois. La phase 1
+enregistre désormais les chargements de skills par tour.
+
+**On peut donc comparer les taux de chargement entre tours couverts et tours non
+couverts sans écrire une ligne de GK.** Si la proximité agit, cela se verra là.
+Si elle n'agit pas, l'hypothèse centrale de GK tombe avant qu'on ait construit
+l'index. Réserve à dire : les 12 domaines du gate ne sont pas tirés au sort, ce
+sont les plus chauds, donc la comparaison est confondue. Elle est informative,
+gratuite, et arrive des mois avant un vrai A/B.
+
+#### Trois chiffres, dans cet ordre, avant d'écrire le brief
+
+1. **Combien de tours sans aucun skill chargé.** Objectif, indépendant de tout
+   aveu de gb, calculable depuis les données déjà collectées. Dit s'il existe un
+   problème de chargement.
+2. **Combien de skills chargés par tour, et leur poids en jetons.** Dit si le
+   problème est l'inverse : la surcharge.
+3. **Le taux de chargement, domaines couverts par le gate contre non couverts.**
+   Teste l'hypothèse de proximité avec un traitement déjà en production.
+
+Aucun ne demande de nouvelle collecte. Les trois ensemble décident si le brief a
+un métier, et lequel.
+
 ### La dernière inconnue, fermée
 
 `prompt_builder.py:1259` :
