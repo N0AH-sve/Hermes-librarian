@@ -33,6 +33,7 @@ from .corrections import (
     tidy,
 )
 from .patterns import Detector, fold
+from .recherche import POIDS, Index
 from .service import Service
 from .store import Store, now
 
@@ -336,6 +337,141 @@ def cmd_skill(args, cfg: Config) -> int:
     return 0
 
 
+def cmd_cherche(args, cfg: Config) -> int:
+    """Classe les skills pour une demande, avec le detail par champ.
+
+    Le detail est le point de la commande : on doit voir **pourquoi** un skill
+    remonte, pas seulement qu'il remonte. Un score sans son detail ne se corrige
+    pas.
+    """
+    with Store(cfg.database) as store:
+        index = Index.construire(store)
+        if index.n == 0:
+            _emit({"ok": False, "erreur": "catalogue vide, voir `gk catalogue`"}, args)
+            return 1
+        resultats = index.chercher(
+            args.demande, limite=args.limite,
+            sans_declencheurs=bool(args.sans_declencheurs),
+        )
+        _emit({
+            "ok": True,
+            "demande": args.demande,
+            "skills_indexes": index.n,
+            "bras": "nom+description" if args.sans_declencheurs else "tous les champs",
+            "poids": POIDS if not args.sans_declencheurs else {
+                c: v for c, v in POIDS.items() if c in ("name", "description")
+            },
+            "resultats": resultats,
+            "remarque": None if resultats else (
+                "aucun skill ne porte ces mots : reformulez, ou c'est un trou "
+                "reel de la bibliotheque"
+            ),
+        }, args)
+    return 0
+
+
+def cmd_banc(args, cfg: Config) -> int:
+    """Mesure la recherche sur les phrases citees des skills.
+
+    Le corpus est fait des lignes entre guillemets des declencheurs : le bon
+    skill est connu **par construction**, puisque c'est celui qui porte la
+    citation. Chaque phrase est retiree de l'index de son propre skill avant
+    d'etre cherchee, sans quoi la mesure serait circulaire.
+
+    Deux bras : tous les champs, et nom + description seulement. C'est la
+    question posee par GM, et elle recoit ici un chiffre.
+    """
+    with Store(cfg.database) as store:
+        index = Index.construire(store)
+        cas = index.corpus()
+        if not cas:
+            _emit({
+                "ok": False,
+                "erreur": "aucune phrase citee dans les declencheurs",
+                "suite": "voir `gk declencheurs`",
+            }, args)
+            return 1
+        rangs: dict[str, list[int | None]] = {"tous": [], "sans": []}
+        echecs: list[dict] = []
+        # Deux echecs tres differents, qu'il ne faut pas confondre : aucun
+        # skill ne remonte, ou un autre gagne. Le premier dit que les mots de la
+        # phrase n'existent nulle part ailleurs dans le skill -- il n'est donc
+        # trouvable que par cette phrase exacte, ce qui est une remarque sur la
+        # redaction. Le second dit que le classement se trompe, ce qui est une
+        # remarque sur le score.
+        aucun = mauvais = 0
+        for demande, attendu, ligne in cas:
+            for bras, sans in (("tous", False), ("sans", True)):
+                sortie = index.chercher(
+                    demande, limite=args.limite, sans_declencheurs=sans,
+                    exclure_exemple=ligne,
+                )
+                noms = [r["name"] for r in sortie]
+                rang = noms.index(attendu) + 1 if attendu in noms else None
+                rangs[bras].append(rang)
+                if bras == "tous" and rang is None:
+                    if noms:
+                        mauvais += 1
+                    else:
+                        aucun += 1
+                    if len(echecs) < args.echecs:
+                        echecs.append({
+                            "demande": demande, "attendu": attendu,
+                            "remontes": noms[:3],
+                            "cause": "aucun resultat" if not noms else "mauvais skill",
+                        })
+        out = {"ok": True, "cas": len(cas), "skills_indexes": index.n,
+               "rang_maximal_compte": args.limite}
+        for bras, etiquette in (("tous", "tous_les_champs"), ("sans", "nom_description")):
+            trouves = [r for r in rangs[bras] if r is not None]
+            out[etiquette] = {
+                "rappel_1": round(sum(1 for r in trouves if r == 1) / len(cas), 3),
+                f"rappel_{args.limite}": round(len(trouves) / len(cas), 3),
+                "mrr": round(sum(1.0 / r for r in trouves) / len(cas), 3),
+            }
+        gain = out["tous_les_champs"]["mrr"] - out["nom_description"]["mrr"]
+        out["gain_mrr_des_declencheurs"] = round(gain, 3)
+        out["echecs_sans_aucun_resultat"] = aucun
+        out["echecs_mauvais_skill"] = mauvais
+        out["lecture"] = _lire_banc(out, gain)
+        out["echecs"] = echecs
+        _emit(out, args)
+    return 0
+
+
+def _lire_banc(out: dict, gain: float) -> list[str]:
+    lignes = [
+        "Corpus curate : une citation est plus propre qu'une demande reelle, "
+        "donc ces chiffres sont optimistes par rapport a la production."
+    ]
+    if gain <= 0.01:
+        lignes.append(
+            "=> Les declencheurs n'apportent rien de mesurable. Nom et "
+            "description suffisent, et l'index peut se reduire a deux champs."
+        )
+    elif gain < 0.05:
+        lignes.append(
+            "=> Apport faible. A garder puisqu'il est gratuit, mais ne pas "
+            "fonder la justification de GK dessus."
+        )
+    else:
+        lignes.append(
+            "=> Les declencheurs apportent nettement. C'est le travail de "
+            "redaction de la bibliotheque qui paie, pas le moteur."
+        )
+    aucun = out.get("echecs_sans_aucun_resultat", 0)
+    mauvais = out.get("echecs_mauvais_skill", 0)
+    if aucun or mauvais:
+        lignes.append(
+            f"Echecs : {aucun} sans aucun resultat, {mauvais} ou un autre skill "
+            "gagne. Les premiers sont une remarque sur la REDACTION -- les mots "
+            "de la phrase n'existent nulle part ailleurs dans le skill, qui "
+            "n'est donc trouvable que par cette phrase exacte. Les seconds sont "
+            "une remarque sur le SCORE."
+        )
+    return lignes
+
+
 def cmd_reindexer(args, cfg: Config) -> int:
     """Oublie ce qui a ete indexe, pour que le pont renvoie TOUTES les tranches.
 
@@ -468,6 +604,23 @@ def build_parser() -> argparse.ArgumentParser:
     sk = sub.add_parser("skill", help="les quatre champs indexes d'un skill")
     sk.add_argument("nom", help="nom du skill, ou fragment de son chemin")
     sk.set_defaults(func=cmd_skill)
+
+    c = sub.add_parser("cherche", help="classer les skills pour une demande")
+    c.add_argument("demande", help="la demande, entre guillemets")
+    c.add_argument("-n", "--limite", type=int, default=10)
+    c.add_argument(
+        "--sans-declencheurs", action="store_true",
+        help="nom et description seulement : le bras temoin du banc",
+    )
+    c.set_defaults(func=cmd_cherche)
+
+    b = sub.add_parser(
+        "banc",
+        help="mesurer la recherche sur les phrases citees des skills",
+    )
+    b.add_argument("-n", "--limite", type=int, default=5, help="rang maximal compte")
+    b.add_argument("--echecs", type=int, default=5, help="nombre d'echecs a montrer")
+    b.set_defaults(func=cmd_banc)
 
     sub.add_parser(
         "reindexer",
