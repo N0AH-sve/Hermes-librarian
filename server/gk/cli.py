@@ -73,6 +73,14 @@ def cmd_stats(args, cfg: Config) -> int:
                 f"REFUSEE — {len(groups)} jeux de motifs differents. Les periodes ne sont pas "
                 "comparables entre elles ; comparez a empreinte egale."
             )
+        elif not groups:
+            # Dire qu'une comparaison est possible quand il n'y a rien a
+            # comparer, c'est une ligne rassurante qui ne dit rien. Le cas
+            # s'est produit au premier releve reel : 3 messages, 0 correction.
+            out["comparaison"] = (
+                "rien a comparer : aucune correction detectee"
+                + (f" sur {observes:g} message(s) observe(s)" if observes else "")
+            )
         else:
             out["comparaison"] = "possible, un seul jeu de motifs"
         _emit(out, args)

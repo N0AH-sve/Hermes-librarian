@@ -240,6 +240,25 @@ def test_stats_refuse_de_comparer_deux_jeux_de_motifs(svc, capsys, monkeypatch):
     assert out["comparaison"].startswith("REFUSEE")
 
 
+def test_stats_ne_pretend_pas_comparer_sans_correction(svc, capsys, monkeypatch):
+    """Le cas du premier releve reel : 3 messages observes, 0 correction.
+
+    La commande annoncait alors « comparaison possible », parce qu'un seul jeu
+    de motifs etait present — un seul jeu de zero groupe. Une ligne rassurante
+    qui ne dit rien est pire que pas de ligne.
+    """
+    for _ in range(3):
+        svc.observe("s", "Voici le resultat, sans aucun aveu dedans.")
+    svc.close()
+    monkeypatch.setenv("GK_DATABASE", str(svc.store.path))
+    assert cli_main(["--json", "stats"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["messages_observes"] == 3
+    assert out["periodes"] == []
+    assert out["comparaison"].startswith("rien a comparer")
+    assert "3 message" in out["comparaison"]
+
+
 def test_forget_efface_le_texte_et_garde_la_mesure(svc, capsys, monkeypatch):
     svc.recorder.record_brief("s", "audit", ["perf-audit"])
     svc.observe("s", "Tu as raison.")
