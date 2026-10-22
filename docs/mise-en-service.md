@@ -154,71 +154,35 @@ Puis ajouter le serveur MCP. L'adresse est la **boucle locale**, pas un nom de
 service : l'agent tourne en `network_mode: host`, donc aucun réseau bridge
 n'existe pour résoudre un nom.
 
-La section est `mcp_servers:`, à plat, et **l'interpolation de variables
-d'environnement y fonctionne** — c'est la forme relevée sur les serveurs déjà en
-service. Le jeton ne va donc pas dans `config.yaml`, seulement son nom :
+Trois insertions sont nécessaires, et elles se font par script plutôt qu'à la
+main : le fichier compte plusieurs centaines de lignes, il est en production, et
+une erreur d'indentation YAML ne se voit qu'au redémarrage de l'agent.
 
-```yaml
-# dans /opt/data/config.yaml, sous la section mcp_servers existante
-mcp_servers:
-  gk:
-    url: http://127.0.0.1:8765/mcp/bridge
-    headers:
-      Authorization: Bearer ${GK_BRIDGE_TOKEN}
-```
-
-La valeur vit dans `/opt/data/.env`, vérifié comme étant le fichier
-d'environnement que l'agent lit — c'est là que `MCP_OPENSEO_API_KEY` est défini.
-
-**Elle n'est jamais saisie deux fois.** Une commande la propage depuis sa
-source, avec la sauvegarde selon la convention du volume :
+| Insertion | Sans quoi |
+|---|---|
+| `mcp_servers.gk` | le pont n'a pas de serveur à appeler |
+| `plugins.enabled` | **le plugin n'est jamais chargé** — copier le dossier ne suffit pas |
+| `plugins.entries.gk-bridge.mcp_allowlist` | `call_mcp` lève une `PermissionError`, par défaut-refus |
 
 ```bash
-TOKEN=$(grep '^GK_BRIDGE_TOKEN=' ~/greenknowledge/deploy/.env | cut -d= -f2)
-docker compose -f ~/next_hermes/compose.yaml exec -e TOK="$TOKEN" hermes bash -lc 'cp /opt/data/.env /opt/data/.env.bak-avant-gk && printf "\nGK_BRIDGE_TOKEN=%s\n" "$TOK" >> /opt/data/.env && grep -c "^GK_BRIDGE_TOKEN=" /opt/data/.env'
+docker compose -f ~/next_hermes/compose.yaml exec -T hermes python3 - < ~/greenknowledge/deploy/brancher-gk.py
 ```
 
-Elle doit afficher **`1`**. Si elle affiche `2`, la ligne existait déjà et il
-faut retirer le doublon.
+Le script est dans le dépôt, donc relisible avant d'être lancé. Il sauvegarde de
+façon horodatée, insère après des ancres exactes sans relire le fichier par un
+analyseur — ce qui détruirait commentaires et mise en forme —, **valide** le
+résultat, et **restaure la sauvegarde** si le YAML ne se relit pas ou si une
+valeur n'est pas là où elle doit être. Il est idempotent, et refuse d'agir si
+une ancre manque plutôt que de deviner où insérer.
 
-Pourquoi ne pas la taper à la main : une divergence d'un seul caractère entre
-les deux fichiers produit un `401`, qui ressemble à une panne réseau et se
-cherche du mauvais côté pendant une heure. Et une rotation qui demande de
-retoucher deux fichiers ne se fera jamais. Ici, `deploy/.env` est la source
-unique : régénérer puis relancer cette commande suffit.
+Le jeton n'y apparaît jamais : seule la référence `${GK_BRIDGE_TOKEN}` est
+écrite, la valeur restant dans le `.env` de l'étape 2.
 
-Une réserve : le jeton transite par l'environnement d'un `docker exec`, donc
-visible une fraction de seconde dans la liste des processus. Sur un serveur à un
-seul administrateur, c'est acceptable.
+**Vérifier** : la sortie doit finir par `VALIDE`. Elle liste les insertions
+faites, et dit `deja present` pour celles qui l'étaient.
 
-**Vérifier** : la configuration est toujours lisible.
-
-```bash
-docker compose -f ~/next_hermes/compose.yaml exec hermes bash -lc \
-  'python3 -c "import yaml,sys; yaml.safe_load(open(\"/opt/data/config.yaml\")); print(\"YAML valide\")"'
-```
-
-*Revenir en arrière* : restaurer la sauvegarde, et redémarrer l'agent.
-
----
-
-## 5. Autoriser le pont à appeler le serveur
-
-Les plugins n'ont **aucun accès MCP par défaut** : `call_mcp` lève une
-`PermissionError` tant que le serveur n'est pas dans la liste blanche du plugin.
-
-```yaml
-# dans /opt/data/config.yaml
-plugins:
-  entries:
-    gk-bridge:
-      mcp_allowlist: ["gk"]
-```
-
-*Revenir en arrière* : retirer ces lignes. Le pont n'appellera plus rien et le
-journalisera, sans rien casser.
-
----
+*Revenir en arrière* : restaurer la sauvegarde horodatée que le script a
+affichée, puis redémarrer l'agent.
 
 ## 6. Installer le pont
 
