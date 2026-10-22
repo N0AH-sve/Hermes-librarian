@@ -65,12 +65,35 @@ Ce fichier est ignoré par git. Le jeton qu'il contient servira **deux fois** :
 ici, et dans la configuration de l'agent à l'étape 4. Récupère-le par un
 copier-coller depuis la sortie de `cat`, jamais en le retapant.
 
-Sans jeton, GK démarre quand même mais accepte tout appel arrivant sur la
-boucle locale, et il le dit bruyamment au démarrage, dans `/health` et dans
-`gk check`. Ce qu'un jeton vaut ici reste modeste : la vraie frontière est le
-binding sur `127.0.0.1` plus le pare-feu. L'agent disposant du socket Docker de
-l'hôte, il peut de toute façon entrer dans le conteneur. C'est un garde-fou
-contre la maladresse, pas une frontière de sécurité.
+### Ce que ce jeton achète, exactement
+
+Il faut le savoir avant de le mettre en place, parce que cela change le soin
+qu'il mérite.
+
+| Contre | Ce qu'il apporte |
+|---|---|
+| gb lui-même | **rien** : il détient le socket Docker de l'hôte, donc il peut entrer dans le conteneur de GK et lire son environnement |
+| Un autre processus de l'hôte | **rien de plus** que le binding sur `127.0.0.1` |
+| L'extérieur | **rien de plus** : le port n'est pas publié au-delà de la boucle locale |
+
+Contre un attaquant, il n'apporte donc rien. Ce qu'il achète est une
+**protection contre une erreur de configuration future** : si le port se
+retrouve un jour publié sur `0.0.0.0`, par copie d'un autre compose ou par un
+`-p 8765:8765` tapé vite, le jeton est la seule chose qui reste debout. Cette
+classe d'erreur n'est pas théorique — trois en ont été commises sur ce
+déploiement en une journée.
+
+C'est donc un filet contre notre propre maladresse, et c'est à ce titre qu'il
+est conservé. Sans jeton, GK démarre quand même et le dit bruyamment au
+démarrage, dans `/health` et dans `gk check`.
+
+**La forme qui aurait été meilleure, et pourquoi elle est écartée** : une socket
+Unix dans un répertoire monté par les deux conteneurs, où les permissions du
+système de fichiers *deviennent* l'authentification — pas de jeton, pas de
+synchronisation, et impossible à exposer par accident, une socket Unix ne se
+publiant pas sur `0.0.0.0`. Écartée parce que `mcp_servers:` attend une
+`url: http://…` et que rien n'indique que Hermes accepte un schéma `unix://`.
+À reprendre si cela change.
 
 ---
 
@@ -144,15 +167,29 @@ mcp_servers:
       Authorization: Bearer ${GK_BRIDGE_TOKEN}
 ```
 
-Et la valeur dans le fichier d'environnement que le conteneur lit, celui qui
-définit déjà les clés des autres serveurs MCP :
+La valeur vit dans `/opt/data/.env`, vérifié comme étant le fichier
+d'environnement que l'agent lit — c'est là que `MCP_OPENSEO_API_KEY` est défini.
+
+**Elle n'est jamais saisie deux fois.** Une commande la propage depuis sa
+source, avec la sauvegarde selon la convention du volume :
 
 ```bash
-GK_BRIDGE_TOKEN=le-jeton-genere-a-l-etape-2
+TOKEN=$(grep '^GK_BRIDGE_TOKEN=' ~/greenknowledge/deploy/.env | cut -d= -f2)
+docker compose -f ~/next_hermes/compose.yaml exec -e TOK="$TOKEN" hermes bash -lc 'cp /opt/data/.env /opt/data/.env.bak-avant-gk && printf "\nGK_BRIDGE_TOKEN=%s\n" "$TOK" >> /opt/data/.env && grep -c "^GK_BRIDGE_TOKEN=" /opt/data/.env'
 ```
 
-Ainsi le secret ne se trouve qu'à un seul endroit par machine, et `config.yaml`
-reste lisible sans précaution.
+Elle doit afficher **`1`**. Si elle affiche `2`, la ligne existait déjà et il
+faut retirer le doublon.
+
+Pourquoi ne pas la taper à la main : une divergence d'un seul caractère entre
+les deux fichiers produit un `401`, qui ressemble à une panne réseau et se
+cherche du mauvais côté pendant une heure. Et une rotation qui demande de
+retoucher deux fichiers ne se fera jamais. Ici, `deploy/.env` est la source
+unique : régénérer puis relancer cette commande suffit.
+
+Une réserve : le jeton transite par l'environnement d'un `docker exec`, donc
+visible une fraction de seconde dans la liste des processus. Sur un serveur à un
+seul administrateur, c'est acceptable.
 
 **Vérifier** : la configuration est toujours lisible.
 
