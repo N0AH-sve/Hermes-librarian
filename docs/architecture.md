@@ -1569,11 +1569,18 @@ l'étape 3, déjà écrits en français, avec normalisation des accents, éprouv
 production. GK les reprend. `META_PATTERNS` et `SYMPTOM_PATTERNS` couvrent deux
 trous que la conception n'avait pas vus.
 
-## Revirement du 2026-10-22 : la phase 2 suspendue
+## Revirement du 2026-10-22 : la phase 2 allégée
 
-**Décision prise par GM**, consignée ici parce qu'elle renverse trois étapes
-closes : **la phase 2 — index plein texte, BM25, découpage par rubrique,
-tokenizer, colonne à poids négatif — est suspendue au profit de la mesure.**
+**Consigne donnée par GM** : « notre bibliothécaire a seulement besoin de nom +
+description ». Elle renverse trois étapes closes. **L'index demeure — c'est le
+but de GK — mais il ne porte plus que le nom et la description : plus de corps
+indexé, plus de découpage par rubrique, plus de BM25 à régler, plus de colonne
+à poids négatif, plus de banc de recherche à constituer.**
+
+La section ci-dessous garde la trace d'une surinterprétation : la consigne a
+d'abord été lue comme un abandon de la phase 2, ce qui aurait changé le but de
+GK sans que personne le demande. Le raisonnement fautif et sa rectification sont
+conservés, parce que l'erreur portait sur l'argument central du projet.
 
 ### L'objection, et pourquoi elle porte
 
@@ -1689,9 +1696,15 @@ Le constructeur est trouvé : `/opt/hermes/agent/prompt_builder.py:1370` et
 `:1388`, deux chemins de rendu. `index_lines` à la ligne 1370 est ce que GM
 appelle « l'étape d'index » du prompt système.
 
-### Conclusion : la phase 2 est morte, et ce n'était pas le bon problème
+### Conclusion : la phase 2 devient petite, elle n'est pas supprimée
 
-`agent/prompt_builder.py`, lu directement :
+**Rectification d'une erreur de lecture, le même jour.** GM avait dit « notre
+bibliothécaire a seulement besoin de nom + description ». C'était une consigne
+de **simplification de l'index**, pas son abandon. La version précédente de
+cette section concluait à la mort de la phase 2 : c'était une surinterprétation,
+et elle changeait le but de GK sans que personne l'ait demandé.
+
+Le relevé, lui, tient. `agent/prompt_builder.py` :
 
 ```python
 if category in demoted:
@@ -1701,41 +1714,59 @@ if category in demoted:
 index_lines.append(f"    - {name}: {desc}" if desc else f"    - {name}")
 ```
 
-Et le `config.yaml` de gb ne contient ni `posture` ni `focus`, seulement des
-`toolsets`. Donc `demoted` est vide : **chaque skill visible est listé avec sa
-description**. Le prompt système ne se contente pas de lister, il ordonne :
+Le `config.yaml` de gb ne contient ni `posture` ni `focus`, donc `demoted` est
+vide : **chaque skill est listé avec sa description**, et le prompt système
+ordonne de charger au moindre doute (« you MUST load it », « err on the side of
+loading »).
 
-> Before replying, scan the skills below. If a skill matches or is even
-> partially relevant to your task, you MUST load it with `skill_view(name)`…
-> Err on the side of loading — it is always better to have context you don't
-> need than to miss critical steps, pitfalls, or established workflows.
+**Où le raisonnement avait cassé.** Il concluait qu'un index « ne ferait que
+répéter ce qui est déjà là ». Faux : le catalogue **liste** les 177 skills, une
+fois, dans un prompt stable ; GK **désigne** ceux qui concernent la demande du
+moment. Lister et désigner sont deux actes différents — c'est la différence
+entre un annuaire et un bibliothécaire. Et `skills_gate.py` est la **preuve
+pour**, non contre : quelqu'un en production a écrit 350 lignes à la main pour
+désigner quelques skills par-dessus un catalogue qui les liste tous. L'argument
+avait été retourné dans le mauvais sens.
 
-**Il n'y a donc pas de problème de recherche.** Un index de GK répéterait ce qui
-est déjà là. La phase 2 — index plein texte, BM25, découpage par rubrique,
-tokenizer français, colonne à poids négatif, banc d'essai, corpus à constituer
-— est abandonnée, pas reportée.
+### Ce que la consigne « nom + description » supprime vraiment
 
-**Ce que la découverte révèle vaut mieux que ce qu'elle enlève.** Si
-`skills_gate.py` a été écrit à la main par-dessus ce catalogue et cette
-instruction, l'échec n'est pas **informationnel** : gb sait quels skills
-existent. Il est **comportemental** — gb ne scanne pas, ou n'applique pas
-l'instruction. C'est précisément la distinction que la phase 1 mesure déjà :
-`bad_recommendation` contre `brief_ignored`. L'instrument qui sépare les deux a
-été construit avant qu'on sache que ce serait la seule question qui compte.
+Elle ne supprime pas l'index. Elle supprime tout l'édifice construit autour :
 
-### Ce que GK devient
-
-| Garde | Pourquoi |
+| Disparu | Pourquoi |
 |---|---|
+| Le transfert de ~3 Mo de corps | GK n'a plus besoin des corps. Le manifeste porte nom + description + empreinte, soit ~25 Ko |
+| Le découpage par titre, le niveau 3, les pièges autoportants | Il n'y a plus de corps à découper |
+| La colonne à poids négatif | Pas de section `Déclencheurs` à scinder |
+| Le stemmer français et la question du corpus bilingue | 177 descriptions d'une phrase, pas 3,6 Mo de prose |
+| FTS5, `content=''`, `contentless_delete`, la version de SQLite | 177 enregistrements courts tiennent en mémoire |
+| Le corpus de banc tiré de `Historique des cas vécus` | Plus de moteur de recherche complexe à valider |
+| L'indexation de `references/`, et sa réouverture éventuelle | Hors périmètre par construction |
+
+Ce qui reste est un index de 177 lignes qu'on relit d'un coup d'œil. La phase 2
+cesse d'être un chantier et devient une fonction.
+
+### Ce que le relevé change quand même
+
+**Le témoin de l'A/B est le catalogue complet.** L'étape 8 le décrivait comme
+« GK contre rien » sur les domaines non couverts par le gate : il n'y a pas de
+« rien ». GK doit améliorer une situation où gb voit déjà tout et reçoit déjà
+l'ordre de charger. La barre est plus haute que ce que le document annonçait, et
+il valait mieux le savoir avant de mesurer qu'après.
+
+**L'hypothèse d'échec se précise.** Puisque l'information est complète et
+l'ordre explicite, un mauvais choix de skill n'est pas un défaut
+d'information : soit gb ne scanne pas, soit deux descriptions se confondent.
+C'est exactement la distinction que la phase 1 mesure déjà —
+`bad_recommendation` contre `brief_ignored`.
+
+### Ce que GK garde
+
+| | Pourquoi |
+|---|---|
+| **La désignation** (phases 2 et 3, allégées) | Le but de GK : désigner les skills pertinents au moment du tour, là où le catalogue se contente de les lister |
 | **La mesure** (phase 1, déployée) | Seule chose qui dise si gb charge ce qu'il devrait, et laquelle des deux causes agit |
 | **Les faits sourcés** (phase 4) | Indépendant de la recherche. `RÈGLE ABSOLUE` datée et attribuée en est l'amorce |
 | **Le rangement** | Auditer les noms écrits à la main dans `DOMAINS`, signaler orphelins, doublons et skills trop gros |
-
-| Abandonne | Pourquoi |
-|---|---|
-| **L'index et la recherche** | Le catalogue complet est déjà dans le prompt système |
-| **Le brief de recommandation** | Il répéterait le catalogue |
-| **Le banc d'essai de recherche** | Il n'y a plus de recherche à évaluer |
 
 ### La dernière inconnue, fermée
 
@@ -1781,19 +1812,12 @@ skills vit dans un paquet `agent` (`from agent.skill_utils import ...`), non
 dans `hermes_cli` : c'est pourquoi le constructeur du catalogue est resté
 introuvable à trois reprises.
 
-### Dernière inconnue avant de trancher
-
-Le catalogue du prompt système est-il **complet** ? Tous les skills ou ceux d'un
-profil, description entière ou tronquée. S'il est tronqué ou partiel, le manque
-est réel et identifié. S'il est complet, le problème n'est pas l'information
-mais son format — et ce n'est pas un moteur de recherche qui le résoudra.
-
 ---
 
 ## Points ouverts
 
 Dernière revue : 2026-10-22, après la mise en service partielle de la phase 1
-et le revirement sur la phase 2.
+et l'allègement de la phase 2.
 
 ### Décisions à prendre
 
