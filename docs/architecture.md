@@ -1745,6 +1745,69 @@ Elle ne supprime pas l'index. Elle supprime tout l'édifice construit autour :
 Ce qui reste est un index de 177 lignes qu'on relit d'un coup d'œil. La phase 2
 cesse d'être un chantier et devient une fonction.
 
+### Le périmètre de l'index, arrêté : quatre champs
+
+Décision de GM : ajouter les déclencheurs et les contre-indications à nom +
+description. Ce sont exactement les deux apports que le tableau de la barre
+réelle classait « vivants mais demandant le corps ».
+
+| Champ | Source | Rôle |
+|---|---|---|
+| `name` | frontmatter | identité |
+| `description` | frontmatter | déclencheur en une phrase |
+| `declencheurs_positif` | `## Déclencheurs` (et variantes, `When to use`…) | quand charger, détaillé |
+| `declencheurs_negatif` | la moitié « NE PAS », ou `## Ne pas charger si` | **à soustraire** |
+
+**Le volume reste petit.** Le relevé sur 239 fichiers donnait 54 Ko de
+`Déclencheurs` pour 33 sections, soit ~1,6 Ko chacune. Sur 177 skills, même si
+tous en avaient une : moins de 300 Ko. On reste en mémoire, sans FTS5, sans
+transfert de 3,6 Mo.
+
+#### Le découpage négatif devient obligatoire
+
+Une ligne réelle du relevé le montre :
+
+> `Ne pas charger pour une commande client : voir prestashop-catalogue.`
+
+Elle contient une négation **et** un pointeur vers un autre skill. Indexée comme
+texte positif, elle fait remonter `prestashop-commande` sur « commande client »,
+avec les bons mots au meilleur endroit possible. Tant qu'on n'indexait que la
+description, l'inversion était théorique. En indexant `Déclencheurs`, **elle
+devient certaine sur les cas les plus nets**. La colonne négative n'est donc
+plus un raffinement : c'est ce qui empêche l'ajout de nuire.
+
+#### Le plugin découpe, GK décide où
+
+Le plugin ne doit pas savoir ce qu'est un déclencheur — l'étape de conception 5
+pose qu'il ne comprend rien. Donc **GK lui envoie la liste des intitulés
+voulus** (`Déclencheurs`, `When to use`, `Ne pas charger si`…), et le plugin
+tranche le fichier sur ces chaînes et ne renvoie que ces tranches. Trois
+bénéfices : GK ne voit jamais les corps, le transfert tombe à ~300 Ko, et
+**ajouter une rubrique plus tard ne touchera plus au plugin** — ce sera une
+ligne de configuration. C'est donc la dernière modification du plugin dont
+l'index aura besoin (une recopie du pont et un redémarrage de gb).
+
+#### Le poids reste un paramètre
+
+Texte positif et négatif restés séparés, le score s'écrit
+`match(demande, nom+description+déclencheurs) − λ·match(demande, négatif)`.
+λ se règle sur la mesure. Avec 177 enregistrements en mémoire, le faire varier
+est trivial, là où le même réglage sous BM25 demandait des poids de colonnes.
+
+#### La réserve, à mesurer plutôt qu'à croire
+
+Un `## Déclencheurs` est écrit pour un humain : il est long, et il cite
+volontiers les domaines voisins pour s'en distinguer. Ces citations peuvent
+faire matcher un skill sur les demandes de ses voisins. Ajouter `Déclencheurs`
+**améliore donc le rappel et peut dégrader la précision**. Les champs restent
+séparables pour comparer « description seule » et « description +
+déclencheurs » sur les mêmes demandes, et trancher sur un chiffre.
+
+Enfin, un skill sans `## Déclencheurs` retombe sur nom + description : l'index se
+dégrade skill par skill, pas en tout ou rien. Et GK saura dire combien de skills
+en portent une — un indicateur de qualité de la bibliothèque que personne ne
+possède aujourd'hui.
+
 ### Ce que le relevé change quand même
 
 **Le témoin de l'A/B est le catalogue complet.** L'étape 8 le décrivait comme
