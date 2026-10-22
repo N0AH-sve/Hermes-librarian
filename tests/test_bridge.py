@@ -193,3 +193,76 @@ def test_aucun_hook_d_entree_en_phase_1(tmp_path, monkeypatch):
     assert not hasattr(mod, "on_pre_llm_call")
     manifeste = (RACINE / "hermes-plugin" / "gk-bridge" / "plugin.yaml").read_text()
     assert "pre_llm_call" not in manifeste
+
+
+# -- enregistrement des hooks ---------------------------------------------
+
+
+def test_register_enregistre_vraiment_les_hooks(tmp_path, monkeypatch):
+    """Le defaut du premier essai : le ctx etait recu, jamais utilise pour
+    brancher quoi que ce soit. PluginContext se decrit comme la facade « so they
+    can register tools and hooks » — il faut donc l'appeler."""
+    mod = charger(tmp_path, monkeypatch)
+
+    class CtxAvecRegister(FauxCtx):
+        def __init__(self):
+            super().__init__()
+            self.hooks = []
+
+        def register_hook(self, nom, fn):
+            self.hooks.append((nom, fn))
+
+    ctx = CtxAvecRegister()
+    mod.register(ctx)
+    noms = [n for n, _ in ctx.hooks]
+    assert "transform_llm_output" in noms
+    assert "on_skill_lifecycle" in noms
+    # Et les fonctions branchees doivent etre les bonnes
+    pour_sortie = dict(ctx.hooks)["transform_llm_output"]
+    assert pour_sortie(ctx=ctx, text="Tu as raison.") is None
+    assert attendre(ctx)
+
+
+@pytest.mark.parametrize("methode", ["register_hook", "add_hook", "hook", "on", "subscribe"])
+def test_trouve_la_methode_d_enregistrement_quel_que_soit_son_nom(tmp_path, monkeypatch, methode):
+    """Le nom exact de la methode n'est pas confirme dans la source de Hermes."""
+    mod = charger(tmp_path, monkeypatch)
+    recus = []
+
+    class Ctx(FauxCtx):
+        pass
+
+    setattr(Ctx, methode, lambda self, n, f: recus.append(n))
+    mod.register(Ctx())
+    assert "transform_llm_output" in recus, f"non enregistre via {methode}"
+
+
+def test_sans_methode_d_enregistrement_le_pont_le_dit(tmp_path, monkeypatch):
+    mod = charger(tmp_path, monkeypatch)
+    mod.register(FauxCtx())
+    entrees = journal(mod)
+    assert any(e["event"] == "hooks_enregistres" and e["faits"] == "AUCUN" for e in entrees)
+    # Et il releve l'API pour qu'on sache quoi chercher
+    assert any(e["event"] == "api_ctx" and "membres" in e for e in entrees)
+
+
+def test_un_enregistrement_qui_leve_ne_remonte_pas(tmp_path, monkeypatch):
+    mod = charger(tmp_path, monkeypatch)
+
+    class Hostile(FauxCtx):
+        def register_hook(self, nom, fn):
+            raise RuntimeError("refuse")
+
+    assert mod.register(Hostile()) is None
+    assert any(e["event"] == "enregistrement_refuse" for e in journal(mod))
+
+
+def test_les_points_d_entree_sont_distinguables(tmp_path, monkeypatch):
+    """Alias sur une meme fonction, on ne savait pas lequel Hermes appelle.
+    Des enveloppes distinctes le disent."""
+    for nom in ("setup", "init", "activate", "on_load"):
+        mod = charger(tmp_path, monkeypatch)
+        getattr(mod, nom)(FauxCtx())
+        assert any(
+            e["event"] == "point_entree" and e["nom"] == nom for e in journal(mod)
+        ), nom
