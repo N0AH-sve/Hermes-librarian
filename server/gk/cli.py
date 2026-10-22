@@ -23,6 +23,7 @@ from pathlib import Path
 
 from .catalog import Catalog
 from .config import Config
+from .declencheurs import lecture, mesurer
 from .corrections import (
     BAD_RECOMMENDATION,
     BRIEF_IGNORED,
@@ -254,6 +255,22 @@ def cmd_catalogue(args, cfg: Config) -> int:
     return 0
 
 
+def cmd_declencheurs(args, cfg: Config) -> int:
+    """Mesure avant de trancher : la colonne a poids negatif ne vaut que si les
+    skills declarent reellement quand NE PAS les charger. Lecture seule."""
+    with Store(cfg.database) as store:
+        mesure = mesurer(store, exemples=bool(getattr(args, "exemples", False)))
+        if mesure["skills_avec_declencheurs"] == 0:
+            mesure["remarque"] = (
+                "aucune section de declencheurs recue. Le pont les pousse avec le "
+                "manifeste : voir `gk catalogue`."
+            )
+        else:
+            mesure["lecture"] = lecture(mesure)
+        _emit(mesure, args)
+    return 0
+
+
 def cmd_patterns(args, cfg: Config) -> int:
     d = Detector.load(cfg.patterns)
     _emit(
@@ -328,6 +345,16 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser(
         "catalogue", help="l'etat du catalogue recu par manifeste"
     ).set_defaults(func=cmd_catalogue)
+
+    d = sub.add_parser(
+        "declencheurs",
+        help="mesure ce que le tri positif/negatif donnerait, sans rien ecrire",
+    )
+    d.add_argument(
+        "--exemples", action="store_true",
+        help="inclut quelques lignes tronquees de contre-indication",
+    )
+    d.set_defaults(func=cmd_declencheurs)
 
     pa = sub.add_parser("patterns", help="les motifs charges et leur empreinte")
     pa.add_argument("-v", "--verbose", action="store_true")
