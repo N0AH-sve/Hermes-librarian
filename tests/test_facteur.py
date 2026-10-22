@@ -453,3 +453,38 @@ def test_un_refus_de_la_liste_blanche_est_journalise(ronde, monkeypatch):
     lignes = [json.loads(l) for l in open(tmp / "journal.jsonl", encoding="utf-8")]
     resume = [l for l in lignes if l.get("event") == "ronde_catalogue"][-1]
     assert "refuse" in resume["erreur"]
+
+
+# -- le rapprochement des titres ------------------------------------------
+
+
+def test_le_singulier_et_une_phrase_dans_le_titre_sont_captures():
+    """Le defaut qui a rendu invisible tout un travail de redaction : la
+    comparaison etait un test de prefixe dans un seul sens, donc
+    `## Declencheur:` ne commencait pas par `declencheurs` et la section etait
+    perdue sans aucune erreur."""
+    voulus = ["Déclencheurs", "Ne pas charger si", "When to use"]
+    for titre in (
+        'Déclencheur: "commande fournisseur"',
+        "DECLENCHEUR : « point dettes »",
+        "Déclencheur",
+        "Déclencheurs",
+        "Ne pas charger si",
+        "When to use this skill",
+    ):
+        tranches = cat.trancher(f"## {titre}\ncorps\n", voulus)
+        assert tranches, f"perdu : {titre!r}"
+        assert tranches[0]["heading"] == titre, "le titre est conserve tel quel"
+
+
+def test_un_titre_hors_sujet_reste_ignore():
+    voulus = ["Déclencheurs"]
+    for titre in ("Procédure", "Pièges", "Vérification", "Références"):
+        assert cat.trancher(f"## {titre}\nx\n", voulus) == [], titre
+
+
+def test_un_mot_cle_trop_court_n_attrape_pas_tout():
+    """Sans longueur minimale, un titre d'un ou deux caracteres rapprocherait
+    n'importe quoi par l'un des deux sens du test de prefixe."""
+    assert cat.trancher("## D\nx\n", ["Déclencheurs"]) == []
+    assert cat.trancher("## Qu\nx\n", ["Quand charger"]) == []

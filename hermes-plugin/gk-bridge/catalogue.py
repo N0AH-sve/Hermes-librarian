@@ -186,13 +186,40 @@ def manifeste(racine: str | None = None) -> tuple[list[dict], bool, dict]:
     }
 
 
+def cle_titre(titre: str) -> str:
+    """Le mot-cle d'un titre, sans sa glose ni sa ponctuation.
+
+    Le mot-cle s'arrete au deux-points : GM ecrit
+    `## Declencheur: "commande fournisseur"`, ou la phrase de declenchement est
+    DANS le titre. Sans cette coupe, le titre entier etait compare et la section
+    perdue.
+    """
+    plie = plier((titre or "").strip("*_`#").strip())
+    return plie.split(":", 1)[0].strip(" -—–.,;")
+
+
+def correspond(titre: str, voulus: list[str]) -> bool:
+    """Rapproche un titre d'un intitule voulu, dans les DEUX sens.
+
+    `declencheur` doit rencontrer `declencheurs` et l'inverse : un test de
+    prefixe dans un seul sens perdait le singulier, en silence, ce qui a rendu
+    invisible tout un travail de redaction. La longueur minimale evite qu'un
+    mot-cle trop court attrape n'importe quoi.
+    """
+    cle = cle_titre(titre)
+    if len(cle) < 5:
+        return False
+    return any(cle.startswith(v) or v.startswith(cle) for v in voulus if v)
+
+
 def trancher(texte: str, intitules: list[str]) -> list[dict]:
     """Decoupe un SKILL.md sur les intitules fournis par GK.
 
     Suit les blocs de code : un `##` dans un bloc shell est un commentaire, pas
     un titre — l'erreur frapperait precisement les skills qui portent des
-    procedures. Accepte les niveaux 2 et 3, et tolere une glose derriere le
-    mot-cle (`## Declencheurs    quand charger / quand NE PAS charger`).
+    procedures. Accepte les niveaux 2 et 3, tolere une glose derriere le
+    mot-cle (`## Declencheurs    quand charger / quand NE PAS charger`), le
+    singulier, et une phrase placee dans le titre apres un deux-points.
     """
     voulus = [plier(i) for i in (intitules or []) if str(i or "").strip()]
     if not voulus:
@@ -218,8 +245,7 @@ def trancher(texte: str, intitules: list[str]) -> list[dict]:
             if courant is not None:
                 tranches.append({"heading": courant, "text": "\n".join(corps).strip()})
                 courant, corps = None, []
-            plie = plier(titre.strip("*_`").strip())
-            if any(plie.startswith(v) for v in voulus):
+            if correspond(titre, voulus):
                 courant, corps = titre, []
             continue
         if courant is not None:

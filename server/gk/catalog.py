@@ -54,6 +54,13 @@ KIND_RAW = "brut"
 # Francais et anglais melanges parce que la bibliotheque l'est : le releve du
 # 2026-10-22 donnait `when to use` (53) devant `declencheurs` (16).
 DEFAULT_HEADINGS: tuple[str, ...] = (
+    # Singulier ET pluriel : GM ecrit `## Declencheur: "phrase"`, et le
+    # rapprochement etait un test de prefixe, donc `declencheur:` ne commencait
+    # pas par `declencheurs` et la section etait perdue en silence. Le pont
+    # rapproche desormais les deux sens, mais les deux formes restent listees
+    # pour que l'intention se lise.
+    "Declencheur",
+    "Déclencheur",
     "Declencheurs",
     "Déclencheurs",
     "Quand charger",
@@ -61,6 +68,7 @@ DEFAULT_HEADINGS: tuple[str, ...] = (
     "When to use",
     "When to load",
     "Use when",
+    "Trigger",
     "Triggers",
     # La moitie negative, quand elle a son propre titre. Dans les 177 skills
     # actuels elle est noyee dans la prose des declencheurs ; le gabarit

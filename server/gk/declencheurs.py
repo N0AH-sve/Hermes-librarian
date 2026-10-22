@@ -221,7 +221,12 @@ def mesurer(store: Store, exemples: bool = False) -> dict:
             if exemples and len(echantillons) < 8:
                 echantillons.append(negatif.splitlines()[0].strip()[:MAX_EXEMPLE_CHARS])
         # Exemples de demande entre guillemets : le signal le plus fort.
-        citees = lignes_citees(texte)
+        #
+        # Le TITRE compte autant que le corps : GM ecrit
+        # `## Declencheur: "commande fournisseur"`, ou la phrase est dans le
+        # titre. Ne regarder que le corps perdait tout ce travail de redaction,
+        # et le perdait en silence puisque la section etait bien stockee.
+        citees = lignes_citees((heading or "") + "\n" + texte)
         if citees:
             etat["lignes_citees"] = etat.get("lignes_citees", 0) + len(citees)
         # Citations d'autres skills. Deux niveaux, parce que les confondre

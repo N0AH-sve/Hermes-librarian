@@ -404,3 +404,19 @@ def test_gk_skill_renvoie_au_catalogue_quand_rien_ne_ressemble(tmp_path, capsys,
     out = json.loads(capsys.readouterr().out)
     assert out["candidats"] == []
     assert "gk catalogue" in out["remarque"]
+
+
+# -- le titre porte parfois la phrase -------------------------------------
+
+
+def test_une_phrase_dans_le_titre_est_comptee_comme_un_exemple(store):
+    """GM ecrit `## Declencheur: "commande fournisseur"`. Ne regarder que le
+    corps perdait tout ce travail, et le perdait en silence puisque la section
+    etait bien stockee."""
+    peupler(store, {
+        "gm-titre": [('Déclencheur: « commande fournisseur »', "Details en prose.")],
+        "gm-corps": [("Déclencheurs", "- « point dettes »")],
+    })
+    m = mesurer(store)
+    assert m["skills_avec_exemples_cites"] == 2
+    assert m["lignes_entre_guillemets"] == 2
