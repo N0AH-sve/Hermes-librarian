@@ -11,10 +11,11 @@ de l'etape 5 :
   standard seule, se reecrivent en une heure quand un point d'accroche est
   renomme. C'est la vraie assurance, pas la compatibilite.
 
-PHASE 1 — il n'injecte RIEN. Aucun `pre_llm_call`, donc le chemin d'entree de
-l'agent n'est pas touche. Il observe et il range, et c'est tout : la chaine de
-mesure se deploie avant l'aide, pour avoir un point de comparaison et pour
-valider la plomberie sur une charge qui ne peut rien casser.
+IL N'INJECTE RIEN. Aucun `pre_llm_call`, donc le chemin d'entree de l'agent
+n'est pas touche, et un test le verifie. La phase 2 ajoute le **facteur** : le
+pont pousse le catalogue des skills vers GK et lui renvoie les tranches qu'il
+reclame. Toujours apres que l'agent a repondu, sur un fil detache, avec un
+budget de temps. Le comportement de gb reste strictement inchange.
 
 Deux details de l'API de Hermes restent inconnus a l'ecriture, et ce fichier les
 decouvre au lieu de les supposer : par ou arrive le `PluginContext`, et sous
@@ -42,9 +43,18 @@ TIMEOUT = 1.0  # plancher impose par Hermes : call_mcp borne a 1-600 s
 # `reponse_introuvable` signale de toute facon l'echec.
 CLES_REPONSE = ("response_text", "text", "output", "content", "response", "message")
 
+TIMEOUT_CATALOGUE = 30.0       # rien n'attend : le fil est detache
+INTERVALLE_CATALOGUE = 3600.0  # au plus une ronde par heure en regime normal
+INTERVALLE_FORCE = 60.0        # plancher quand GK reclame explicitement
+BUDGET_RONDE = 25.0            # au-dela on abandonne, le manifeste se repare seul
+
 _ctx = None          # PluginContext, des qu'on l'a vu passer
 _releve_fait = False
+_forme_relevee = False
 _lock = threading.Lock()
+_catalogue_mod = None
+_dernier_catalogue = 0.0
+_ronde_active = False
 
 
 def _noter(record: dict) -> None:
@@ -103,12 +113,58 @@ def _releve_unique(hook: str, kwargs: dict) -> None:
     })
 
 
-def _appeler(outil: str, arguments: dict) -> None:
-    """Envoie et oublie. Jamais d'attente sur le chemin d'une reponse.
+def _extraire(resultat) -> dict:
+    """Ramene la charge utile d'un appel MCP a un dictionnaire.
+
+    La forme exacte que Hermes rend n'est pas connue a l'ecriture : ce peut etre
+    le dictionnaire de l'outil, un `structuredContent`, ou une liste de contenus
+    dont le premier porte du JSON en texte. On essaie, et la forme reellement
+    rencontree est journalisee une fois. Meme methode que pour `response_text`,
+    qu'aucune de nos sept suppositions n'avait trouve.
+    """
+    global _forme_relevee
+    try:
+        if resultat is None:
+            return {}
+        contenus = None
+        if isinstance(resultat, dict):
+            for cle in ("wanted", "besoins", "ok", "v"):
+                if cle in resultat:
+                    return resultat
+            for cle in ("structuredContent", "structured_content", "result", "data"):
+                interne = resultat.get(cle)
+                if isinstance(interne, dict):
+                    return interne
+            contenus = resultat.get("content")
+        else:
+            struct = getattr(resultat, "structuredContent", None)
+            if isinstance(struct, dict):
+                return struct
+            contenus = getattr(resultat, "content", None)
+        if isinstance(contenus, (list, tuple)):
+            for bloc in contenus:
+                texte = (
+                    bloc.get("text") if isinstance(bloc, dict)
+                    else getattr(bloc, "text", None)
+                )
+                if isinstance(texte, str) and texte.strip().startswith("{"):
+                    return json.loads(texte)
+        return {}
+    except Exception as exc:
+        if not _forme_relevee:
+            _forme_relevee = True
+            _noter({"event": "forme_inconnue", "type": repr(type(resultat)),
+                    "erreur": repr(exc)})
+        return {}
+
+
+def _appeler(outil: str, arguments: dict, suite=None) -> None:
+    """Envoie sur un fil detache. Jamais d'attente sur le chemin d'une reponse.
 
     `transform_llm_output` est sur le trajet de la reponse a l'utilisateur :
-    attendre GK y ajouterait sa latence pour rien, puisque nous n'utilisons pas
-    le resultat.
+    attendre GK y ajouterait sa latence. Le resultat est tout de meme lu **sur
+    le fil**, parce qu'il porte les `besoins` de GK — le canal par lequel il
+    reclame son catalogue sans jamais parler le premier.
     """
     ctx = _ctx
     if ctx is None:
@@ -116,15 +172,154 @@ def _appeler(outil: str, arguments: dict) -> None:
 
     def _tache():
         try:
-            ctx.call_mcp(SERVEUR_MCP, outil, arguments, timeout=TIMEOUT)
+            resultat = ctx.call_mcp(SERVEUR_MCP, outil, arguments, timeout=TIMEOUT)
         except PermissionError as exc:
             # Defaut-refus de Hermes : le serveur n'est pas dans
             # plugins.entries.gk-bridge.mcp_allowlist du config.yaml.
             _noter({"event": "refuse", "outil": outil, "erreur": repr(exc)})
+            return
         except Exception as exc:
             _noter({"event": "echec", "outil": outil, "erreur": repr(exc)})
+            return
+        if suite is None:
+            return
+        try:
+            suite(resultat)
+        except Exception as exc:
+            _noter({"event": "erreur_suite", "outil": outil, "erreur": repr(exc)})
 
     threading.Thread(target=_tache, name="gk-bridge", daemon=True).start()
+
+
+# -- le facteur : catalogue et tranches -------------------------------------
+
+
+def _charger_catalogue():
+    """Charge `catalogue.py`, voisin de ce fichier.
+
+    Deux voies, parce que le dossier s'appelle `gk-bridge` : un tiret n'est pas
+    un nom de module valide, donc on ne sait pas sous quel nom Hermes a importe
+    ce paquet. L'echec est sans consequence : le pont de la phase 1 continue de
+    fonctionner sans le facteur.
+    """
+    global _catalogue_mod
+    if _catalogue_mod is not None:
+        return _catalogue_mod
+    try:
+        from . import catalogue as module  # type: ignore
+
+        _catalogue_mod = module
+        _noter({"event": "catalogue_charge", "voie": "relatif"})
+        return _catalogue_mod
+    except Exception:
+        pass
+    try:
+        import importlib.util
+
+        chemin = os.path.join(os.path.dirname(os.path.abspath(__file__)), "catalogue.py")
+        spec = importlib.util.spec_from_file_location("gk_bridge_catalogue", chemin)
+        if spec is None or spec.loader is None:
+            raise ImportError(chemin)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _catalogue_mod = module
+        _noter({"event": "catalogue_charge", "voie": "chemin"})
+        return _catalogue_mod
+    except Exception as exc:
+        _noter({"event": "catalogue_absent", "erreur": repr(exc)})
+        return None
+
+
+def _ronde_due(force: bool) -> bool:
+    """Un verrou et deux horloges : une ronde par heure en regime normal, et au
+    plus une par minute quand GK reclame. Sans ce plancher, un skill dont
+    l'empreinte bouge sans cesse declencherait une ronde a chaque tour."""
+    global _dernier_catalogue, _ronde_active
+    with _lock:
+        if _ronde_active:
+            return False
+        ecoule = time.time() - _dernier_catalogue
+        if ecoule < (INTERVALLE_FORCE if force else INTERVALLE_CATALOGUE):
+            return False
+        _ronde_active = True
+        _dernier_catalogue = time.time()
+        return True
+
+
+def _ronde_catalogue(force: bool = False) -> None:
+    """Une ronde complete : le manifeste, puis les tranches tant que GK en veut.
+
+    Tourne sur le fil detache de l'appel qui l'a declenchee, donc apres que
+    l'agent a repondu. Bornee par `BUDGET_RONDE` : ce qui ne passe pas cette
+    fois passera a la ronde suivante, le manifeste etant auto-reparateur.
+    """
+    global _ronde_active
+    ctx = _ctx
+    if ctx is None or not _ronde_due(force):
+        return
+    debut = time.monotonic()
+    resume = {"event": "ronde_catalogue", "force": force}
+    try:
+        module = _charger_catalogue()
+        if module is None:
+            return
+        entrees, complet, diag = module.manifeste()
+        resume.update(diag)
+        resume["complet"] = complet
+        if not entrees:
+            resume["abandon"] = "manifeste vide"
+            return
+        reponse = _extraire(ctx.call_mcp(
+            SERVEUR_MCP, "catalog",
+            {"skills": entrees, "complete": complet},
+            timeout=TIMEOUT_CATALOGUE,
+        ))
+        resume["manifeste_envoye"] = len(entrees)
+        resume["nouveaux"] = reponse.get("nouveaux")
+        resume["modifies"] = reponse.get("modifies")
+        voulus = list(reponse.get("wanted") or [])
+        intitules = list(reponse.get("headings") or [])
+        resume["intitules"] = len(intitules)
+        envoyees = tours = 0
+        racine = diag.get("racine") or module.RACINE_DEFAUT
+        while voulus and intitules and (time.monotonic() - debut) < BUDGET_RONDE:
+            items = module.tranches_pour(racine, voulus, intitules)
+            if not items:
+                break
+            suivant = _extraire(ctx.call_mcp(
+                SERVEUR_MCP, "sections", {"items": items}, timeout=TIMEOUT_CATALOGUE
+            ))
+            envoyees += len(items)
+            tours += 1
+            restants = list(suivant.get("wanted") or [])
+            if restants == voulus:
+                # GK redemande exactement la meme chose : on s'arrete plutot que
+                # de boucler. La ronde suivante reessaiera.
+                resume["bloque_sur"] = len(restants)
+                break
+            voulus = restants
+        resume["tranches_envoyees"] = envoyees
+        resume["tours"] = tours
+        resume["restants"] = len(voulus)
+    except PermissionError as exc:
+        resume["erreur"] = "refuse: %r" % (exc,)
+    except Exception as exc:
+        resume["erreur"] = repr(exc)
+    finally:
+        resume["duree_s"] = round(time.monotonic() - debut, 2)
+        with _lock:
+            _ronde_active = False
+        _noter(resume)
+
+
+def _suite_observe(resultat) -> None:
+    """Lit les `besoins` de GK et declenche une ronde s'il en a besoin.
+
+    `catalogue_vide` est ce qui permet a un GK redemarre avec une base neuve de
+    se reconstruire sans que personne n'intervienne.
+    """
+    besoins = _extraire(resultat).get("besoins") or []
+    _ronde_catalogue(force=bool({"catalogue_vide", "tranches_attendues"} & set(besoins)))
 
 
 # -- hooks ------------------------------------------------------------------
@@ -153,7 +348,7 @@ def on_transform_llm_output(**kwargs):
             # « la correction en attente la plus recente de la session ».
             "turn_id": str(kwargs.get("turn_id") or ""),
             "reply": texte,
-        })
+        }, suite=_suite_observe)
     except Exception as exc:
         _noter({"event": "erreur_hook", "hook": "transform_llm_output", "erreur": repr(exc)})
     return None

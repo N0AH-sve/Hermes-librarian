@@ -18,6 +18,9 @@ DEFAULTS: dict[str, str] = {
     "database": "/var/lib/gk/gk.db",
     "patterns": "/etc/gk/motifs.yaml",
     "skills_root": "/opt/data/skills",
+    # Les intitules que GK demande au pont de decouper, separes par des
+    # virgules. Vide = les valeurs par defaut de `catalog.py`.
+    "section_headings": "",
     # Bon defaut hors conteneur. Dans un conteneur, le compose impose
     # GK_HOST=0.0.0.0 et c'est la publication du port qui restreint.
     "host": "127.0.0.1",

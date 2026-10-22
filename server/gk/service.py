@@ -16,7 +16,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
-from .catalog import Catalog
+from .catalog import DEFAULT_HEADINGS, Catalog
 from .corrections import PENDING_SECONDS, Recorder, reconcile_on_start
 from .patterns import Detector
 from .store import Store, now
@@ -35,9 +35,16 @@ class Service:
     recorder: Recorder
     catalog_: Catalog
     require_token: bool = False
+    headings: tuple[str, ...] = DEFAULT_HEADINGS
 
     @classmethod
-    def open(cls, database, patterns_path=None, require_token: bool = False) -> "Service":
+    def open(
+        cls,
+        database,
+        patterns_path=None,
+        require_token: bool = False,
+        headings: tuple[str, ...] | None = None,
+    ) -> "Service":
         store = Store(database)
         reconcile_on_start(store)
         return cls(
@@ -46,6 +53,7 @@ class Service:
             recorder=Recorder(store),
             catalog_=Catalog(store),
             require_token=require_token,
+            headings=tuple(headings) if headings else DEFAULT_HEADINGS,
         )
 
     def reload_patterns(self, patterns_path) -> str:
@@ -174,7 +182,16 @@ class Service:
             resultat["recus"], resultat["nouveaux"], resultat["modifies"],
             resultat["disparus"], len(resultat["wanted"]),
         )
-        return {"v": 1, "ok": True, **resultat, "besoins": self._besoins()}
+        # Les intitules partent avec la reponse : le pont tranche sur des
+        # chaines qu'il ne comprend pas, et en ajouter une plus tard ne
+        # demandera ni modification du pont ni redemarrage de l'agent.
+        return {
+            "v": 1,
+            "ok": True,
+            **resultat,
+            "headings": list(self.headings),
+            "besoins": self._besoins(),
+        }
 
     def sections(self, items: list[dict]) -> dict:
         """Recoit les tranches. Elles sont gardees brutes : le decoupage en
@@ -183,7 +200,13 @@ class Service:
         if not isinstance(items, list):
             return {"v": 1, "ok": False, "erreur": "items doit etre une liste"}
         resultat = self.catalog_.store_sections(items)
-        return {"v": 1, "ok": True, **resultat, "besoins": self._besoins()}
+        return {
+            "v": 1,
+            "ok": True,
+            **resultat,
+            "headings": list(self.headings),
+            "besoins": self._besoins(),
+        }
 
     # -- etat ---------------------------------------------------------------
 

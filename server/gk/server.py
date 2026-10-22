@@ -173,13 +173,26 @@ class BearerGuard:
         return await self.app(scope, receive, send)
 
 
+def _intitules(cfg: Config) -> tuple[str, ...] | None:
+    """Les intitules de section, depuis la configuration. Vide = les defauts."""
+    brut = (cfg["section_headings"] or "").strip()
+    if not brut:
+        return None
+    return tuple(part.strip() for part in brut.split(",") if part.strip())
+
+
 def run(config: Config | None = None) -> None:
     cfg = config or Config.load()
     logging.basicConfig(
         level=getattr(logging, cfg["log_level"].upper(), logging.INFO),
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
-    service = Service.open(cfg.database, cfg.patterns, require_token=bool(cfg["bridge_token"]))
+    service = Service.open(
+        cfg.database,
+        cfg.patterns,
+        require_token=bool(cfg["bridge_token"]),
+        headings=_intitules(cfg),
+    )
     server = build(service, cfg)
     app = server.streamable_http_app(streamable_http_path=cfg["bridge_path"])
 

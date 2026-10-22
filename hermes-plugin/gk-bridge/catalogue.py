@@ -1,0 +1,264 @@
+"""Le facteur : construire le manifeste, et decouper les tranches demandees.
+
+Separe de `__init__.py` a dessein. Le pont de la phase 1 fait cinquante lignes
+sans etat, et c'est ce qui le rend bon marche a reecrire quand Hermes renomme un
+point d'accroche. Le manifeste est plus volumineux ; le tenir a part garde la
+partie critique — celle qui vit sur le trajet d'une reponse a l'utilisateur —
+aussi courte qu'avant.
+
+Ce module ne comprend rien non plus. Il ne sait pas ce qu'est un declencheur :
+**GK lui envoie la liste des intitules a chercher**, il tranche sur ces chaines
+et renvoie les morceaux. Ajouter une rubrique plus tard sera donc une ligne de
+configuration dans GK, et plus jamais un redemarrage de l'agent.
+
+Trois contraintes dictent la forme du code :
+
+* **ne jamais ralentir un tour.** Tout tourne sur un fil detache, apres que
+  l'agent a repondu, avec un budget de temps ;
+* **ne jamais lire 3,6 Mo.** L'empreinte vient de `(taille, mtime)`, pas d'un
+  hachage du contenu, et seul le frontmatter est lu — 2 Ko par fichier. Les
+  corps ne sont ouverts que pour les skills que GK reclame ;
+* **ne jamais lever.** Un manifeste manque, le suivant repart : la boucle est
+  auto-reparatrice.
+"""
+
+from __future__ import annotations
+
+import os
+import time
+import unicodedata
+
+RACINE_DEFAUT = os.environ.get("GK_SKILLS_ROOT", "/opt/data/skills")
+
+FRONTMATTER_OCTETS = 2048
+# Garde-fou : si la racine n'est pas celle qu'on croit, on s'arrete plutot que
+# de parcourir un volume entier.
+MAX_FICHIERS = 2000
+BUDGET_SCAN = 5.0
+BUDGET_TRANCHES = 8.0
+MAX_CORPS_OCTETS = 256 * 1024
+
+
+def plier(texte: str) -> str:
+    """Minuscules, accents retires, espaces normalises. Du traitement de
+    chaines, pas de la comprehension."""
+    texte = unicodedata.normalize("NFD", texte or "")
+    texte = "".join(c for c in texte if unicodedata.category(c) != "Mn")
+    return " ".join(texte.lower().split())
+
+
+def frontmatter(chemin: str) -> tuple[str, str]:
+    """`name` et `description` depuis le frontmatter, sans analyseur YAML.
+
+    Lit les 2 premiers kilo-octets : le frontmatter est tout en haut. Sur 177
+    fichiers cela fait 350 Ko au lieu de 3,6 Mo.
+    """
+    try:
+        with open(chemin, "r", encoding="utf-8", errors="replace") as fh:
+            tete = fh.read(FRONTMATTER_OCTETS)
+    except OSError:
+        return "", ""
+    if not tete.startswith("---"):
+        return "", ""
+    nom = desc = ""
+    for ligne in tete.splitlines()[1:]:
+        depouillee = ligne.strip()
+        if depouillee == "---":
+            break
+        if ligne[:1] in (" ", "\t", "-") or ":" not in ligne:
+            continue
+        cle, _, valeur = ligne.partition(":")
+        valeur = valeur.strip().strip('"').strip("'")
+        if cle.strip() == "name" and not nom:
+            nom = valeur
+        elif cle.strip() == "description" and not desc:
+            desc = valeur
+    return nom, desc
+
+
+def lister_par_hermes() -> tuple[dict[str, str] | None, str]:
+    """Les skills que Hermes considere actifs, via sa propre fonction.
+
+    `tools.skills_tool._find_all_skills()` est « already filtered » par
+    plateforme et par etat desactive : c'est la source dont Hermes batit son
+    propre catalogue de prompt. S'en servir empeche le catalogue de GK de deriver
+    de la realite de gb.
+
+    Fonction privee, donc susceptible de disparaitre a une mise a jour : on
+    essaie, et l'appelant retombe sur le disque. Rend `{nom: description}`.
+    """
+    try:
+        from tools.skills_tool import _find_all_skills  # type: ignore
+
+        items = _find_all_skills()
+    except Exception as exc:
+        return None, f"indisponible: {exc!r}"
+    if not isinstance(items, (list, tuple)):
+        return None, f"forme inattendue: {type(items)!r}"
+    actifs: dict[str, str] = {}
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        nom = str(item.get("name") or "").strip()
+        if nom:
+            actifs[nom] = str(item.get("description") or "")
+    return (actifs or None), f"{len(actifs)} skills"
+
+
+def lister_par_disque(racine: str) -> tuple[list[dict], str]:
+    """Parcourt la racine et rend `{path, name, description, category,
+    fingerprint}`.
+
+    L'empreinte est `(taille, mtime_ns)` : un `stat` par fichier, aucune lecture
+    du contenu. C'est ce qui permet a GK de savoir ce qui a bouge sans que le
+    pont ouvre quoi que ce soit.
+    """
+    debut = time.monotonic()
+    entrees: list[dict] = []
+    tronque = False
+    for dossier, sous, noms in os.walk(racine, followlinks=True):
+        sous[:] = [s for s in sous if s != "__pycache__"]
+        if "SKILL.md" not in noms:
+            continue
+        if len(entrees) >= MAX_FICHIERS or (time.monotonic() - debut) > BUDGET_SCAN:
+            tronque = True
+            break
+        chemin = os.path.join(dossier, "SKILL.md")
+        try:
+            st = os.stat(chemin)
+        except OSError:
+            continue
+        relatif = os.path.relpath(chemin, racine)
+        parties = relatif.split(os.sep)
+        nom, desc = frontmatter(chemin)
+        entrees.append({
+            "path": relatif,
+            "name": nom or (parties[-2] if len(parties) >= 2 else ""),
+            "description": desc,
+            "category": parties[0] if len(parties) >= 2 else "",
+            "fingerprint": f"{st.st_size},{st.st_mtime_ns}",
+        })
+    return entrees, ("tronque" if tronque else "complet")
+
+
+def manifeste(racine: str | None = None) -> tuple[list[dict], bool, dict]:
+    """Construit le manifeste. Rend `(entrees, complet, diagnostic)`.
+
+    Le disque fait foi pour les chemins et les empreintes ; Hermes, quand il
+    repond, fait foi pour **quels** skills sont actifs et complete les
+    descriptions manquantes. `complet` passe a False si le parcours a ete
+    tronque, pour que GK ne fasse disparaitre personne sur une liste partielle.
+    """
+    # Resolu a l'appel et non a la definition : la racine se configure, et un
+    # defaut fige a l'import ne se remplace plus.
+    racine = racine or RACINE_DEFAUT
+    entrees, etat = lister_par_disque(racine)
+    actifs, note = lister_par_hermes()
+    filtres = 0
+    if actifs:
+        gardees = []
+        for entree in entrees:
+            dossier = entree["path"].split(os.sep)
+            cle = entree["name"] if entree["name"] in actifs else None
+            if cle is None and len(dossier) >= 2 and dossier[-2] in actifs:
+                cle = dossier[-2]
+            if cle is None:
+                filtres += 1
+                continue
+            if not entree["description"]:
+                entree["description"] = actifs[cle]
+            gardees.append(entree)
+        # Un filtre qui viderait tout est un filtre casse : on l'ignore plutot
+        # que de rendre un manifeste vide, qui ferait disparaitre la
+        # bibliotheque entiere cote GK.
+        if gardees:
+            entrees = gardees
+        else:
+            filtres = 0
+            note += " (filtre ignore : il ne gardait rien)"
+    return entrees, etat == "complet", {
+        "racine": racine,
+        "parcours": etat,
+        "hermes": note,
+        "filtres": filtres,
+        "entrees": len(entrees),
+    }
+
+
+def trancher(texte: str, intitules: list[str]) -> list[dict]:
+    """Decoupe un SKILL.md sur les intitules fournis par GK.
+
+    Suit les blocs de code : un `##` dans un bloc shell est un commentaire, pas
+    un titre — l'erreur frapperait precisement les skills qui portent des
+    procedures. Accepte les niveaux 2 et 3, et tolere une glose derriere le
+    mot-cle (`## Declencheurs    quand charger / quand NE PAS charger`).
+    """
+    voulus = [plier(i) for i in (intitules or []) if str(i or "").strip()]
+    if not voulus:
+        return []
+    tranches: list[dict] = []
+    courant: str | None = None
+    corps: list[str] = []
+    dans_bloc = False
+    for ligne in (texte or "").splitlines():
+        depouillee = ligne.strip()
+        if depouillee.startswith("```") or depouillee.startswith("~~~"):
+            dans_bloc = not dans_bloc
+            if courant is not None:
+                corps.append(ligne)
+            continue
+        titre = None
+        if not dans_bloc and depouillee.startswith("#"):
+            diese = len(depouillee) - len(depouillee.lstrip("#"))
+            reste = depouillee[diese:]
+            if 1 <= diese <= 6 and (reste.startswith(" ") or not reste):
+                titre = reste.strip()
+        if titre is not None:
+            if courant is not None:
+                tranches.append({"heading": courant, "text": "\n".join(corps).strip()})
+                courant, corps = None, []
+            plie = plier(titre.strip("*_`").strip())
+            if any(plie.startswith(v) for v in voulus):
+                courant, corps = titre, []
+            continue
+        if courant is not None:
+            corps.append(ligne)
+    if courant is not None:
+        tranches.append({"heading": courant, "text": "\n".join(corps).strip()})
+    return tranches
+
+
+def tranches_pour(racine: str, chemins: list[str], intitules: list[str]) -> list[dict]:
+    """Ouvre les fichiers reclames et rend leurs tranches.
+
+    **Une entree figure meme quand aucun intitule n'a correspondu**, avec
+    `sections: []`. Sans cela GK la reclamerait a chaque manifeste, pour
+    toujours.
+
+    L'empreinte est relue au moment de la lecture : si le fichier a bouge depuis
+    le manifeste, GK le verra et le redemandera.
+    """
+    debut = time.monotonic()
+    sorties: list[dict] = []
+    for relatif in chemins or []:
+        if (time.monotonic() - debut) > BUDGET_TRANCHES:
+            break
+        chemin = os.path.join(racine, relatif)
+        # Ne pas sortir de la racine, meme si GK renvoyait un chemin tordu.
+        if not os.path.realpath(chemin).startswith(os.path.realpath(racine) + os.sep):
+            continue
+        try:
+            st = os.stat(chemin)
+            with open(chemin, "r", encoding="utf-8", errors="replace") as fh:
+                texte = fh.read(MAX_CORPS_OCTETS)
+        except OSError:
+            # Disparu entre le manifeste et la lecture : une entree vide le dit,
+            # et le prochain manifeste complet le marquera disparu.
+            sorties.append({"path": relatif, "fingerprint": "", "sections": []})
+            continue
+        sorties.append({
+            "path": relatif,
+            "fingerprint": f"{st.st_size},{st.st_mtime_ns}",
+            "sections": trancher(texte, intitules),
+        })
+    return sorties

@@ -46,6 +46,32 @@ MANIFEST_MAX_AGE_SECONDS = 48 * 3600.0
 
 KIND_RAW = "brut"
 
+# Les intitules que GK demande au pont de decouper. Ils partent dans la reponse
+# au manifeste : le pont ne sait pas ce qu'est un declencheur, il tranche sur ces
+# chaines. Ajouter une rubrique est donc une ligne de configuration cote GK, et
+# plus jamais un redemarrage de l'agent.
+#
+# Francais et anglais melanges parce que la bibliotheque l'est : le releve du
+# 2026-10-22 donnait `when to use` (53) devant `declencheurs` (16).
+DEFAULT_HEADINGS: tuple[str, ...] = (
+    "Declencheurs",
+    "Déclencheurs",
+    "Quand charger",
+    "Quand utiliser",
+    "When to use",
+    "When to load",
+    "Use when",
+    "Triggers",
+    # La moitie negative, quand elle a son propre titre. Dans les 177 skills
+    # actuels elle est noyee dans la prose des declencheurs ; le gabarit
+    # `gm-skill-template` doit la sortir, et alors le decoupage devient
+    # structurel au lieu d'etre un reniflage de negations.
+    "Ne pas charger si",
+    "Ne pas charger",
+    "When not to use",
+    "Do not load",
+)
+
 
 @dataclass
 class Catalog:

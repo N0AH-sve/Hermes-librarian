@@ -97,7 +97,9 @@ def cmd_check(args, cfg: Config) -> int:
     problemes: list[str] = []
     detail: dict[str, object] = {}
     try:
-        svc = Service.open(cfg.database, cfg.patterns, require_token=bool(cfg["bridge_token"]))
+        svc = Service.open(
+            cfg.database, cfg.patterns, require_token=bool(cfg["bridge_token"])
+        )
     except Exception as exc:
         _emit({"ok": False, "problemes": [f"base inutilisable: {exc!r}"]}, args)
         return 1
