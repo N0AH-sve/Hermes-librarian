@@ -1302,17 +1302,48 @@ pristine, et le plugin doit vivre dans un sous-dossier clairement nommé.
 
 ## Points ouverts
 
+Dernière revue : 2026-10-22, après la mise en service partielle de la phase 1.
+
+### Décisions à prendre
+
 | Sujet | État |
 |---|---|
-| Emplacement des plugins et du `config.yaml` | **Skills levés, plugins non.** Vérifié dans le conteneur : `HERMES_HOME=/opt/data` (via `env_file`), les skills sont en `/opt/data/skills`, et `/opt/data/.hermes` existe mais ne contient ni `skills` ni `plugins`. Reste à inspecter les trois sous-dossiers de `.hermes` pour y trouver `config.yaml` et l'emplacement des plugins |
-| Comment un plugin obtient son objet d'API | Dernière inconnue du pont. `call_mcp` est une méthode ; reste à voir ce qui la passe au plugin (fonction d'initialisation, import, autre). À lire dans `hermes_cli/plugins.py` |
-| Clés exactes de `_mcp_envelope` | Le retour est un dictionnaire ; ses clés se lisent dans la même source |
-| Nom de fonction attendu par hook | `gm-routing` implémente `on_pre_tool_call` pour le hook `pre_tool_call`. Reste à confirmer la règle, notamment pour `on_skill_lifecycle` qui commence déjà par `on_` |
-| Version de Hermes | Le compose épingle `v2026.9.21`, alors que le handoff mesurait `v2026.7.20`. **Hermes a donc été mis à jour depuis**, et l'API des plugins a pu bouger : les mesures d'environnement du handoff sont à considérer comme périmées |
-| URL des docs Hermes | `hermes-agent.nousresearch.com` ne résout pas. Bloque la vérification de la stabilité des hooks et du comportement d'un plugin qui plante |
-| Code du prototype | Absent du dépôt. Les 45 tests et les 86 % de Hit@1 du handoff ne sont pas vérifiables ici |
-| Écriture GitHub | L'app Claude a la lecture seule sur le dépôt. `git push` et l'API renvoient 403. À accorder depuis https://github.com/apps/claude/installations/select_target |
-| AVX2 sur le VPS | Non vérifié. Décide si l'auto-hébergement d'un modèle est seulement discutable en v2 |
-| Licence | À choisir avant publication. Le fichier a été supprimé au commit 3b94d02 |
-| Embeddings | Écartés de la v1 (étape 4). À rouvrir en v2 seulement si la mesure sur les vrais skills l'exige |
-| Jeu de tâches du banc d'essai | **Plus bloquant** (étape 8) : le corpus se constitue seul depuis la phase de mesure, et le banc ne sert qu'à diagnostiquer si l'A/B déçoit |
+| **Licence** | **Non tranché, et bloquant avant publication.** Le fichier a été supprimé au commit `3b94d02` et le dépôt est destiné à devenir public |
+| **Description GitHub du dépôt** | Annonce encore « FastMCP » et une recherche sémantique, deux choses désormais fausses. Se change dans les réglages du dépôt, hors de portée d'un commit |
+| **Seuil d'acceptation de la v1** | Reporté à dessein (étape 8) : il se fixe devant le chiffre du banc, pas avant |
+| **Volume de la phase de référence** | « 3 semaines » avait été retenu avant l'A/B. Avec l'A/B, la bonne unité est un nombre de tours par bras, pas une durée. À reprendre |
+| **Les quatre plugins adjacents** | `gm-routing`, `gm-provenance`, `gm-discord-cards` et `gm-skill-dup-guard` (inactif) touchent le périmètre de GK. Le recouvrement a été constaté, jamais arbitré — notamment entre le garde anti-doublons et le signalement d'orphelins de GK |
+| **Les 329 SKILL.md hors bibliothèque** | GK les signalera. Décider s'il faut les ranger, et par qui, reste humain |
+| Embeddings | Écartés de la v1. À rouvrir en v2 seulement si le banc l'exige |
+| Auto-hébergement d'un modèle | Redevenu discutable depuis qu'AVX2 est confirmé présent, et que Hermes est plafonné à 2 des 4 vCPU. Reporté en v2 |
+| Poids BM25 et découpage | Paramètres à régler au banc, phase 2 |
+
+### Inconnues techniques
+
+| Sujet | État |
+|---|---|
+| **Un plugin qui lève à l'import bloque-t-il le démarrage de gb ?** | Jamais vérifié. C'est le contrôle le plus important de l'étape 7 de la mise en service : si gb ne redémarre pas, désactiver le pont répond à la question |
+| Par où arrive le `PluginContext` | `class PluginContext` existe (`hermes_cli/plugins.py:225`) et porte `call_mcp`, mais ce qui le passe au plugin n'a pas été lu. Le pont le cherche à ce qu'il sait faire et journalise ce qui a marché |
+| Sous quel nom la réponse arrive à `transform_llm_output` | Idem : plusieurs noms plausibles essayés, le relevé dira lequel |
+| Clés exactes de `_mcp_envelope` | Le retour est un dictionnaire ; ses clés se lisent dans la même source. Sans conséquence en phase 1, qui n'utilise aucun retour |
+| URL des docs Hermes | `hermes-agent.nousresearch.com` ne résout pas depuis l'environnement de conception. La source dans l'image a servi de substitut, et s'est révélée plus fiable |
+| Version de Hermes | Le compose épingle `v2026.9.21` ; le handoff mesurait `v2026.7.20`. Les mesures d'environnement du handoff sont périmées |
+| Code du prototype | Absent du dépôt. Les 45 tests et les 86 % de Hit@1 du handoff ne sont pas vérifiables |
+
+### Dettes de la phase 1
+
+| Sujet | État |
+|---|---|
+| Rechargement à chaud des motifs | La conception l'exige, le code ne le fait pas. `motifs.yaml` est monté depuis l'hôte et modifiable, mais il faut redémarrer le conteneur. `gk patterns` dit ce qui est chargé |
+| Webhook Discord | Décidé à l'étape 4, non implémenté. Phase 4 |
+| Second point d'entrée `/mcp/agent` | Conçu à l'étape 5, non implémenté : il n'expose que des outils des phases 3 et 4 |
+
+### Clos depuis la dernière revue
+
+AVX2 est **présent**. L'écriture GitHub est **accordée**. Les plugins vivent en
+`/opt/data/plugins/`, la config en `/opt/data/config.yaml`, les skills en
+`/opt/data/skills` — 537 d'entre eux, la prémisse est confirmée. La convention
+de nommage des hooks est `on_<hook>`. Les serveurs MCP se déclarent sous
+`mcp_servers:` à plat, avec interpolation de variables d'environnement. Le jeu
+de tâches du banc n'est plus bloquant : le corpus se constitue depuis la phase
+de mesure.
