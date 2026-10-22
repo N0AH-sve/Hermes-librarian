@@ -1864,10 +1864,41 @@ sans FTS5 ni BM25 : il vient des 296 phrases écrites à la main. **La valeur es
 dans la bibliothèque ; l'outil la rend utilisable.** C'est ce qu'il faut dire aux
 décideurs, et c'est vérifiable.
 
-**Un troisième bras est donc ajouté au banc** : les déclencheurs indexés pour le
-métier seulement. À confirmer avant d'en faire une règle — le mécanisme est
-compréhensible, mais c'est ce corpus qui a servi à le trouver, donc la règle
-risque de lui être ajustée.
+### Pondérer par population : mesuré, puis retiré
+
+La règle qui semblait découler du relevé — indexer les déclencheurs du métier
+seulement — a été mesurée avant d'être adoptée. Elle est **mal fondée**, et la
+raison vaut d'être gardée.
+
+| Bras | ensemble | métier | générique |
+|---|---|---|---|
+| Tous les champs | 0,527 | 0,592 | 0,391 |
+| Nom + description | 0,401 | 0,375 | **0,455** |
+| Déclencheurs métier seulement | 0,535 | 0,603 | 0,395 |
+
+Le bras mixte devait donner au générique le traitement qui lui réussit
+(nom + description, 0,455). Il rend 0,395. **Parce qu'il ne retire les
+déclencheurs qu'aux génériques, qui concourent alors avec un champ en moins
+contre des adversaires qui gardent tout.** Les échelles de score ne sont plus
+comparables : un skill noté sur quatre champs bat mécaniquement un skill noté
+sur deux. Dans le bras nom+description, personne n'a de déclencheurs, donc la
+compétition est uniforme.
+
+Et le +0,011 gagné sur le métier n'est pas une amélioration de la recherche :
+c'est l'affaiblissement de ses concurrents. Un artefact.
+
+**Règle qui en découle, et qui est désormais tenue par un test** : tous les
+skills sont notés sur les mêmes champs avec les mêmes poids. Un texte identique
+doit donner un score identique, quelle que soit la catégorie. La catégorie sert
+à découper les résultats du banc, jamais à pondérer.
+
+Le problème du générique n'est donc pas que ses déclencheurs soient indexés,
+c'est qu'ils se citent les uns les autres. Le remède est dans le texte, pas dans
+les coefficients. **Le bras mixte est remplacé par un bras « citations sans la
+prose »** : les citations sont des phrases d'utilisateur, propres, tandis que la
+prose est verbeuse et c'est là que vivent les renvois vers les voisins. Celui-là
+ne touche pas à la comparabilité des scores, puisqu'il s'applique à tous les
+skills.
 
 **Une affirmation corrigée.** La première lecture du banc disait qu'aucune
 recherche par les mots ne pouvait servir les demandes sans vocabulaire de

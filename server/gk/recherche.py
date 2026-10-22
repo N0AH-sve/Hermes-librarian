@@ -60,7 +60,8 @@ POIDS: dict[str, float] = {
 LAMBDA_NEGATIF = 2.0
 
 # La categorie qui porte le metier. Relevé du 2026-10-22 : 86 skills sur 183,
-# et c'est la population ou les demandes des utilisateurs tombent.
+# et c'est la population ou les demandes des utilisateurs tombent. Sert a
+# decouper les resultats du banc, JAMAIS a ponderer : voir `chercher`.
 CATEGORIE_METIER = "greenmusic"
 
 # Mots trop communs pour discriminer. Les deux langues, la bibliotheque etant
@@ -194,7 +195,7 @@ class Index:
         lambda_negatif: float = LAMBDA_NEGATIF,
         sans_declencheurs: bool = False,
         exclure_exemple: str | None = None,
-        declencheurs_metier_seulement: bool = False,
+        sans_prose: bool = False,
     ) -> list[dict]:
         """Classe les skills pour une demande.
 
@@ -206,16 +207,23 @@ class Index:
         porte. Sans cela, mesurer sur les 296 lignes citees serait **circulaire** :
         un skill retrouverait trivialement sa propre citation.
 
-        `declencheurs_metier_seulement` n'indexe les declencheurs que pour les
-        skills metier. Relevé du 2026-10-22 : ils apportent +0,217 de MRR au
-        metier et **otent 0,064** au generique, dont les skills se citent les uns
-        les autres et nomment les memes outils. Une moyenne de deux effets de
-        signes opposes ne decrit ni l'un ni l'autre.
+        `sans_prose` garde les citations et jette le reste du texte des
+        declencheurs. Les citations sont des phrases d'utilisateur, propres ;
+        la prose est verbeuse et c'est **la que vivent les renvois vers les
+        skills voisins**, qui font remonter le mauvais skill.
+
+        Une option **retiree** apres mesure, et la raison vaut d'etre gardee :
+        ponderer PAR POPULATION -- indexer les declencheurs du metier seulement
+        -- rend les scores incomparables. Un skill note sur quatre champs bat
+        mecaniquement un skill note sur deux, donc la regle avantageait le metier
+        au lieu d'ameliorer la recherche. Tous les skills doivent etre notes sur
+        les memes champs avec les memes poids.
         """
         p = dict(poids or POIDS)
         if sans_declencheurs:
             p = {c: v for c, v in p.items() if c in ("name", "description")}
-        p_sobre = {c: v for c, v in p.items() if c in ("name", "description")}
+        elif sans_prose:
+            p = {c: v for c, v in p.items() if c != "positif"}
         jetons_demande = jetons(demande)
         if not jetons_demande:
             return []
@@ -223,10 +231,7 @@ class Index:
         for skill in self.skills:
             detail: dict[str, float] = {}
             total = 0.0
-            champs = p
-            if declencheurs_metier_seulement and skill.category != CATEGORIE_METIER:
-                champs = p_sobre
-            for champ, poids_champ in champs.items():
+            for champ, poids_champ in p.items():
                 presents = skill.champs.get(champ) or set()
                 if champ == "exemples" and exclure_exemple is not None:
                     presents = self._exemples_sans(skill, exclure_exemple)
@@ -236,7 +241,7 @@ class Index:
                 if gagne:
                     detail[champ] = round(poids_champ * gagne, 3)
                     total += poids_champ * gagne
-            if champs is p and not sans_declencheurs and skill.negatif:
+            if not sans_declencheurs and skill.negatif:
                 perdu = sum(
                     self.idf(j) for j in jetons_demande if j in skill.negatif
                 )

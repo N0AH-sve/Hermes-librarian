@@ -340,71 +340,90 @@ def test_l_information_d_une_demande_se_mesure(tmp_path):
 # -- l'inversion selon la population --------------------------------------
 
 
-def test_les_declencheurs_ne_sont_indexes_que_pour_le_metier(tmp_path):
-    """Relevé du 2026-10-22 : les declencheurs apportent +0,217 de MRR au metier
-    et OTENT 0,064 au generique. Le bras mixte permet de mesurer la regle qui en
-    decoule, au lieu de la decreter."""
-    store = Store(tmp_path / "m.db")
+def test_la_categorie_ne_change_jamais_le_score(tmp_path):
+    """Invariant ne d'une regle mesuree puis RETIREE.
+
+    Un bras du banc ponderait par population : les declencheurs indexes pour le
+    metier seulement. Resultat : les scores devenaient incomparables, un skill
+    note sur quatre champs battant mecaniquement un skill note sur deux. La
+    regle avantageait donc le metier au lieu d'ameliorer la recherche, et son
+    gain de +0,008 etait un artefact.
+
+    Tous les skills sont notes sur les memes champs avec les memes poids, et ce
+    test le verifie plutot que de le laisser a la discipline.
+    """
+    store = Store(tmp_path / "eq.db")
     cat = Catalog(store)
-    cat.ingest([
-        {"path": "greenmusic/gm-metier/SKILL.md", "name": "gm-metier",
-         "description": "Un skill metier.", "category": "greenmusic",
-         "fingerprint": "1"},
-        {"path": "creative/generique/SKILL.md", "name": "generique",
-         "description": "Un skill generique.", "category": "creative",
-         "fingerprint": "1"},
-    ], complete=True)
-    cat.store_sections([
-        {"path": "greenmusic/gm-metier/SKILL.md", "fingerprint": "1",
-         "sections": [{"heading": "Déclencheurs", "text": "- « zorglub metier »"}]},
-        {"path": "creative/generique/SKILL.md", "fingerprint": "1",
-         "sections": [{"heading": "Déclencheurs", "text": "- « zorglub generique »"}]},
-    ])
+    for categorie, nom in (("greenmusic", "gm-un"), ("creative", "autre-un")):
+        cat.ingest([{
+            "path": f"{categorie}/{nom}/SKILL.md", "name": nom,
+            "description": "Zorglub et ses particularites.",
+            "category": categorie, "fingerprint": "1",
+        }], complete=False)
+        cat.store_sections([{
+            "path": f"{categorie}/{nom}/SKILL.md", "fingerprint": "1",
+            "sections": [{"heading": "Déclencheurs", "text": "- « zorglub partout »"}],
+        }])
     index = Index.construire(store)
     try:
-        # Sans la regle, les deux remontent sur le mot des declencheurs.
-        tous = {r["name"] for r in index.chercher("zorglub")}
-        assert tous == {"gm-metier", "generique"}
-        # Avec, seul le metier porte ses declencheurs.
-        mixte = [r["name"] for r in index.chercher(
-            "zorglub", declencheurs_metier_seulement=True
-        )]
-        assert mixte == ["gm-metier"]
+        resultats = {r["name"]: r["score"] for r in index.chercher("zorglub")}
+        assert len(resultats) == 2
+        assert resultats["gm-un"] == resultats["autre-un"], (
+            "un texte identique doit donner un score identique, quelle que soit "
+            "la categorie"
+        )
     finally:
         store.close()
 
 
-def test_le_banc_signale_une_inversion(tmp_path, capsys, monkeypatch):
-    """Un signe oppose selon la population est l'information la plus utile du
-    banc, et une moyenne la ferait disparaitre."""
-    store = Store(tmp_path / "inv.db")
+def test_le_bras_citations_jette_la_prose(tmp_path):
+    """Les citations sont des phrases d'utilisateur, propres ; la prose est
+    verbeuse et c'est la que vivent les renvois vers les voisins."""
+    store = Store(tmp_path / "pr.db")
     cat = Catalog(store)
-    # Deux generiques qui se ressemblent : leurs declencheurs se confondent, et
-    # nom+description discriminent mieux.
+    cat.ingest([{
+        "path": "greenmusic/gm-a/SKILL.md", "name": "gm-a",
+        "description": "Un skill.", "category": "greenmusic", "fingerprint": "1",
+    }], complete=True)
+    cat.store_sections([{
+        "path": "greenmusic/gm-a/SKILL.md", "fingerprint": "1",
+        "sections": [{"heading": "Déclencheurs",
+                      "text": "- « citation propre »\nProse avec un renvoi zorglub."}],
+    }])
+    index = Index.construire(store)
+    try:
+        assert index.chercher("zorglub"), "la prose est indexee par defaut"
+        assert index.chercher("zorglub", sans_prose=True) == [], "et jetee sur demande"
+        assert index.chercher("citation propre", sans_prose=True), "la citation reste"
+    finally:
+        store.close()
+
+
+def test_le_banc_rend_le_bras_citations(tmp_path, capsys, monkeypatch):
+    store = Store(tmp_path / "bc.db")
+    cat = Catalog(store)
     cat.ingest([
         {"path": "greenmusic/gm-a/SKILL.md", "name": "gm-a",
-         "description": "Factures fournisseurs proforma.", "category": "greenmusic",
+         "description": "Factures proforma.", "category": "greenmusic",
          "fingerprint": "1"},
         {"path": "creative/comic/SKILL.md", "name": "comic",
-         "description": "Bandes dessinees.", "category": "creative", "fingerprint": "1"},
-        {"path": "creative/infographic/SKILL.md", "name": "infographic",
-         "description": "Infographies.", "category": "creative", "fingerprint": "1"},
+         "description": "Bandes dessinees.", "category": "creative",
+         "fingerprint": "1"},
     ], complete=True)
     cat.store_sections([
         {"path": "greenmusic/gm-a/SKILL.md", "fingerprint": "1",
          "sections": [{"heading": "Déclencheurs", "text": "- « proforma fournisseur »"}]},
         {"path": "creative/comic/SKILL.md", "fingerprint": "1",
-         "sections": [{"heading": "Déclencheurs", "text": "- « style visuel planche »"}]},
-        {"path": "creative/infographic/SKILL.md", "fingerprint": "1",
-         "sections": [{"heading": "Déclencheurs", "text": "- « style visuel planche »"}]},
+         "sections": [{"heading": "Déclencheurs", "text": "- « planche dessinee »"}]},
     ])
     store.close()
-    monkeypatch.setenv("GK_DATABASE", str(tmp_path / "inv.db"))
+    monkeypatch.setenv("GK_DATABASE", str(tmp_path / "bc.db"))
     assert cli_main(["--json", "banc"]) == 0
     out = json.loads(capsys.readouterr().out)
-    assert "declencheurs_metier_seulement" in out
+    assert "citations_sans_prose" in out
+    assert "declencheurs_metier_seulement" not in out, "le bras invalide est retire"
     for bloc in out["par_population"].values():
-        assert "mrr_mixte" in bloc
+        assert "mrr_citations_sans_prose" in bloc
 
 
 def test_la_lecture_ne_pretend_plus_les_demandes_introuvables(tmp_path, capsys, monkeypatch):

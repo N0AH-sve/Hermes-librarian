@@ -403,10 +403,15 @@ def cmd_banc(args, cfg: Config) -> int:
         informations = [index.information(d) for d, _, _ in cas]
         informations_triees = sorted(informations)
         seuil = informations_triees[max(0, len(informations_triees) // 10)]
-        # Trois bras : tous les champs, nom+description seul, et le mixte --
-        # declencheurs pour le metier seulement. Le troisieme est ne du relevé
-        # qui montre deux effets de signes opposes selon la population.
-        rangs: dict[str, list[int | None]] = {"tous": [], "sans": [], "mixte": []}
+        # Trois bras : tous les champs, nom+description seul, et citations
+        # sans la prose. Le troisieme teste l'hypothese que la prose des
+        # declencheurs nuit -- c'est la que vivent les renvois vers les voisins.
+        #
+        # Un bras precedent ponderait PAR POPULATION. Il est retire : il rendait
+        # les scores incomparables, un skill note sur quatre champs battant
+        # mecaniquement un skill note sur deux. Il avantageait donc le metier au
+        # lieu d'ameliorer la recherche, et son gain de +0,008 etait un artefact.
+        rangs: dict[str, list[int | None]] = {"tous": [], "sans": [], "citations": []}
         groupes: dict[str, dict[str, list]] = {}
         echecs: list[dict] = []
         # Deux echecs tres differents, qu'il ne faut pas confondre : aucun
@@ -422,11 +427,11 @@ def cmd_banc(args, cfg: Config) -> int:
                 "metier" if metier else "generique",
                 "peu_informative" if info <= seuil else "informative",
             ]
-            for bras, sans in (("tous", False), ("sans", True), ("mixte", False)):
+            for bras, sans in (("tous", False), ("sans", True), ("citations", False)):
                 sortie = index.chercher(
                     demande, limite=args.limite, sans_declencheurs=sans,
                     exclure_exemple=ligne,
-                    declencheurs_metier_seulement=(bras == "mixte"),
+                    sans_prose=(bras == "citations"),
                 )
                 noms = [r["name"] for r in sortie]
                 rang = noms.index(attendu) + 1 if attendu in noms else None
@@ -449,7 +454,7 @@ def cmd_banc(args, cfg: Config) -> int:
         for bras, etiquette in (
             ("tous", "tous_les_champs"),
             ("sans", "nom_description"),
-            ("mixte", "declencheurs_metier_seulement"),
+            ("citations", "citations_sans_prose"),
         ):
             trouves = [r for r in rangs[bras] if r is not None]
             out[etiquette] = {
@@ -464,7 +469,7 @@ def cmd_banc(args, cfg: Config) -> int:
                 f"rappel_{args.limite}": _taux(bras_rangs["tous"], args.limite),
                 "mrr": _mrr(bras_rangs["tous"]),
                 "mrr_nom_description": _mrr(bras_rangs["sans"]),
-                "mrr_mixte": _mrr(bras_rangs["mixte"]),
+                "mrr_citations_sans_prose": _mrr(bras_rangs["citations"]),
             }
             for etiquette, bras_rangs in sorted(groupes.items())
         }
@@ -533,14 +538,22 @@ def _lire_banc(out: dict, gain: float) -> list[str]:
                 f"champs ({bloc['mrr_nom_description']} contre {bloc['mrr']}, "
                 f"{ecart}). Les declencheurs NUISENT a cette population."
             )
-    mixte = out.get("declencheurs_metier_seulement")
-    if mixte and mixte["mrr"] > out["tous_les_champs"]["mrr"]:
-        lignes.append(
-            f"Le bras mixte -- declencheurs pour le metier seulement -- fait "
-            f"{mixte['mrr']} contre {out['tous_les_champs']['mrr']}. A confirmer "
-            "sur d'autres demandes avant d'en faire une regle : le mecanisme est "
-            "comprehensible, mais le corpus a servi a le trouver."
-        )
+    citations = out.get("citations_sans_prose")
+    if citations:
+        ecart = round(citations["mrr"] - out["tous_les_champs"]["mrr"], 3)
+        if ecart > 0.01:
+            lignes.append(
+                f"Les citations SANS la prose font {citations['mrr']} contre "
+                f"{out['tous_les_champs']['mrr']} ({ecart:+}). La prose des "
+                "declencheurs nuit : c'est la que vivent les renvois vers les "
+                "skills voisins. Retirer le champ `positif` est un changement de "
+                "poids, donc gratuit."
+            )
+        elif ecart < -0.01:
+            lignes.append(
+                f"La prose des declencheurs apporte ({citations['mrr']} sans elle "
+                f"contre {out['tous_les_champs']['mrr']} avec) : la garder."
+            )
     peu = pop.get("peu_informative")
     if peu:
         lignes.append(
