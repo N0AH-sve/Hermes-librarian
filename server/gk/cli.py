@@ -1,14 +1,17 @@
 """La commande `gk`. Elle tourne dans le conteneur, aucun port n'etant publie
 au-dela de la boucle locale.
 
-Quatre commandes en phase 1 :
+Les commandes :
 
-* `stats`  — l'indicateur, coupe en deux comme l'etape 2 l'exige, et qui
-             **refuse de comparer** deux periodes mesurees avec des motifs
-             differents ;
-* `check`  — l'etat, pour le rituel de mise a jour en trois temps ;
-* `forget` — effacer le texte sans perdre la mesure ;
-* `export` — les quatre tables irremplacables, et elles seules.
+* `stats`     — l'indicateur, coupe en deux comme l'etape 2 l'exige, et qui
+                **refuse de comparer** deux periodes mesurees avec des motifs
+                differents ;
+* `check`     — l'etat, pour le rituel de mise a jour en trois temps ;
+* `catalogue` — l'etat du catalogue recu par manifeste ;
+* `tidy`      — appliquer les retentions ;
+* `forget`    — effacer le texte sans perdre la mesure ;
+* `export`    — les quatre tables irremplacables, et elles seules ;
+* `patterns`  — les motifs charges et leur empreinte.
 """
 
 from __future__ import annotations
@@ -18,6 +21,7 @@ import json
 import sys
 from pathlib import Path
 
+from .catalog import Catalog
 from .config import Config
 from .corrections import (
     BAD_RECOMMENDATION,
@@ -117,13 +121,20 @@ def cmd_check(args, cfg: Config) -> int:
                 "aucun jeton : tout appel sur /mcp/bridge est accepte, la seule protection "
                 "etant le binding sur la boucle locale"
             )
-        skills = Path(cfg["skills_root"])
-        detail["racine_skills"] = str(skills)
-        if not skills.is_dir():
-            detail["racine_skills_lisible"] = False
-        else:
-            detail["racine_skills_lisible"] = True
-            detail["skills_trouves"] = sum(1 for _ in skills.rglob("SKILL.md"))
+        # Le catalogue remplace le balayage du disque. GK n'a pas le volume de
+        # l'agent monte -- c'est la conception par push -- et `racine_skills`
+        # laissait croire le contraire : il annoncait une racine illisible comme
+        # un probleme alors que c'est l'etat normal.
+        cat = detail.get("catalogue") or {}
+        if cat.get("skills", 0) == 0:
+            problemes.append(
+                "catalogue vide : aucun manifeste recu, GK ne connait aucun skill"
+            )
+        elif cat.get("manifeste_perime"):
+            problemes.append(
+                f"catalogue perime : dernier manifeste il y a "
+                f"{round((cat.get('dernier_manifeste_il_y_a_s') or 0) / 3600)} h"
+            )
     finally:
         svc.close()
     detail["ok"] = not problemes
@@ -195,22 +206,49 @@ def cmd_export(args, cfg: Config) -> int:
 def cmd_tidy(args, cfg: Config) -> int:
     with Store(cfg.database) as store:
         result = tidy(store)
-        root = Path(cfg["skills_root"])
-        if root.is_dir():
-            live = {p.parent.name for p in root.rglob("SKILL.md")}
-            result["cas_de_test_retires"] = retire_testcases(store, live)
-            # GK est bien place pour signaler les orphelins : 866 SKILL.md
-            # existent dans le volume pour une bibliotheque de 537.
-            whole = Path("/opt/data")
-            if whole.is_dir():
-                try:
-                    total = sum(1 for _ in whole.rglob("SKILL.md"))
-                    result["skill_md_hors_bibliotheque"] = max(
-                        0, total - sum(1 for _ in root.rglob("SKILL.md"))
-                    )
-                except OSError:
-                    pass
+        # Les skills vivants viennent du catalogue, non d'un balayage du disque :
+        # GK n'a plus le volume de l'agent monte, et deux sources de verite sur
+        # le catalogue seraient le defaut meme qu'il doit corriger chez gb.
+        #
+        # `retire_testcases` refuse d'agir sur un ensemble vide, donc un
+        # catalogue pas encore recu ne met pas le corpus du banc au rebut.
+        vivants = Catalog(store).live_names()
+        result["skills_au_catalogue"] = len(vivants)
+        result["cas_de_test_retires"] = retire_testcases(store, vivants)
+        if not vivants:
+            result["avertissement"] = (
+                "catalogue vide : aucun cas de test retire, et c'est voulu"
+            )
+        # Le signalement des orphelins demandait de lire le disque de l'agent.
+        # Il reviendra par un champ du manifeste, le pont etant le seul a le
+        # voir. Promettre moins vaut mieux que mesurer la mauvaise chose.
         _emit(result, args)
+    return 0
+
+
+def cmd_catalogue(args, cfg: Config) -> int:
+    """L'etat du catalogue. Il n'y a rien a lancer pour le remplir : c'est le
+    pont qui pousse le manifeste, au plus une fois par heure."""
+    with Store(cfg.database) as store:
+        catalogue = Catalog(store)
+        out = dict(catalogue.stats())
+        if out["skills"] == 0:
+            out["remarque"] = (
+                "aucun manifeste recu. GK le reclame par le canal retour "
+                "(besoin `catalogue_vide`) a chaque reponse qu'il rend deja."
+            )
+        else:
+            out["a_reclamer_au_prochain_tour"] = catalogue.wanted()
+            rows = store.query(
+                "SELECT category, COUNT(*) n FROM skills WHERE missing_since IS NULL "
+                "GROUP BY category ORDER BY n DESC LIMIT 15"
+            )
+            out["par_categorie"] = {r["category"] or "(sans)": r["n"] for r in rows}
+            sans_desc = store.one(
+                "SELECT COUNT(*) c FROM skills WHERE missing_since IS NULL AND description = ''"
+            )
+            out["sans_description"] = int(sans_desc["c"]) if sans_desc else 0
+        _emit(out, args)
     return 0
 
 
@@ -284,6 +322,10 @@ def build_parser() -> argparse.ArgumentParser:
     e = sub.add_parser("export", help="sauvegarder les quatre tables irremplacables")
     e.add_argument("-o", "--output", help="fichier de sortie")
     e.set_defaults(func=cmd_export)
+
+    sub.add_parser(
+        "catalogue", help="l'etat du catalogue recu par manifeste"
+    ).set_defaults(func=cmd_catalogue)
 
     pa = sub.add_parser("patterns", help="les motifs charges et leur empreinte")
     pa.add_argument("-v", "--verbose", action="store_true")

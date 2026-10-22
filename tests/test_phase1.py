@@ -21,7 +21,7 @@ from gk.cli import main as cli_main  # noqa: E402
 from gk.config import Config  # noqa: E402
 from gk.patterns import Detector  # noqa: E402
 from gk.service import Service  # noqa: E402
-from gk.store import Store  # noqa: E402
+from gk.store import SCHEMA_VERSION, Store  # noqa: E402
 
 MOTIFS = Path(__file__).resolve().parents[1] / "motifs.yaml"
 
@@ -378,7 +378,10 @@ def test_le_conteneur_ecoute_sur_toutes_les_interfaces():
 def test_migration_2_ajoute_turn_id(tmp_path):
     """Additive, donc une version precedente de GK sait encore lire la base."""
     store = Store(tmp_path / "m.db")
-    assert store.migrate() == 2
+    # Compare a SCHEMA_VERSION et non a un nombre en dur : ajouter une
+    # migration ne doit pas faire echouer le test de la precedente.
+    assert store.migrate() == SCHEMA_VERSION
+    assert SCHEMA_VERSION >= 2
     colonnes = {r["name"] for r in store.query("PRAGMA table_info(corrections)")}
     assert "turn_id" in colonnes
     assert {"id", "ts", "session_id", "classification"} <= colonnes, "rien supprime"

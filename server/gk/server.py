@@ -95,6 +95,36 @@ def build(service: Service, config: Config):
             logger.warning("skill_lifecycle a echoue: %r", exc)
             return {"v": 1, "ok": False, "degrade": True}
 
+    @server.tool(
+        name="catalog",
+        description=(
+            "Recoit le manifeste des skills et rend la liste des tranches que GK veut. "
+            "Le manifeste est complet par principe, jamais des deltas : GK compare les "
+            "empreintes et ne reclame que ce qui a bouge."
+        ),
+    )
+    def catalog(skills: list[dict], complete: bool = False) -> dict:
+        try:
+            return service.catalog(skills, complete)
+        except Exception as exc:
+            logger.warning("catalog a echoue: %r", exc)
+            return {"v": 1, "ok": False, "degrade": True, "wanted": [], "besoins": []}
+
+    @server.tool(
+        name="sections",
+        description=(
+            "Recoit les tranches des skills reclames. Une entree doit figurer meme quand "
+            "aucun intitule n'a correspondu, avec sections vide, sinon GK la reclamerait "
+            "indefiniment."
+        ),
+    )
+    def sections(items: list[dict]) -> dict:
+        try:
+            return service.sections(items)
+        except Exception as exc:
+            logger.warning("sections a echoue: %r", exc)
+            return {"v": 1, "ok": False, "degrade": True, "wanted": [], "besoins": []}
+
     @server.custom_route("/health", methods=["GET"])
     async def health(_request):
         """Teste vraiment quelque chose plutot que de repondre 200 a vide : sans

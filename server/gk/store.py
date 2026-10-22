@@ -18,7 +18,7 @@ import time
 from pathlib import Path
 from typing import Any, Iterable
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 # Chaque migration est une liste d'instructions, appliquee une fois, dans
 # l'ordre. On n'edite JAMAIS une migration deja publiee : on en ajoute une.
@@ -117,6 +117,51 @@ MIGRATIONS: dict[int, tuple[str, ...]] = {
         "ALTER TABLE corrections ADD COLUMN turn_id TEXT NOT NULL DEFAULT ''",
         "ALTER TABLE skill_uses ADD COLUMN turn_id TEXT NOT NULL DEFAULT ''",
         "CREATE INDEX idx_corrections_turn ON corrections(turn_id)",
+    ),
+    # Le catalogue, pour la phase 2 allegee. Quatre champs seulement sont
+    # indexes -- nom, description et les deux moities des declencheurs -- parce
+    # que le prompt systeme de Hermes porte deja le catalogue complet et que
+    # l'index n'a donc pas a redire ce qui existe, seulement a designer.
+    #
+    # `fingerprint` vient de (taille, mtime) cote pont, pas d'un hachage du
+    # contenu : un manifeste coute 177 `stat`. `indexed_fingerprint` retient
+    # l'empreinte au moment ou les tranches ont ete recues, et leur difference
+    # est exactement la liste de ce qu'il reste a reclamer.
+    #
+    # Un skill disparu est marque, jamais supprime : `missing_since` sert au
+    # retrait des cas de test et au signalement, et une suppression perdrait la
+    # date.
+    3: (
+        """
+        CREATE TABLE skills (
+            path                TEXT PRIMARY KEY,
+            name                TEXT NOT NULL DEFAULT '',
+            description         TEXT NOT NULL DEFAULT '',
+            category            TEXT NOT NULL DEFAULT '',
+            fingerprint         TEXT NOT NULL DEFAULT '',
+            indexed_fingerprint TEXT NOT NULL DEFAULT '',
+            indexed_at          REAL,
+            first_seen          REAL NOT NULL,
+            last_seen           REAL NOT NULL,
+            missing_since       REAL
+        )
+        """,
+        "CREATE INDEX idx_skills_missing ON skills(missing_since)",
+        "CREATE INDEX idx_skills_name ON skills(name)",
+        # Les tranches sont gardees BRUTES. Changer les regles de decoupage en
+        # positif et negatif ne demandera donc pas un nouveau tour de manifeste,
+        # et `kind` laisse la place aux lignes derivees sans migration.
+        """
+        CREATE TABLE skill_sections (
+            path        TEXT NOT NULL,
+            kind        TEXT NOT NULL DEFAULT 'brut',
+            heading     TEXT NOT NULL DEFAULT '',
+            text        TEXT NOT NULL DEFAULT '',
+            ts          REAL NOT NULL,
+            PRIMARY KEY (path, kind, heading)
+        )
+        """,
+        "CREATE INDEX idx_sections_kind ON skill_sections(kind)",
     ),
 }
 

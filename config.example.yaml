@@ -6,9 +6,13 @@
 database: /var/lib/gk/gk.db
 patterns: /etc/gk/motifs.yaml
 
-# Racine d'indexation, nommee explicitement et jamais decouverte recursivement.
-# Le volume contient 866 SKILL.md pour une bibliotheque de 537 : une decouverte
-# large indexerait les doublons et produirait des recommandations ambigues.
+# La racine que GK demandera au pont de parcourir -- nommee explicitement, et
+# jamais une decouverte large : le volume de l'agent contient des instantanes et
+# des profils dupliques, qu'un parcours trop large indexerait comme des doublons.
+#
+# GK ne lit PAS ce chemin lui-meme : il n'a pas le volume de l'agent monte, c'est
+# tout l'objet de la conception par push. La valeur est declaree ici pour qu'il
+# n'existe qu'une seule source de verite, et transmise au pont.
 skills_root: /opt/data/skills
 
 # Boucle locale uniquement. L'agent tourne en network_mode: host, donc aucun nom

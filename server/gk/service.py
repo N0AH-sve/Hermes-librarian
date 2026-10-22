@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
+from .catalog import Catalog
 from .corrections import PENDING_SECONDS, Recorder, reconcile_on_start
 from .patterns import Detector
 from .store import Store, now
@@ -32,6 +33,7 @@ class Service:
     store: Store
     detector: Detector
     recorder: Recorder
+    catalog_: Catalog
     require_token: bool = False
 
     @classmethod
@@ -42,6 +44,7 @@ class Service:
             store=store,
             detector=Detector.load(patterns_path),
             recorder=Recorder(store),
+            catalog_=Catalog(store),
             require_token=require_token,
         )
 
@@ -150,6 +153,38 @@ class Service:
             attributed = self.recorder.attribute(int(pending["id"]), skill_name)
         return {"v": 1, "ok": True, "attribution": attributed, "besoins": self._besoins()}
 
+    # -- catalogue ----------------------------------------------------------
+
+    def catalog(self, skills: list[dict], complete: bool = False) -> dict:
+        """Recoit le manifeste et rend la liste des tranches voulues.
+
+        Le manifeste est complet par principe, jamais des deltas : GK compare
+        les empreintes et ne reclame que ce qui a bouge. Une execution manquee
+        retarde donc, elle ne desynchronise pas.
+
+        `complete=False` est le cas d'un manifeste partiel : il n'a pas le droit
+        de faire disparaitre un skill, sous peine qu'une page manquante vide le
+        catalogue.
+        """
+        if not isinstance(skills, list):
+            return {"v": 1, "ok": False, "erreur": "skills doit etre une liste"}
+        resultat = self.catalog_.ingest(skills, complete=bool(complete))
+        logger.info(
+            "manifeste: %d recus, %d nouveaux, %d modifies, %d disparus, %d a reclamer",
+            resultat["recus"], resultat["nouveaux"], resultat["modifies"],
+            resultat["disparus"], len(resultat["wanted"]),
+        )
+        return {"v": 1, "ok": True, **resultat, "besoins": self._besoins()}
+
+    def sections(self, items: list[dict]) -> dict:
+        """Recoit les tranches. Elles sont gardees brutes : le decoupage en
+        positif et negatif se fait a l'indexation, donc le changer plus tard ne
+        demandera pas un nouveau tour de manifeste."""
+        if not isinstance(items, list):
+            return {"v": 1, "ok": False, "erreur": "items doit etre une liste"}
+        resultat = self.catalog_.store_sections(items)
+        return {"v": 1, "ok": True, **resultat, "besoins": self._besoins()}
+
     # -- etat ---------------------------------------------------------------
 
     def health(self) -> dict:
@@ -172,6 +207,10 @@ class Service:
             detail["erreur"] = repr(exc)
         last = self.store.counter("last_observe_ts")
         detail["derniere_observation_il_y_a_s"] = round(now() - last, 1) if last else None
+        try:
+            detail["catalogue"] = self.catalog_.stats()
+        except Exception as exc:  # pragma: no cover - chemin de panne
+            detail["catalogue"] = {"erreur": repr(exc)}
         # Dire la verite sur l'authentification plutot que de la laisser deviner.
         detail["jeton_exige"] = bool(self.require_token)
         return {"v": 1, "ok": ok, **detail}
@@ -180,12 +219,23 @@ class Service:
         """Canal retour : GK signale ses besoins dans les reponses qu'il envoie
         deja, sans jamais parler le premier.
 
-        En phase 1 il n'y a pas de catalogue, donc rien a reclamer. La liste
-        existe pour que le plugin apprenne a l'ignorer silencieusement — un
-        besoin inconnu doit etre sans effet, c'est ce qui rendra les suivants
-        gratuits.
+        Regle qui le rend durable : un besoin que le plugin ne connait pas est
+        ignore en silence. On peut donc en ajouter autant qu'on veut sans
+        toucher au plugin, et c'est ce qui rend celui-ci stable.
+
+        Ne leve jamais : un besoin est un service rendu, pas une raison de faire
+        echouer l'appel qui le transporte.
         """
-        return []
+        try:
+            besoins: list[str] = []
+            if self.catalog_.total() == 0:
+                besoins.append("catalogue_vide")
+            elif self.catalog_.wanted(limite=1):
+                besoins.append("tranches_attendues")
+            return besoins
+        except Exception as exc:  # pragma: no cover - chemin de panne
+            logger.warning("besoins indisponibles: %r", exc)
+            return []
 
     def close(self) -> None:
         self.store.close()

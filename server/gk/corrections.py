@@ -246,7 +246,15 @@ def retire_testcases(store: Store, live_skills: set[str]) -> int:
     Une correction vaut tant que les skills qu'elle nomme gardent la meme
     empreinte : au-dela, c'est un fossile qui melange deux etats de la
     bibliotheque. Le compteur, lui, reste sans limite.
+
+    **Refuse d'agir sur un ensemble vide.** Depuis que `live_skills` vient du
+    catalogue et non d'un balayage du disque, un catalogue pas encore recu
+    donnerait un ensemble vide — et tous les cas de test seraient alors mis au
+    rebut d'un coup, puisque aucun nom n'appartient a l'ensemble vide. Le corpus
+    du banc est irremplacable : il ne se reconstruit pas.
     """
+    if not live_skills:
+        return 0
     rows = store.query(
         "SELECT id, skill_expected FROM corrections WHERE testcase_retired_at IS NULL"
     )
