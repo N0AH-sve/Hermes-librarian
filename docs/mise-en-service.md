@@ -368,6 +368,94 @@ c'est lui qui dit pourquoi.
 
 ---
 
+## Mettre en service le facteur (phase 2)
+
+Le « facteur » est le morceau qui pousse le catalogue des skills vers GK. C'est
+**le seul moment de toute la phase 2 où gb est touché**. Après celui-là, les
+étapes suivantes ne demandent qu'une reconstruction de GK.
+
+Le pont ne gagne **aucun hook** : `pre_llm_call` reste absent, et un test le
+vérifie. Le manifeste part sur `transform_llm_output`, déjà câblé, après que
+l'agent a répondu, sur un fil détaché, au plus une fois par heure.
+
+**1. Récupérer le code.**
+
+```bash
+cd ~/greenknowledge \
+  && git fetch origin \
+  && git checkout claude/repo-access-2k0hcz \
+  && git pull --ff-only origin claude/repo-access-2k0hcz
+```
+
+**2. Reconstruire GK**, qui porte maintenant les outils `catalog` et `sections`.
+gb n'est pas touché : le pont se dégrade en silence si GK est absent.
+
+```bash
+docker compose -f ~/greenknowledge/deploy/compose.gk.yaml up -d --build
+docker compose -f ~/greenknowledge/deploy/compose.gk.yaml exec gk gk catalogue
+```
+
+Attendu : `skills: 0` et une remarque disant qu'aucun manifeste n'a été reçu.
+Si la commande `catalogue` n'existe pas, la reconstruction n'a pas pris.
+
+**3. Recopier les deux fichiers du pont.** Il y en a deux désormais : le
+manifeste vit dans `catalogue.py`, pour que la partie qui tourne sur le trajet
+d'une réponse reste aussi courte qu'avant.
+
+```bash
+for f in __init__.py catalogue.py; do
+  docker compose -f ~/next_hermes/compose.yaml exec -T hermes bash -lc \
+    "cat > /opt/data/plugins/gk-bridge/$f" \
+    < ~/greenknowledge/hermes-plugin/gk-bridge/$f
+done
+
+docker compose -f ~/next_hermes/compose.yaml exec hermes bash -lc \
+  'ls -la /opt/data/plugins/gk-bridge/ ; \
+   grep -c _ronde_catalogue /opt/data/plugins/gk-bridge/__init__.py'
+```
+
+Attendu : les deux fichiers présents, et un compte supérieur à zéro. Si c'est
+zéro, **ne redémarre pas**.
+
+**4. Redémarrer gb.** Deux à trois minutes, comme toujours
+(`stop_grace_period` 45 s, `start_period` 120 s).
+
+```bash
+docker compose -f ~/next_hermes/compose.yaml restart hermes
+docker compose -f ~/next_hermes/compose.yaml ps
+```
+
+**5. Envoyer un message à gb, puis lire.** La première ronde part dès la
+première réponse, parce que GK réclame par le canal retour (`catalogue_vide`)
+sans attendre l'heure.
+
+```bash
+docker compose -f ~/greenknowledge/deploy/compose.gk.yaml exec gk gk catalogue
+
+docker compose -f ~/next_hermes/compose.yaml exec hermes bash -lc \
+  'grep ronde_catalogue /opt/data/gk-bridge.jsonl | tail -2'
+```
+
+Attendu côté `gk catalogue` : `skills` proche du nombre réel de skills, et
+`a_indexer` qui tombe à zéro en une ou deux rondes. Côté journal, une ligne par
+ronde avec `manifeste_envoye`, `tranches_envoyees`, `restants` et `duree_s`.
+
+| Dans le journal | Ce que ça dit |
+|---|---|
+| `catalogue_charge` / `voie` | si `catalogue.py` a été chargé par import relatif ou par chemin |
+| `hermes` | si `_find_all_skills` a répondu, et combien de skills il a donnés |
+| `filtres` | combien de skills du disque Hermes considère inactifs |
+| `parcours: tronque` | le garde-fou a coupé : racine inattendue ou budget dépassé |
+| `restants` > 0 | normal à la première ronde, la liste est bornée à 40 par appel |
+| `erreur: refuse` | `mcp_allowlist` ne contient pas `gk` |
+| `forme_inconnue` | le résultat MCP n'a pas la forme attendue : m'envoyer la ligne |
+
+*Revenir en arrière* : remettre les deux fichiers de la version précédente et
+redémarrer, ou retirer `gk-bridge` de `plugins.enabled`. Le catalogue déjà reçu
+reste dans la base de GK et ne gêne rien.
+
+---
+
 ## Ce qui peut mal tourner, et à quoi ça se voit
 
 | Symptôme | Cause probable | Que faire |
