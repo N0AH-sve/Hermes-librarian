@@ -12,6 +12,35 @@ tourne et que personne n'appelle ne peut rien casser.
 aveux. Elle n'injecte rien — le pont ne déclare aucun hook d'entrée. Le
 comportement de gb est strictement inchangé.
 
+**Sur l'utilisateur, et c'est un incident qui l'a appris.** `docker compose
+exec` entre dans le conteneur **en root**, pas en 1001 comme le processus de gb.
+Toutes les commandes ci-dessous passent donc par `-u 1001`. La seule exception
+est un `chown` de reparation, qui a besoin de root.
+
+Pourquoi ce n'est pas un detail : le 2026-10-22, la copie de `catalogue.py` a
+cree un fichier `root:root` en mode 666 dans `/opt/data`. gb a refuse son propre
+fichier de verrou de passerelle (`ignoring host record ... owned by uid 0
+(expected 1001)`), n'a pas fini de demarrer, et **a cesse de repondre** jusqu'a
+ce qu'un `chown -R 1001:1001` et un redemarrage le remettent. Les etapes
+precedentes n'avaient rien casse parce qu'elles ecrasaient des fichiers
+existants, et `cat >` preserve le proprietaire d'un fichier qui existe. La phase
+2b est la premiere a creer un fichier neuf.
+
+Verification apres toute copie dans `/opt/data` :
+
+```bash
+docker compose -f ~/next_hermes/compose.yaml exec -u 1001 hermes bash -lc \
+  'ls -ln /opt/data/plugins/gk-bridge/'
+```
+
+Tout doit etre `1001 1001`. Si quelque chose est `0 0`, le reparer **avant** de
+redemarrer :
+
+```bash
+docker compose -f ~/next_hermes/compose.yaml exec -u 0 hermes bash -lc \
+  'chown -R 1001:1001 /opt/data/plugins/gk-bridge /opt/data/gk-bridge.jsonl'
+```
+
 **Sur les chemins** : les commandes de GreenKnowledge se lancent depuis
 `~/greenknowledge`, celles de l'agent visent `~/next_hermes/compose.yaml` en
 chemin absolu. Les deux se mélangent dans la procédure, donc les chemins sont
@@ -146,7 +175,7 @@ n'a pas été touché.
 **Sauvegarde d'abord**, selon la convention déjà en usage dans le volume :
 
 ```bash
-docker compose -f ~/next_hermes/compose.yaml exec hermes bash -lc \
+docker compose -f ~/next_hermes/compose.yaml exec -u 1001 hermes bash -lc \
   'cp /opt/data/config.yaml /opt/data/config.yaml.bak-avant-gk-'$(date +%Y%m%d-%H%M%S)
 ```
 
@@ -165,7 +194,7 @@ une erreur d'indentation YAML ne se voit qu'au redémarrage de l'agent.
 | `plugins.entries.gk-bridge.mcp_allowlist` | `call_mcp` lève une `PermissionError`, par défaut-refus |
 
 ```bash
-docker compose -f ~/next_hermes/compose.yaml exec -T hermes python3 - < ~/greenknowledge/deploy/brancher-gk.py
+docker compose -f ~/next_hermes/compose.yaml exec -u 1001 -T hermes python3 - < ~/greenknowledge/deploy/brancher-gk.py
 ```
 
 Le script est dans le dépôt, donc relisible avant d'être lancé. Il sauvegarde de
@@ -190,7 +219,7 @@ C'est la première étape qui touche réellement l'agent. Elle est aussi la plus
 facile à défaire.
 
 ```bash
-docker compose -f ~/next_hermes/compose.yaml exec hermes bash -lc \
+docker compose -f ~/next_hermes/compose.yaml exec -u 1001 hermes bash -lc \
   'ls -la /opt/data/plugins/'
 # verifier qu'il n'y a pas deja un gk-bridge
 
@@ -226,7 +255,7 @@ toucher aux autres entrées. Un plugin figure soit dans `enabled`, soit dans
 d'entrée :
 
 ```bash
-docker compose -f ~/next_hermes/compose.yaml exec hermes bash -lc \
+docker compose -f ~/next_hermes/compose.yaml exec -u 1001 hermes bash -lc \
   'cat /opt/data/plugins/gk-bridge/plugin.yaml'
 # attendu : hooks: transform_llm_output et on_skill_lifecycle, et RIEN d'autre.
 # Si "pre_llm_call" apparait, n'installe pas : ce n'est pas la phase 1.
@@ -268,7 +297,7 @@ redémarre : tu auras au passage répondu à la question.
 Envoie un message quelconque à gb, par le canal habituel. Puis :
 
 ```bash
-docker compose -f ~/next_hermes/compose.yaml exec hermes bash -lc \
+docker compose -f ~/next_hermes/compose.yaml exec -u 1001 hermes bash -lc \
   'cat /opt/data/gk-bridge.jsonl'
 ```
 
@@ -333,11 +362,11 @@ rootless, donc l'uid de l'hôte et celui du volume ne coïncident pas et un `cp`
 depuis l'hôte peut échouer en « permission non accordée ».
 
 ```bash
-docker compose -f ~/next_hermes/compose.yaml exec -T hermes bash -lc \
+docker compose -f ~/next_hermes/compose.yaml exec -u 1001 -T hermes bash -lc \
   'cat > /opt/data/plugins/gk-bridge/__init__.py' \
   < ~/greenknowledge/hermes-plugin/gk-bridge/__init__.py
 
-docker compose -f ~/next_hermes/compose.yaml exec hermes bash -lc \
+docker compose -f ~/next_hermes/compose.yaml exec -u 1001 hermes bash -lc \
   'grep -c response_text /opt/data/plugins/gk-bridge/__init__.py'
 # attendu : au moins 1. Si 0, la copie n'a pas eu lieu, ne redemarre pas.
 ```
@@ -404,12 +433,12 @@ d'une réponse reste aussi courte qu'avant.
 
 ```bash
 for f in __init__.py catalogue.py; do
-  docker compose -f ~/next_hermes/compose.yaml exec -T hermes bash -lc \
+  docker compose -f ~/next_hermes/compose.yaml exec -u 1001 -T hermes bash -lc \
     "cat > /opt/data/plugins/gk-bridge/$f" \
     < ~/greenknowledge/hermes-plugin/gk-bridge/$f
 done
 
-docker compose -f ~/next_hermes/compose.yaml exec hermes bash -lc \
+docker compose -f ~/next_hermes/compose.yaml exec -u 1001 hermes bash -lc \
   'ls -la /opt/data/plugins/gk-bridge/ ; \
    grep -c _ronde_catalogue /opt/data/plugins/gk-bridge/__init__.py'
 ```
@@ -432,7 +461,7 @@ sans attendre l'heure.
 ```bash
 docker compose -f ~/greenknowledge/deploy/compose.gk.yaml exec gk gk catalogue
 
-docker compose -f ~/next_hermes/compose.yaml exec hermes bash -lc \
+docker compose -f ~/next_hermes/compose.yaml exec -u 1001 hermes bash -lc \
   'grep ronde_catalogue /opt/data/gk-bridge.jsonl | tail -2'
 ```
 

@@ -1831,6 +1831,51 @@ C'est exactement la distinction que la phase 1 mesure déjà —
 | **Les faits sourcés** (phase 4) | Indépendant de la recherche. `RÈGLE ABSOLUE` datée et attribuée en est l'amorce |
 | **Le rangement** | Auditer les noms écrits à la main dans `DOMAINS`, signaler orphelins, doublons et skills trop gros |
 
+### L'incident du 2026-10-22 : gb a cessé de répondre
+
+À consigner parce que c'est la panne la plus coûteuse du projet, qu'elle vient
+d'un défaut de procédure et non de conception, et qu'elle a une partie non
+expliquée qui peut recommencer.
+
+**La chaîne.** `docker compose exec` entre dans le conteneur **en root**
+(`uid=0(root)`, relevé), pas en 1001 comme le processus de gb. La copie de
+`catalogue.py` a donc créé un fichier `root:root` en mode 666 dans `/opt/data`.
+Au redémarrage, gb a refusé son propre fichier de verrou de passerelle —
+`ignoring host record .../host-gateway.json: owned by uid 0 (expected 1001)`,
+dernière ligne du démarrage — n'a pas fini de démarrer, l'API n'a pas écouté
+le port du healthcheck, et **gb a cessé de répondre**. Un
+`chown -R 1001:1001` sur les verrous et un redémarrage l'ont remis.
+
+**Pourquoi maintenant et pas avant.** Les étapes précédentes écrasaient des
+fichiers existants, et `cat >` préserve le propriétaire d'un fichier qui existe.
+La phase 2b est la première à **créer** un fichier neuf dans `/opt/data`. Le
+défaut était là depuis le début et attendait son occasion.
+
+**Ce qui reste inexpliqué, et qui peut recommencer.** `host-gateway.json` n'a
+jamais été touché par nous, et les verrous de jetons Discord et Telegram en
+`root:root` datent du redémarrage **précédent**. Quelque chose dans ce conteneur
+crée des fichiers root dans `/opt/data` de lui-même — vraisemblablement un
+composant de gb qui tourne en root là où un autre attend 1001. Si c'est le cas,
+le problème reviendra à chaque redémarrage, indépendamment de GK, et il faudra
+soit un `chown` systématique soit une correction côté Hermes. À vérifier en
+relevant le propriétaire de `host-gateway.json` après un redémarrage où GK n'a
+rien copié.
+
+**Trois corrections de procédure.** Tous les `exec` du runbook passent par
+`-u 1001`, la seule exception étant un `chown` de réparation ; une vérification
+de propriétaire suit toute copie dans `/opt/data` et précède tout redémarrage ;
+et le runbook porte désormais la neutralisation d'urgence du pont (un
+`register()` qui ne fait rien), qui rend gb identique à ce qu'il était avant GK
+sans toucher à `config.yaml`.
+
+**Et une leçon sur la fréquence des redémarrages.** Un redémarrage de gb coûte
+deux à trois minutes pendant lesquelles l'équipe ne peut pas travailler. Cela
+n'avait jamais été dit dans la conception, et ce n'est pas un détail
+d'exploitation : c'est la raison pour laquelle `catalogue.py` est désormais
+**relu à chaud** quand son horodatage change, et pourquoi toute la logique
+susceptible de bouger y a été descendue. Le coût d'un changement fait partie de
+la conception.
+
 ### Deux relevés de la mise en service du facteur
 
 **L'enveloppe de `call_mcp`.** `hermes_cli/plugins.py`
