@@ -403,7 +403,10 @@ def cmd_banc(args, cfg: Config) -> int:
         informations = [index.information(d) for d, _, _ in cas]
         informations_triees = sorted(informations)
         seuil = informations_triees[max(0, len(informations_triees) // 10)]
-        rangs: dict[str, list[int | None]] = {"tous": [], "sans": []}
+        # Trois bras : tous les champs, nom+description seul, et le mixte --
+        # declencheurs pour le metier seulement. Le troisieme est ne du relevé
+        # qui montre deux effets de signes opposes selon la population.
+        rangs: dict[str, list[int | None]] = {"tous": [], "sans": [], "mixte": []}
         groupes: dict[str, dict[str, list]] = {}
         echecs: list[dict] = []
         # Deux echecs tres differents, qu'il ne faut pas confondre : aucun
@@ -419,10 +422,11 @@ def cmd_banc(args, cfg: Config) -> int:
                 "metier" if metier else "generique",
                 "peu_informative" if info <= seuil else "informative",
             ]
-            for bras, sans in (("tous", False), ("sans", True)):
+            for bras, sans in (("tous", False), ("sans", True), ("mixte", False)):
                 sortie = index.chercher(
                     demande, limite=args.limite, sans_declencheurs=sans,
                     exclure_exemple=ligne,
+                    declencheurs_metier_seulement=(bras == "mixte"),
                 )
                 noms = [r["name"] for r in sortie]
                 rang = noms.index(attendu) + 1 if attendu in noms else None
@@ -442,7 +446,11 @@ def cmd_banc(args, cfg: Config) -> int:
                         })
         out = {"ok": True, "cas": len(cas), "skills_indexes": index.n,
                "rang_maximal_compte": args.limite}
-        for bras, etiquette in (("tous", "tous_les_champs"), ("sans", "nom_description")):
+        for bras, etiquette in (
+            ("tous", "tous_les_champs"),
+            ("sans", "nom_description"),
+            ("mixte", "declencheurs_metier_seulement"),
+        ):
             trouves = [r for r in rangs[bras] if r is not None]
             out[etiquette] = {
                 "rappel_1": round(sum(1 for r in trouves if r == 1) / len(cas), 3),
@@ -456,6 +464,7 @@ def cmd_banc(args, cfg: Config) -> int:
                 f"rappel_{args.limite}": _taux(bras_rangs["tous"], args.limite),
                 "mrr": _mrr(bras_rangs["tous"]),
                 "mrr_nom_description": _mrr(bras_rangs["sans"]),
+                "mrr_mixte": _mrr(bras_rangs["mixte"]),
             }
             for etiquette, bras_rangs in sorted(groupes.items())
         }
@@ -512,13 +521,34 @@ def _lire_banc(out: dict, gain: float) -> list[str]:
             f"{generique['mrr']} sur {generique['cas']}. Ce sont deux problemes "
             "de recherche differents, et la moyenne ne decrit ni l'un ni l'autre."
         )
+    # Un signe oppose selon la population est l'information la plus utile du
+    # banc, et une moyenne la ferait disparaitre.
+    for nom, bloc in (("metier", metier), ("generique", generique)):
+        if not bloc:
+            continue
+        ecart = round(bloc["mrr"] - bloc["mrr_nom_description"], 3)
+        if ecart < 0:
+            lignes.append(
+                f"INVERSION sur {nom} : nom+description font MIEUX que tous les "
+                f"champs ({bloc['mrr_nom_description']} contre {bloc['mrr']}, "
+                f"{ecart}). Les declencheurs NUISENT a cette population."
+            )
+    mixte = out.get("declencheurs_metier_seulement")
+    if mixte and mixte["mrr"] > out["tous_les_champs"]["mrr"]:
+        lignes.append(
+            f"Le bras mixte -- declencheurs pour le metier seulement -- fait "
+            f"{mixte['mrr']} contre {out['tous_les_champs']['mrr']}. A confirmer "
+            "sur d'autres demandes avant d'en faire une regle : le mecanisme est "
+            "comprehensible, mais le corpus a servi a le trouver."
+        )
     peu = pop.get("peu_informative")
     if peu:
         lignes.append(
-            f"{peu['cas']} demandes portent peu de mots de domaine (MRR "
-            f"{peu['mrr']}) : des declencheurs d'etat de conversation comme "
-            "\u00ab etape 1 validee, go \u00bb. Aucune recherche par les mots ne peut les "
-            "servir, et les corriger n'est pas un travail de score."
+            f"{peu['cas']} demandes portent peu de mots de domaine : MRR "
+            f"{peu['mrr']} contre {pop.get('informative', {}).get('mrr', '?')}. "
+            "Elles sont plus dures, pas introuvables -- une premiere version de "
+            "cette lecture affirmait le contraire, et les donnees la "
+            "contredisaient."
         )
     aucun = out.get("echecs_sans_aucun_resultat", 0)
     mauvais = out.get("echecs_mauvais_skill", 0)

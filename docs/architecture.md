@@ -1831,6 +1831,57 @@ C'est exactement la distinction que la phase 1 mesure déjà —
 | **Les faits sourcés** (phase 4) | Indépendant de la recherche. `RÈGLE ABSOLUE` datée et attribuée en est l'amorce |
 | **Le rangement** | Auditer les noms écrits à la main dans `DOMAINS`, signaler orphelins, doublons et skills trop gros |
 
+### Le banc, mesuré : deux effets de signes opposés
+
+Relevé du 2026-10-22, 259 cas tirés des phrases citées des déclencheurs, chacune
+retirée de l'index de son propre skill avant d'être cherchée.
+
+| Population | cas | rappel@1 | rappel@5 | MRR | MRR nom+description |
+|---|---|---|---|---|---|
+| **Métier** (`greenmusic`) | 175 | 0,509 | 0,720 | **0,592** | 0,375 |
+| **Générique** | 84 | 0,310 | 0,512 | **0,391** | **0,455** |
+| Informative | 233 | 0,459 | 0,661 | 0,541 | 0,419 |
+| Peu informative | 26 | 0,308 | 0,577 | 0,397 | 0,243 |
+| **Ensemble** | 259 | 0,444 | 0,653 | 0,527 | 0,401 |
+
+**Le résultat central n'est pas le gain moyen de +0,126.** C'est que les
+déclencheurs apportent **+0,217 de MRR au métier** et **en ôtent 0,064 au
+générique**. Deux effets de signes opposés, qu'une moyenne faisait disparaître.
+
+Le mécanisme se lit dans les échecs : `baoyu-comic` perd contre
+`baoyu-infographic`, `claude-design` contre `gm-stripe-operations` et `linear`.
+Les skills génériques se citent les uns les autres et nomment les mêmes outils —
+c'est le risque de précision mesuré plus haut, concentré sur une seule
+population.
+
+**Ce que ça tranche.** L'objection de GM — « le bibliothécaire a seulement
+besoin de nom + description » — est **fausse pour le métier** (0,375 contre
+0,592) et **juste pour le générique** (0,455 contre 0,391). Elle avait raison
+quelque part, et pas là où l'enjeu se trouve.
+
+Et le gain ne vient pas du moteur, qui est une somme pondérée de quinze lignes
+sans FTS5 ni BM25 : il vient des 296 phrases écrites à la main. **La valeur est
+dans la bibliothèque ; l'outil la rend utilisable.** C'est ce qu'il faut dire aux
+décideurs, et c'est vérifiable.
+
+**Un troisième bras est donc ajouté au banc** : les déclencheurs indexés pour le
+métier seulement. À confirmer avant d'en faire une règle — le mécanisme est
+compréhensible, mais c'est ce corpus qui a servi à le trouver, donc la règle
+risque de lui être ajustée.
+
+**Une affirmation corrigée.** La première lecture du banc disait qu'aucune
+recherche par les mots ne pouvait servir les demandes sans vocabulaire de
+domaine. Les données la contredisent : ces 26 demandes obtiennent 0,577 de
+rappel@5, et les déclencheurs les aident de +0,154. L'affirmation valait pour
+« étape 1 validée, go » prise isolément, pas pour le décile entier. Elle était
+dans le texte que la commande imprime, donc elle aurait voyagé.
+
+**Ce que le chiffre ne permet pas encore.** Un rappel@5 de 0,720 sur le métier,
+avec un corpus curé donc optimiste, ne suffit pas à fonder un brief injecté. La
+phase 3 ne se décide pas sur ce seul chiffre, et le remède aux 88 échecs de
+classement est à chercher d'abord dans les descriptions — un travail de
+rédaction — avant de régler des coefficients.
+
 ### Les déclencheurs sont des citations de l'utilisateur
 
 Relevé le 2026-10-22 en lisant un skill réel, `gm-supplier-invoice-control` :

@@ -335,3 +335,99 @@ def test_l_information_d_une_demande_se_mesure(tmp_path):
         assert index.information("et le la") == 0.0, "que des mots vides"
     finally:
         store.close()
+
+
+# -- l'inversion selon la population --------------------------------------
+
+
+def test_les_declencheurs_ne_sont_indexes_que_pour_le_metier(tmp_path):
+    """Relevé du 2026-10-22 : les declencheurs apportent +0,217 de MRR au metier
+    et OTENT 0,064 au generique. Le bras mixte permet de mesurer la regle qui en
+    decoule, au lieu de la decreter."""
+    store = Store(tmp_path / "m.db")
+    cat = Catalog(store)
+    cat.ingest([
+        {"path": "greenmusic/gm-metier/SKILL.md", "name": "gm-metier",
+         "description": "Un skill metier.", "category": "greenmusic",
+         "fingerprint": "1"},
+        {"path": "creative/generique/SKILL.md", "name": "generique",
+         "description": "Un skill generique.", "category": "creative",
+         "fingerprint": "1"},
+    ], complete=True)
+    cat.store_sections([
+        {"path": "greenmusic/gm-metier/SKILL.md", "fingerprint": "1",
+         "sections": [{"heading": "Déclencheurs", "text": "- « zorglub metier »"}]},
+        {"path": "creative/generique/SKILL.md", "fingerprint": "1",
+         "sections": [{"heading": "Déclencheurs", "text": "- « zorglub generique »"}]},
+    ])
+    index = Index.construire(store)
+    try:
+        # Sans la regle, les deux remontent sur le mot des declencheurs.
+        tous = {r["name"] for r in index.chercher("zorglub")}
+        assert tous == {"gm-metier", "generique"}
+        # Avec, seul le metier porte ses declencheurs.
+        mixte = [r["name"] for r in index.chercher(
+            "zorglub", declencheurs_metier_seulement=True
+        )]
+        assert mixte == ["gm-metier"]
+    finally:
+        store.close()
+
+
+def test_le_banc_signale_une_inversion(tmp_path, capsys, monkeypatch):
+    """Un signe oppose selon la population est l'information la plus utile du
+    banc, et une moyenne la ferait disparaitre."""
+    store = Store(tmp_path / "inv.db")
+    cat = Catalog(store)
+    # Deux generiques qui se ressemblent : leurs declencheurs se confondent, et
+    # nom+description discriminent mieux.
+    cat.ingest([
+        {"path": "greenmusic/gm-a/SKILL.md", "name": "gm-a",
+         "description": "Factures fournisseurs proforma.", "category": "greenmusic",
+         "fingerprint": "1"},
+        {"path": "creative/comic/SKILL.md", "name": "comic",
+         "description": "Bandes dessinees.", "category": "creative", "fingerprint": "1"},
+        {"path": "creative/infographic/SKILL.md", "name": "infographic",
+         "description": "Infographies.", "category": "creative", "fingerprint": "1"},
+    ], complete=True)
+    cat.store_sections([
+        {"path": "greenmusic/gm-a/SKILL.md", "fingerprint": "1",
+         "sections": [{"heading": "Déclencheurs", "text": "- « proforma fournisseur »"}]},
+        {"path": "creative/comic/SKILL.md", "fingerprint": "1",
+         "sections": [{"heading": "Déclencheurs", "text": "- « style visuel planche »"}]},
+        {"path": "creative/infographic/SKILL.md", "fingerprint": "1",
+         "sections": [{"heading": "Déclencheurs", "text": "- « style visuel planche »"}]},
+    ])
+    store.close()
+    monkeypatch.setenv("GK_DATABASE", str(tmp_path / "inv.db"))
+    assert cli_main(["--json", "banc"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert "declencheurs_metier_seulement" in out
+    for bloc in out["par_population"].values():
+        assert "mrr_mixte" in bloc
+
+
+def test_la_lecture_ne_pretend_plus_les_demandes_introuvables(tmp_path, capsys, monkeypatch):
+    """Une premiere version affirmait qu'aucune recherche par les mots ne
+    pouvait servir les demandes sans domaine. Les donnees la contredisaient :
+    0,577 de rappel@5. L'affirmation est corrigee dans le texte imprime."""
+    store = Store(tmp_path / "l.db")
+    cat = Catalog(store)
+    noms = {f"s{i}": f"Domaine propre{i} et ses particularites." for i in range(12)}
+    cat.ingest([
+        {"path": f"greenmusic/{n}/SKILL.md", "name": n, "description": d,
+         "category": "greenmusic", "fingerprint": "1"}
+        for n, d in noms.items()
+    ], complete=True)
+    cat.store_sections([
+        {"path": f"greenmusic/{n}/SKILL.md", "fingerprint": "1",
+         "sections": [{"heading": "Déclencheurs",
+                       "text": f'- « propre{i} du domaine »' if i else '- « bon alors voila »'}]}
+        for i, n in enumerate(noms)
+    ])
+    store.close()
+    monkeypatch.setenv("GK_DATABASE", str(tmp_path / "l.db"))
+    assert cli_main(["--json", "banc"]) == 0
+    texte = " ".join(json.loads(capsys.readouterr().out)["lecture"])
+    assert "Aucune recherche par les mots ne peut" not in texte
+    assert "plus dures, pas introuvables" in texte
