@@ -360,3 +360,109 @@ def test_un_skill_recharge_ne_compte_qu_une_fois_dans_la_sequence(svc):
     )
     out = confronter(svc.store, cas)
     assert out["details"][0]["gb_rang_du_bon"] == 2, "et non 3"
+
+
+# -- les controles de la mesure --------------------------------------------
+
+
+def test_un_skill_deja_charge_avant_la_demande_est_credite_a_gb(svc):
+    """Le controle le plus important de la mesure.
+
+    `on_skill_lifecycle` peut ne pas signaler une reutilisation : un skill
+    charge au tour 1 et encore utile au tour 5 ne produit alors aucun evenement
+    au tour 5. La courbe par tour compterait gb en echec alors qu'il avait la
+    bonne reponse en contexte -- un artefact de l'instrument, pas une mesure de
+    son choix.
+    """
+    from gk.catalog import Catalog
+    Catalog(svc.store).ingest([
+        {"path": "a/bon/SKILL.md", "name": "bon", "description": "d",
+         "category": "c", "fingerprint": "1"},
+        {"path": "a/autre/SKILL.md", "name": "autre", "description": "d",
+         "category": "c", "fingerprint": "1"},
+    ], complete=True)
+    svc.request("s1", "une demande tardive")
+    t = svc.store.one("SELECT ts FROM requests LIMIT 1")["ts"]
+    # gb a charge le bon skill AVANT la demande, et rien apres.
+    _charge(svc.store, "s1", "bon", t - 300)
+
+    cas = relire(
+        f"<!-- gk echantillon v{VERSION} -->\n"
+        "## 1. une demande tardive\n   1. autre   [c]  score 9\n"
+        "   2. bon   [c]  score 7\n"
+        f"{MARQUEUR} 2\n"
+    )
+    out = confronter(svc.store, cas)
+    assert out["courbe_gb"]["5"] == 0.0, "rien charge pendant le tour"
+    assert out["gb_avait_deja_le_bon_avant"] == 1
+    assert out["gb_juste_tour_ou_deja"] == 1.0, "gb avait la bonne reponse"
+
+
+def test_le_diagnostic_rend_l_effectif_reel(svc):
+    """Des cas qui partagent une session ou un meme skill attendu ne sont pas
+    independants, et gonflent toute significativite calculee sur le nombre de
+    cas."""
+    from gk.catalog import Catalog
+    Catalog(svc.store).ingest([
+        {"path": "a/bon/SKILL.md", "name": "bon", "description": "d",
+         "category": "c", "fingerprint": "1"},
+    ], complete=True)
+    for i in (1, 2, 3):
+        svc.request("s1", f"demande {i} de la meme session")
+    texte = f"<!-- gk echantillon v{VERSION} -->\n"
+    for i in (1, 2, 3):
+        texte += (
+            f"## {i}. demande {i} de la meme session\n"
+            "   1. bon   [c]  score 9\n"
+            f"{MARQUEUR} 1\n\n"
+        )
+    out = confronter(svc.store, relire(texte))
+    d = out["diagnostic"]
+    assert d["cas"] == 3
+    assert d["sessions_distinctes"] == 1, "une seule conversation"
+    assert d["skills_attendus_distincts"] == 1, "un seul skill attendu"
+    assert any("effectif reel" in l for l in __import__(
+        "gk.confrontation", fromlist=["lecture"]).lecture(out))
+
+
+def test_le_diagnostic_dit_si_les_reutilisations_sont_visibles(svc):
+    """Si aucun `use_count` ne depasse 1, un skill deja charge est invisible et
+    la courbe par tour ne peut pas servir de comparaison. La commande doit le
+    dire au lieu de laisser lire le chiffre."""
+    from gk.catalog import Catalog
+    Catalog(svc.store).ingest([
+        {"path": "a/bon/SKILL.md", "name": "bon", "description": "d",
+         "category": "c", "fingerprint": "1"},
+    ], complete=True)
+    svc.request("s1", "une demande")
+    t = svc.store.one("SELECT ts FROM requests LIMIT 1")["ts"]
+    _charge(svc.store, "s1", "bon", t + 1)
+    cas = relire(
+        f"<!-- gk echantillon v{VERSION} -->\n"
+        "## 1. une demande\n   1. bon   [c]  score 9\n"
+        f"{MARQUEUR} 1\n"
+    )
+    out = confronter(svc.store, cas)
+    from gk.confrontation import lecture
+    assert out["diagnostic"]["evenements_use_count_sup_1"] == 0
+    assert any("INVISIBLES" in l for l in lecture(out))
+
+
+def test_la_limite_non_mesurable_est_toujours_dite(svc):
+    """Le biais de selection ne sort pas de la base : il doit etre enonce a
+    chaque sortie, sinon il disparait du raisonnement."""
+    from gk.catalog import Catalog
+    Catalog(svc.store).ingest([
+        {"path": "a/bon/SKILL.md", "name": "bon", "description": "d",
+         "category": "c", "fingerprint": "1"},
+    ], complete=True)
+    svc.request("s1", "une demande")
+    cas = relire(
+        f"<!-- gk echantillon v{VERSION} -->\n"
+        "## 1. une demande\n   1. bon   [c]  score 9\n"
+        f"{MARQUEUR} 1\n"
+    )
+    out = confronter(svc.store, cas)
+    from gk.confrontation import lecture
+    assert "rappel@5" in out["diagnostic"]["limite_non_mesurable"]
+    assert any(l.startswith("LIMITE :") for l in lecture(out))

@@ -106,6 +106,49 @@ def _apparier(store: Store, demandes: list[str]) -> dict[str, dict]:
     return out
 
 
+def _diagnostic(
+    store: Store, n: int, sessions: set[str], attendus: set[str]
+) -> dict:
+    """Ce qui peut rendre la comparaison fausse, mesure plutot qu'affirme.
+
+    Deux controles tires de la base, et une limite qui n'en sort pas.
+    """
+    actions = {
+        (r["action"] or "(vide)"): r["n"] for r in store.query(
+            "SELECT action, COUNT(*) n FROM skill_uses GROUP BY action "
+            "ORDER BY n DESC LIMIT 10"
+        )
+    }
+    uc = store.one(
+        "SELECT COUNT(*) t, MAX(use_count) m, "
+        "SUM(CASE WHEN use_count > 1 THEN 1 ELSE 0 END) r FROM skill_uses"
+    )
+    return {
+        # L'effectif reel : des cas qui partagent une session ou un meme skill
+        # attendu ne sont pas independants, et gonflent toute significativite.
+        "cas": n,
+        "sessions_distinctes": len(sessions),
+        "skills_attendus_distincts": len(attendus),
+        # Les reutilisations sont-elles visibles ? Si `action` ne porte que des
+        # chargements et qu'aucun `use_count` ne depasse 1, un skill deja
+        # charge est invisible et la courbe par tour sous-estime gb.
+        "actions_observees": actions,
+        "evenements": (uc["t"] if uc else 0),
+        # `use_count` jamais renseigne compte comme une reutilisation
+        # invisible, pas comme une absence d'information : c'est le meme effet
+        # sur la mesure.
+        "use_count_max": (uc["m"] if uc else None),
+        "evenements_use_count_sup_1": int((uc["r"] or 0) if uc else 0),
+        "limite_non_mesurable": (
+            "la verite terrain vient des cinq propositions de GK : les cas "
+            "comparables sont ceux ou GK a REUSSI son rappel@5. GK est donc "
+            "juge sur un sous-ensemble que sa propre reussite a selectionne, "
+            "et gb n'a pas cet avantage. Seule une etiquette independante des "
+            "propositions de GK leve ce biais."
+        ),
+    }
+
+
 def confronter(
     store: Store, cas: list[dict], fenetre: float = FENETRE_SECONDES
 ) -> dict:
@@ -160,6 +203,10 @@ def confronter(
     gk_courbe = {k: 0 for k in RANGS}
     gb_courbe = {k: 0 for k in RANGS}
     gb_a_choisi = 0
+    gb_deja_avant = 0
+    gb_tour_ou_avant = 0
+    sessions_vues: set[str] = set()
+    attendus_vus: set[str] = set()
     gk_juste = 0
     gb_juste_fenetre = 0
     gb_juste_session = 0
@@ -240,6 +287,30 @@ def confronter(
         if not charges_session:
             gb_sans_chargement += 1
 
+        # gb AVAIT-IL DEJA le bon skill avant cette demande ?
+        #
+        # Verification la plus importante de la mesure. `on_skill_lifecycle`
+        # peut ne pas signaler une reutilisation : un skill charge au tour 1 et
+        # encore utile au tour 5 ne produit alors aucun evenement au tour 5. La
+        # courbe par tour compterait gb en echec alors qu'il avait la bonne
+        # reponse en contexte. Sans ce controle, le 0,133 de gb pourrait etre un
+        # artefact de l'instrument et non une mesure de son choix.
+        avant = {
+            r["skill_name"] for r in store.query(
+                "SELECT DISTINCT skill_name FROM skill_uses "
+                "WHERE session_id = ? AND ts < ?",
+                (session, paire["ts"]),
+            )
+        }
+        gb_avait_deja = attendu in avant
+        if gb_avait_deja:
+            gb_deja_avant += 1
+        if gb_avait_deja or (attendu in sequence):
+            gb_tour_ou_avant += 1
+
+        sessions_vues.add(session)
+        attendus_vus.add(attendu)
+
         gk_juste += int(gk_ok)
         gb_juste_fenetre += int(gb_ok_fenetre)
         gb_juste_session += int(gb_ok_session)
@@ -303,6 +374,12 @@ def confronter(
         "courbe_gk": {str(k): round(gk_courbe[k] / comparables, 3) for k in RANGS},
         "courbe_gb": {str(k): round(gb_courbe[k] / comparables, 3) for k in RANGS},
         "gb_a_choisi_quelque_chose": gb_a_choisi,
+        # Les controles de la mesure elle-meme.
+        "gb_avait_deja_le_bon_avant": gb_deja_avant,
+        "gb_juste_tour_ou_deja": part(gb_tour_ou_avant),
+        "diagnostic": _diagnostic(
+            store, comparables, sessions_vues, attendus_vus
+        ),
         "details": details,
     }
     return out
@@ -364,6 +441,36 @@ def lecture(r: dict) -> list[str]:
             f"ces {n} demandes : sa courbe y vaut zero par definition, pas par "
             "erreur."
         )
+    d = r.get("diagnostic") or {}
+    if r.get("gb_avait_deja_le_bon_avant") is not None:
+        lignes.append(
+            f"CONTROLE : gb avait deja le bon skill charge AVANT la demande "
+            f"dans {r['gb_avait_deja_le_bon_avant']} cas. En creditant gb du "
+            f"tour ou d'un chargement anterieur, il passe a "
+            f"{r['gb_juste_tour_ou_deja']}. C'est la mesure la plus juste par "
+            "demande, et c'est a elle qu'il faut comparer GK."
+        )
+    if d.get("evenements"):
+        visibles = (d.get("evenements_use_count_sup_1") or 0) > 0
+        lignes.append(
+            f"CONTROLE : actions observees {d.get('actions_observees')}, "
+            f"use_count max {d.get('use_count_max')}. Les reutilisations sont "
+            + ("visibles, donc la courbe par tour de gb est une mesure."
+               if visibles else
+               "INVISIBLES : un skill deja charge ne produit aucun evenement, "
+               "donc la courbe par tour SOUS-ESTIME gb et ne peut pas servir "
+               "de comparaison. S'en tenir a `gb_juste_tour_ou_deja`.")
+        )
+    if d.get("sessions_distinctes") is not None:
+        lignes.append(
+            f"CONTROLE : {d['cas']} cas, mais seulement "
+            f"{d['sessions_distinctes']} sessions distinctes et "
+            f"{d['skills_attendus_distincts']} skills attendus distincts. "
+            "L'effectif reel est le plus petit des trois, et toute "
+            "significativite calculee sur 30 est optimiste."
+        )
+    if d.get("limite_non_mesurable"):
+        lignes.append("LIMITE : " + d["limite_non_mesurable"])
     lignes.append(
         "L'appariement demande/chargement reste une CORRELATION : les deux "
         "hooks ne partagent aucune clef. Un ecart de quelques points ne "
