@@ -1111,3 +1111,88 @@ def test_l_ordonnance_met_les_jamais_retrouves_en_tete(tmp_path):
     assert liste[0]["name"] == "gm-marges"
     assert liste[0]["jamais_retrouve"] == 2
     svc.close()
+
+
+# -- la tolerance aux fautes de frappe --------------------------------------
+
+
+def test_une_faute_de_frappe_retrouve_le_bon_skill(tmp_path):
+    """Defaut trouve en lisant `gk ordonnance` le 2026-10-23.
+
+    La commande conseillait d'ajouter aux skills les mots « cleint »,
+    « rmeise », « versino », « caucul » : ce ne sont pas des mots de metier,
+    ce sont les fautes de frappe des collegues. Un index en mot exact ne les
+    rencontre jamais, et **aucune ligne de declenchement n'y changera rien** --
+    personne n'ecrira la faute dans un skill.
+    """
+    svc, index = _index_deux_skills(tmp_path, "t1.db")
+    assert index.chercher("plancher marges", limite=3)[0]["name"] == "gm-marges"
+
+    # La demande ne porte AUCUN mot juste : deux transpositions, et c'est tout
+    # ce qu'elle a. C'est le cas reel -- « le cleint demande une rmeise » ne
+    # rendait rien du tout.
+    strict = index.chercher(
+        "plnacher mrages", limite=3, tolerer_les_fautes=False
+    )
+    tolerant = index.chercher("plnacher mrages", limite=3)
+    assert strict == [], strict
+    assert tolerant and tolerant[0]["name"] == "gm-marges"
+    svc.close()
+
+
+def test_les_trois_familles_de_fautes_sont_couvertes():
+    """Verifie sur les cas reels du releve, pas sur des exemples inventes."""
+    from gk.recherche import _distance_un, cles_floues
+
+    def proche(a, b):
+        return bool(cles_floues(a) & cles_floues(b)) or _distance_un(a, b)
+
+    # transposition
+    assert proche("cleint", "client")
+    assert proche("versino", "version")
+    assert proche("regel", "regle")
+    assert proche("origien", "origine")
+    assert proche("rmeise", "remise")
+    # substitution
+    assert proche("caucul", "calcul")
+    # insertion / omission
+    assert proche("liqidation", "liquidation")
+    assert proche("concerant", "concernant")
+    assert proche("additinonner", "additionner")
+    # pluriel
+    assert proche("factures", "facture")
+    assert proche("commandes", "commande")
+
+
+def test_deux_mots_differents_ne_se_rapprochent_pas(tmp_path):
+    """Une tolerance trop large ferait pire que le mal : elle apparierait des
+    mots de metier distincts et brouillerait tous les scores."""
+    svc, index = _index_deux_skills(tmp_path, "t2.db")
+    assert "charges" not in index.voisins("marges")
+    assert "prime" not in index.voisins("prix")
+    # Et un mot court n'est jamais rapproche : trop de collisions de hasard.
+    assert index.voisins("port") == {}
+    svc.close()
+
+
+def test_un_appariement_approche_vaut_moins_qu_un_exact(tmp_path):
+    """C'est une hypothese, pas une correspondance : la confondre avec un
+    appariement exact ferait gagner une faute de frappe contre un mot juste."""
+    from gk.recherche import PENALITE_FLOUE
+
+    svc, index = _index_deux_skills(tmp_path, "t3.db")
+    exact = index.chercher("plancher", limite=3)[0]["score"]
+    faute = index.chercher("plnacher", limite=3)[0]["score"]
+    assert faute < exact
+    assert abs(faute - exact * PENALITE_FLOUE) < 0.01
+    svc.close()
+
+
+def test_la_tolerance_se_desactive_pour_etre_mesuree(tmp_path):
+    """Tout mecanisme ajoute au score doit pouvoir etre retire : quatre
+    hypotheses ont deja ete rejetees parce qu'un bras temoin existait."""
+    svc, index = _index_deux_skills(tmp_path, "t4.db")
+    a = index.chercher("plnacher", limite=3, tolerer_les_fautes=False)
+    b = index.chercher("plnacher", limite=3, tolerer_les_fautes=True)
+    assert a == [] and b != []
+    svc.close()

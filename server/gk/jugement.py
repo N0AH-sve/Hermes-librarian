@@ -390,6 +390,8 @@ def reetalonner(
         }
 
     courbe = {k: 0 for k in rangs}
+    courbe_strict = {k: 0 for k in rangs}
+    gagnes_par_la_tolerance = 0
     distribution: dict[str, int] = {}
     hors = 0
     avec_contexte = 0
@@ -402,13 +404,30 @@ def reetalonner(
         )
         if contexte:
             avec_contexte += 1
-            resultats = index.chercher_avec_contexte(
-                e["demande"], contexte=contexte, limite=max(rangs)
-            )
-        else:
-            resultats = index.chercher(e["demande"], limite=max(rangs))
-        noms = [r["name"] for r in resultats]
+        def _classer(tolerer: bool) -> list[str]:
+            if contexte:
+                r = index.chercher_avec_contexte(
+                    e["demande"], contexte=contexte, limite=max(rangs),
+                    tolerer_les_fautes=tolerer,
+                )
+            else:
+                r = index.chercher(
+                    e["demande"], limite=max(rangs), tolerer_les_fautes=tolerer,
+                )
+            return [x["name"] for x in r]
+
+        noms = _classer(True)
+        noms_strict = _classer(False)
         rang = noms.index(e["attendu"]) + 1 if e["attendu"] in noms else None
+        rang_strict = (
+            noms_strict.index(e["attendu"]) + 1
+            if e["attendu"] in noms_strict else None
+        )
+        for k in rangs:
+            if rang_strict is not None and rang_strict <= k:
+                courbe_strict[k] += 1
+        if rang is not None and rang_strict is None:
+            gagnes_par_la_tolerance += 1
         if rang is None:
             hors += 1
         else:
@@ -431,6 +450,12 @@ def reetalonner(
         "etiquettes_ecartees_plateforme": ecartees_plateforme,
         "demandes_avec_contexte": avec_contexte,
         "courbe": {str(k): round(courbe[k] / n, 3) for k in rangs},
+        # Le bras strict : la recherche en mot exact, telle qu'elle etait avant
+        # la tolerance aux fautes de frappe.
+        "courbe_sans_tolerance": {
+            str(k): round(courbe_strict[k] / n, 3) for k in rangs
+        },
+        "gagnes_par_la_tolerance": gagnes_par_la_tolerance,
         "distribution_des_rangs": distribution,
         f"hors_des_{max(rangs)}": hors,
         "details": details,

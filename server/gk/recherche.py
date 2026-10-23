@@ -115,7 +115,36 @@ MEMOIRE_TOP = 3
 CONTEXTE_TOURS = 3
 CONTEXTE_FENETRE_SECONDES = 1800.0
 
-MIN_JETON = 2        # « PA », « IV », « PRE » sont des termes metier
+MIN_JETON = 2
+
+# -- la tolerance aux fautes de frappe ------------------------------------
+#
+# **Defaut trouve le 2026-10-23 en lisant `gk ordonnance`.** La commande
+# conseillait d'ajouter aux skills les mots « cleint », « rmeise », « versino »,
+# « caucul », « liqidation », « origien », « regel », « concerant »,
+# « additinonner ». Ce ne sont pas des mots de metier : ce sont **les fautes de
+# frappe des collegues**. Un index en mot exact ne les rencontre jamais, donc
+# chaque faute coute un jeton -- et une demande de douze jetons qui en porte
+# deux perd un sixieme de son signal.
+#
+# Ce n'est pas un probleme de redaction des skills : personne n'ecrira « cleint »
+# dans une ligne de declenchement. C'est un defaut de GK, et il n'avait jamais
+# ete mesure parce que tout le banc etait fait de phrases **ecrites et relues**
+# par les auteurs des skills.
+#
+# Trois familles couvertes, verifiees sur les cas reels du releve :
+#   * transposition  cleint/client, versino/version, regel/regle, origien/origine
+#   * substitution   caucul/calcul
+#   * insertion ou omission  liqidation/liquidation, concerant/concernant
+#   * et le pluriel  factures/facture, commandes/commande
+#
+# Un appariement approche vaut moins qu'un appariement exact : il est penalise,
+# et le banc dit de combien.
+PENALITE_FLOUE = 0.6
+# En dessous de cette longueur, deux mots differents se ressemblent par hasard.
+MIN_JETON_FLOU = 5
+# Longueur du prefixe commun qui autorise un rapprochement de pluriel.
+PREFIXE_FLOU = 5        # « PA », « IV », « PRE » sont des termes metier
 MAX_RESULTATS = 50
 
 
@@ -131,6 +160,57 @@ def jetons(texte: str) -> list[str]:
         j for j in re.split(r"[^0-9a-z]+", fold(texte or ""))
         if len(j) >= MIN_JETON and j not in STOPWORDS
     ]
+
+
+def _distance_un(a: str, b: str) -> bool:
+    """Vrai si une seule insertion, omission ou substitution separe a de b.
+
+    Ecrit a la main plutot qu'avec une distance complete : on n'a pas besoin de
+    la valeur, seulement de savoir si elle vaut un, et le test s'arrete au
+    premier ecart de trop.
+    """
+    if a == b:
+        return True
+    la, lb = len(a), len(b)
+    if abs(la - lb) > 1:
+        return False
+    if la == lb:
+        ecarts = 0
+        for x, y in zip(a, b):
+            if x != y:
+                ecarts += 1
+                if ecarts > 1:
+                    return False
+        return ecarts == 1
+    court, long = (a, b) if la < lb else (b, a)
+    i = j = 0
+    saute = False
+    while i < len(court) and j < len(long):
+        if court[i] == long[j]:
+            i += 1
+            j += 1
+            continue
+        if saute:
+            return False
+        saute = True
+        j += 1
+    return True
+
+
+def cles_floues(jeton: str) -> set[str]:
+    """Les clefs sous lesquelles un jeton peut etre retrouve malgre une faute.
+
+    La clef des lettres triees attrape les **transpositions**, qui sont la faute
+    dominante quand on tape vite -- « cleint », « versino », « regel ». Les
+    variantes a une lettre pres attrapent l'insertion, l'omission et la
+    substitution. Le prefixe attrape les pluriels et les terminaisons.
+    """
+    if len(jeton) < MIN_JETON_FLOU:
+        return set()
+    cles = {"s:" + "".join(sorted(jeton)), "p:" + jeton[:PREFIXE_FLOU]}
+    for i in range(len(jeton)):
+        cles.add("d:" + jeton[:i] + jeton[i + 1:])
+    return cles
 
 
 @dataclass
@@ -207,6 +287,8 @@ class Index:
     # Nombre moyen de jetons distincts par champ. Sert a normaliser par la
     # longueur : un champ long rencontre plus de demandes par hasard.
     longueur_moyenne: dict[str, float] = field(default_factory=dict)
+    # clef floue -> jetons du vocabulaire qui la portent
+    index_flou: dict[str, set[str]] = field(default_factory=dict)
 
     @classmethod
     def construire(cls, store: Store) -> "Index":
@@ -268,7 +350,48 @@ class Index:
             champ: (sum(valeurs) / len(valeurs)) if valeurs else 0.0
             for champ, valeurs in longueurs.items()
         }
-        return cls(skills=skills, df=df, n=len(skills), longueur_moyenne=moyennes)
+        # L'index des fautes de frappe se construit depuis le vocabulaire, donc
+        # il ne coute aucune lecture de plus : `df` le porte deja.
+        index_flou: dict[str, set[str]] = {}
+        for jeton in df:
+            for cle in cles_floues(jeton):
+                index_flou.setdefault(cle, set()).add(jeton)
+        return cls(
+            skills=skills, df=df, n=len(skills), longueur_moyenne=moyennes,
+            index_flou=index_flou,
+        )
+
+    def voisins(self, jeton: str) -> dict[str, float]:
+        """Les jetons du vocabulaire qu'une faute de frappe pourrait viser.
+
+        Rendus avec leur IDF, pour que l'appel ne refasse pas le calcul. Le
+        jeton lui-meme est exclu : un appariement exact n'est pas un
+        appariement approche, et le confondre doublerait son poids.
+        """
+        if len(jeton) < MIN_JETON_FLOU:
+            return {}
+        candidats: set[str] = set()
+        for cle in cles_floues(jeton):
+            candidats |= self.index_flou.get(cle, set())
+        candidats.discard(jeton)
+        retenus: dict[str, float] = {}
+        tri = "".join(sorted(jeton))
+        for c in candidats:
+            if len(c) < MIN_JETON_FLOU:
+                continue
+            # Trois rapprochements admis, et rien d'autre : les memes lettres
+            # dans un autre ordre, une lettre d'ecart, ou un prefixe commun
+            # assez long pour que ce soit une terminaison et non un hasard.
+            if (
+                (len(c) == len(jeton) and "".join(sorted(c)) == tri)
+                or _distance_un(jeton, c)
+                or (
+                    c[:PREFIXE_FLOU] == jeton[:PREFIXE_FLOU]
+                    and abs(len(c) - len(jeton)) <= 3
+                )
+            ):
+                retenus[c] = self.idf(c)
+        return retenus
 
     def facteur_longueur(self, champ: str, nombre_de_jetons: int) -> float:
         """Corrige l'avantage d'un champ long.
@@ -309,6 +432,7 @@ class Index:
         exclure_exemple: str | None = None,
         sans_prose: bool = False,
         normaliser_longueur: bool = False,
+        tolerer_les_fautes: bool = True,
     ) -> list[dict]:
         """Classe les skills pour une demande.
 
@@ -340,6 +464,15 @@ class Index:
         jetons_demande = jetons(demande)
         if not jetons_demande:
             return []
+        # Les voisins se calculent une fois par demande, pas une fois par
+        # skill : une demande porte une dizaine de jetons, la bibliotheque en
+        # porte des milliers.
+        voisinage: dict[str, dict[str, float]] = {}
+        if tolerer_les_fautes:
+            for j in set(jetons_demande):
+                v = self.voisins(j)
+                if v:
+                    voisinage[j] = v
         resultats: list[dict] = []
         for skill in self.skills:
             detail: dict[str, float] = {}
@@ -348,9 +481,30 @@ class Index:
                 presents = skill.champs.get(champ) or set()
                 if champ == "exemples" and exclure_exemple is not None:
                     presents = self._exemples_sans(skill, exclure_exemple)
-                gagne = sum(
-                    self.idf(j) for j in jetons_demande if j in presents
-                )
+                gagne = 0.0
+                approche = 0.0
+                for j in jetons_demande:
+                    if j in presents:
+                        gagne += self.idf(j)
+                        continue
+                    # Rien d'exact : une faute de frappe vise peut-etre un
+                    # jeton que ce champ porte. Penalise, parce qu'un
+                    # rapprochement approche reste une hypothese.
+                    proches = voisinage.get(j)
+                    if not proches:
+                        continue
+                    meilleur = max(
+                        (idf for t, idf in proches.items() if t in presents),
+                        default=0.0,
+                    )
+                    if meilleur:
+                        approche += meilleur * PENALITE_FLOUE
+                if approche:
+                    detail.setdefault("approche", 0.0)
+                    detail["approche"] = round(
+                        detail["approche"] + poids_champ * approche, 3
+                    )
+                gagne += approche
                 if gagne and normaliser_longueur:
                     gagne *= self.facteur_longueur(champ, len(presents))
                 if gagne:
