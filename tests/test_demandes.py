@@ -298,3 +298,84 @@ def test_seuil_reel_sans_demande(tmp_path, capsys, monkeypatch):
     monkeypatch.setenv("GK_DATABASE", str(tmp_path / "vide.db"))
     assert cli_main(["--json", "seuil", "--reel"]) == 1
     assert "aucune demande reelle" in json.loads(capsys.readouterr().out)["erreur"]
+
+
+def test_le_contexte_retrospectif_ne_lit_pas_le_futur(svc):
+    """Defaut releve par gb le 2026-10-23, et il faussait toute evaluation.
+
+    Sans ancrage, `contexte_de_session` part de `MAX(ts)` de la session : juste
+    en direct, puisque la demande courante y est la plus recente, mais faux pour
+    une demande du passe, ou il renvoie les DERNIERS tours -- donc le futur de
+    la demande jugee.
+    """
+    from gk.recherche import contexte_de_session
+
+    svc.request("s1", "premier tour")
+    svc.request("s1", "deuxieme tour")
+    svc.request("s1", "troisieme tour")
+    svc.request("s1", "quatrieme tour")
+    rows = svc.store.query("SELECT text_truncated, ts FROM requests ORDER BY ts")
+    ts = {r["text_truncated"]: r["ts"] for r in rows}
+
+    # Juge en direct sur le dernier tour : les trois precedents, sans le futur
+    # (il n'y en a pas).
+    en_direct = contexte_de_session(svc.store, "s1")
+    assert "troisieme tour" in en_direct
+    assert "quatrieme tour" not in en_direct, "pas son propre contexte"
+
+    # Juge le DEUXIEME tour, retrospectivement.
+    retro = contexte_de_session(svc.store, "s1", avant=ts["deuxieme tour"])
+    assert retro == ["premier tour"], retro
+    assert "troisieme tour" not in retro, "le futur ne doit pas fuir"
+    assert "quatrieme tour" not in retro, "le futur ne doit pas fuir"
+
+
+def test_le_contexte_retrospectif_respecte_la_fenetre(svc):
+    """La borne basse reste relative a la demande jugee, pas a la session."""
+    from gk.recherche import contexte_de_session
+
+    svc.request("s1", "tres ancien")
+    svc.request("s1", "juste avant")
+    svc.request("s1", "la demande jugee")
+    rows = svc.store.query("SELECT text_truncated, ts FROM requests ORDER BY ts")
+    ts = {r["text_truncated"]: r["ts"] for r in rows}
+    svc.store.execute(
+        "UPDATE requests SET ts = ? WHERE text_truncated = ?",
+        (ts["la demande jugee"] - 100_000, "tres ancien"),
+    )
+    retro = contexte_de_session(
+        svc.store, "s1", avant=ts["la demande jugee"], fenetre=1800
+    )
+    assert retro == ["juste avant"], retro
+
+
+def test_l_echantillon_n_injecte_pas_le_futur_dans_ses_candidats(svc):
+    """Consequence de la fuite : les candidats de `gk echantillon` etaient
+    classes avec les tours suivants de la conversation.
+
+    C'est ce qui invalide le rappel mesure avant la correction.
+    """
+    from gk.catalog import Catalog
+    from gk.jugement import preparer
+    from gk.recherche import Index
+
+    Catalog(svc.store).ingest([
+        {"path": "a/futur/SKILL.md", "name": "gm-futur",
+         "description": "Marges et prix plancher.", "category": "c",
+         "fingerprint": "1"},
+        {"path": "a/neutre/SKILL.md", "name": "gm-neutre",
+         "description": "Expedition et transporteurs.", "category": "c",
+         "fingerprint": "1"},
+    ], complete=True)
+    # Le premier tour ne parle de rien ; le second parle de marges.
+    svc.request("s1", "bonjour")
+    svc.request("s1", "les marges et le prix plancher du catalogue")
+    index = Index.construire(svc.store)
+    texte = preparer(svc.store, index, taille=10)
+    # Le bloc du premier tour ne doit pas etre classe grace au second.
+    bloc = texte.split("## ")
+    premier = [b for b in bloc if b.startswith("1. ") or b.startswith("2. ")]
+    assert premier, "l'echantillon porte bien les demandes"
+    # Aucun commentaire de contexte sur une demande qui n'a pas de passe.
+    tete = [b for b in bloc if "bonjour" in b]
+    assert tete and "contexte :" not in tete[0], tete

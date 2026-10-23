@@ -138,15 +138,36 @@ def contexte_de_session(
     session_id: str,
     tours: int = CONTEXTE_TOURS,
     fenetre: float = CONTEXTE_FENETRE_SECONDES,
+    avant: float | None = None,
 ) -> list[str]:
     """Les demandes precedentes d'une session, les plus recentes d'abord.
 
     Lues depuis les demandes reelles deja enregistrees : rien de nouveau n'est
     collecte pour cela. La fenetre est courte parce qu'une conversation de deux
     heures n'oriente plus la question presente.
+
+    **`avant` est obligatoire pour toute evaluation retrospective, et c'est un
+    defaut corrige.** Sans lui, la fonction s'ancre sur `MAX(ts)` de la session
+    : correct en direct, puisque la demande courante y est la plus recente, mais
+    **faux pour une demande du passe**, ou elle renvoie les derniers tours de la
+    conversation -- donc le futur de la demande jugee.
+
+    Releve par gb le 2026-10-23 : applique a l'historique, l'ancrage sur
+    `MAX(ts)` changeait 76 classements sur 104 et 23 rangs 1. Tout ce qui a ete
+    mesure a travers `gk echantillon` avant cette correction est gonfle.
+
+    En passant `avant`, seules les demandes **strictement anterieures** sont
+    lues, et la demande jugee n'a plus besoin d'etre retiree de la liste.
     """
     if not session_id:
         return []
+    if avant is not None:
+        rows = store.query(
+            "SELECT text_truncated FROM requests WHERE session_id = ? "
+            "AND ts < ? AND ts >= ? ORDER BY ts DESC LIMIT ?",
+            (session_id, avant, avant - fenetre, max(1, tours)),
+        )
+        return [r["text_truncated"] for r in rows if r["text_truncated"]]
     rows = store.query(
         "SELECT text_truncated FROM requests WHERE session_id = ? "
         "AND ts >= (SELECT MAX(ts) FROM requests WHERE session_id = ?) - ? "

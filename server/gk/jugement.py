@@ -68,6 +68,39 @@ _CONSIGNE = (
 )
 
 
+# Les demandes qui ne viennent pas d'un collegue.
+#
+# Releve par gb le 2026-10-23 : 53 des 196 demandes d'une journee sont des
+# injections du systeme -- bannieres de cycle de vie, avis de tache de fond,
+# annonces de piece jointe. `pre_llm_call` porte le message tel que le modele
+# le recoit, donc ces blocs y sont. Les juger comme des demandes fausse deux
+# choses a la fois : le rappel (aucun skill ne sert une banniere) et surtout la
+# part « aucun ne convient », qui en herite directement.
+#
+# La liste est volontairement etroite et verifiable : `gk demandes --injections`
+# montre ce qu'elle attrape, pour qu'un motif trop large se voie au lieu de
+# manger des demandes reelles en silence.
+MOTIFS_INJECTION = (
+    "skill invoked",
+    "background process completed",
+    "background task completed",
+    "<system-reminder",
+    "system-reminder>",
+    "[attachment",
+    "[image",
+    "[file attached",
+    "piece jointe recue",
+)
+
+
+def est_injection(texte: str) -> bool:
+    """Vrai si le texte est une injection du systeme et non une demande."""
+    bas = (texte or "").lower()
+    if not bas.strip():
+        return True
+    return any(m in bas for m in MOTIFS_INJECTION)
+
+
 def _une_ligne(texte: str) -> str:
     """Une demande sur une seule ligne.
 
@@ -88,6 +121,8 @@ def preparer(store: Store, index: Index, taille: int = 50, par_page: int = 5) ->
         "WHERE text_truncated IS NOT NULL AND text_truncated <> '' "
         "ORDER BY ts DESC LIMIT 1000"
     )
+    ecartees = sum(1 for r in rows if est_injection(r["text_truncated"]))
+    rows = [r for r in rows if not est_injection(r["text_truncated"])]
     par_tranche: dict[tuple[int, int], list] = {t: [] for t in TRANCHES}
     for row in rows:
         n = len(jetons(row["text_truncated"]))
@@ -117,12 +152,20 @@ def preparer(store: Store, index: Index, taille: int = 50, par_page: int = 5) ->
         "par longueur, parce qu'une demande courte et une longue ne posent pas le",
         "meme probleme.",
         "",
+        f"<!-- {ecartees} injections du systeme ecartees (bannieres de skill, "
+        "taches de fond, pieces jointes) : aucun skill ne sert une banniere, et "
+        "les juger gonflerait la part « aucun ne convient » -->",
+        "",
         "---",
         "",
     ]
     for i, row in enumerate(choisis, start=1):
         demande = _une_ligne(row["text_truncated"])
-        contexte = contexte_de_session(store, row["session_id"] or "")
+        # `avant` : sans lui, le contexte serait pris a la FIN de la session,
+        # donc dans le futur de cette demande.
+        contexte = contexte_de_session(
+            store, row["session_id"] or "", avant=row["ts"]
+        )
         if contexte:
             resultats = index.chercher_avec_contexte(
                 demande, contexte=contexte, limite=par_page
@@ -185,16 +228,22 @@ def reprise(
     # On retrouve la session pour reproduire le classement d'origine : sans le
     # contexte, la suite affichee ne serait pas la suite du meme classement.
     rows = store.query(
-        "SELECT session_id, text_truncated FROM requests "
+        "SELECT session_id, text_truncated, ts FROM requests "
         "WHERE text_truncated IS NOT NULL AND text_truncated <> '' "
         "ORDER BY ts DESC LIMIT 1000"
     )
-    sessions = {_une_ligne(r["text_truncated"]): (r["session_id"] or "") for r in rows}
+    sessions = {
+        _une_ligne(r["text_truncated"]): ((r["session_id"] or ""), r["ts"])
+        for r in rows
+    }
 
     for c in a_revoir:
         demande = _une_ligne(c.get("demande") or "")
-        session = sessions.get(demande, "")
-        contexte = contexte_de_session(store, session) if session else []
+        session, ts_demande = sessions.get(demande, ("", None))
+        contexte = (
+            contexte_de_session(store, session, avant=ts_demande)
+            if session else []
+        )
         if contexte:
             resultats = index.chercher_avec_contexte(
                 demande, contexte=contexte, limite=jusqu_a

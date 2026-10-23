@@ -28,7 +28,14 @@ from .config import Config
 from .declencheurs import decouper, lecture, mesurer
 from .confrontation import FENETRE_SECONDES, confronter
 from .confrontation import lecture as lecture_confrontation
-from .jugement import REPRISE_JUSQU_A, juger, preparer, reprise, relire
+from .jugement import (
+    REPRISE_JUSQU_A,
+    est_injection,
+    juger,
+    preparer,
+    relire,
+    reprise,
+)
 from .corrections import (
     BAD_RECOMMENDATION,
     BRIEF_IGNORED,
@@ -586,7 +593,7 @@ def cmd_seuil_reel(args, cfg: Config) -> int:
             _emit({"ok": False, "erreur": "catalogue vide, voir `gk catalogue`"}, args)
             return 1
         demandes = store.query(
-            "SELECT session_id, text_truncated FROM requests "
+            "SELECT session_id, text_truncated, ts FROM requests "
             "WHERE text_truncated IS NOT NULL AND text_truncated <> '' "
             "ORDER BY ts DESC LIMIT 500"
         )
@@ -601,7 +608,10 @@ def cmd_seuil_reel(args, cfg: Config) -> int:
         signaux: list[dict] = []
         for row in demandes:
             demande = row["text_truncated"]
-            contexte = contexte_de_session(store, row["session_id"] or "")
+            # Retrospectif : ancrer sur la demande, pas sur la fin de session.
+            contexte = contexte_de_session(
+                store, row["session_id"] or "", avant=row["ts"]
+            )
             if contexte:
                 resultats = index.chercher_avec_contexte(
                     demande, contexte=contexte, limite=5
@@ -1337,6 +1347,16 @@ def cmd_demandes(args, cfg: Config) -> int:
         total = int(store.counter("requests_total"))
         gardees = int(store.one("SELECT COUNT(*) c FROM requests")["c"])
         dernier = store.counter("last_request_ts")
+        # Les injections du systeme ne sont pas des demandes : les compter
+        # comme telles fausse le rappel et surtout la part « aucun ne
+        # convient ».
+        textes = [
+            r["text_truncated"] for r in store.query(
+                "SELECT text_truncated FROM requests "
+                "WHERE text_truncated IS NOT NULL AND text_truncated <> ''"
+            )
+        ]
+        injections = [t for t in textes if est_injection(t)]
         out: dict = {
             "demandes_observees": total,
             "demandes_gardees": gardees,
@@ -1350,6 +1370,16 @@ def cmd_demandes(args, cfg: Config) -> int:
             )
             _emit(out, args)
             return 0
+        out["injections_systeme"] = len(injections)
+        out["demandes_de_collegues"] = len(textes) - len(injections)
+        if len(textes):
+            out["part_injections"] = round(len(injections) / len(textes), 3)
+        if getattr(args, "injections", 0) and injections:
+            # Un motif trop large doit se voir, au lieu de manger des demandes
+            # reelles en silence.
+            out["exemples_injections"] = [
+                " ".join(t.split())[:160] for t in injections[: args.injections]
+            ]
         out["par_plateforme"] = {
             (r["platform"] or "(inconnue)"): r["n"]
             for r in store.query(
@@ -1698,6 +1728,10 @@ def build_parser() -> argparse.ArgumentParser:
     dm.add_argument(
         "--exemples", type=int, default=0,
         help="afficher N demandes tronquees (contenu metier : a utiliser sciemment)",
+    )
+    dm.add_argument(
+        "--injections", type=int, default=0,
+        help="afficher N injections systeme ecartees, pour verifier le filtre",
     )
     dm.set_defaults(func=cmd_demandes)
 

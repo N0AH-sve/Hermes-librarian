@@ -413,3 +413,52 @@ def test_le_taux_de_citation_ne_depend_d_aucune_hypothese():
     out = juger(cas)
     assert out["cite_dans_les_5_sur_tout"] == round(3 / 7, 3)
     assert out["part_premier_quand_cite"] == 1.0
+
+
+# -- les injections du systeme ---------------------------------------------
+
+
+def test_une_banniere_du_systeme_n_est_pas_une_demande():
+    """Releve par gb le 2026-10-23 : 53 des 196 demandes d'une journee sont des
+    injections du systeme.
+
+    `pre_llm_call` porte le message tel que le modele le recoit, donc ces blocs
+    y sont. Les juger fausse le rappel -- aucun skill ne sert une banniere -- et
+    surtout la part « aucun ne convient », qui en herite directement.
+    """
+    from gk.jugement import est_injection
+
+    assert est_injection("Skill invoked: gm-factures")
+    assert est_injection("<system-reminder>pense a ceci</system-reminder>")
+    assert est_injection("Background process completed")
+    assert est_injection("[Attachment: facture.pdf]")
+    assert est_injection("   ")
+    # Et une vraie demande n'est pas attrapee.
+    assert not est_injection("pourquoi on a paye 40 balles de port chez Adagio")
+    assert not est_injection("le fournisseur nous facture le port, c'est normal ?")
+
+
+def test_l_echantillon_ecarte_les_injections_et_le_dit(prepare):
+    """Le filtre doit etre visible dans le fichier : un motif trop large qui
+    mange des demandes reelles doit se voir, pas disparaitre."""
+    svc, _ = prepare
+    svc.request("s4", "Skill invoked: gm-factures")
+    svc.request("s4", "Background process completed")
+    index = Index.construire(svc.store)
+    texte = preparer(svc.store, index, taille=20)
+    assert "injections du systeme ecartees" in texte
+    assert "Skill invoked" not in texte
+    assert "Background process completed" not in texte
+
+
+def test_gk_demandes_compte_les_injections(tmp_path, capsys, monkeypatch):
+    svc = Service.open(tmp_path / "i.db")
+    svc.request("s1", "une vraie demande de collegue")
+    svc.request("s1", "Skill invoked: quelque-chose")
+    svc.close()
+    monkeypatch.setenv("GK_DATABASE", str(tmp_path / "i.db"))
+    assert cli_main(["--json", "demandes", "--injections", "3"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["injections_systeme"] == 1
+    assert out["demandes_de_collegues"] == 1
+    assert out["exemples_injections"] == ["Skill invoked: quelque-chose"]
