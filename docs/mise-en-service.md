@@ -247,6 +247,53 @@ plugins:
       mcp_allowlist: ["gk"]
 ```
 
+## Activer la consultation `/gk`
+
+**Par défaut à l'arrêt.** Le pont n'injecte rien tant que cette variable n'est
+pas posée, et c'est volontaire : rien ne doit s'activer lors d'une mise à jour.
+
+C'est la **seule** voie par laquelle le pont rend autre chose que `None`.
+`transform_llm_output` — celui qui pourrait **remplacer la réponse** que lit un
+collègue — et `on_skill_lifecycle` restent inchangés, et des tests le
+verrouillent.
+
+Dans le `config.yaml` de l'agent, sur l'entrée du plugin :
+
+```yaml
+plugins:
+  entries:
+    gk-bridge:
+      allow_tool_override: false
+      mcp_allowlist: ["gk"]
+      env:
+        GK_CONSULTATION: "1"
+```
+
+Si Hermes ne propage pas `env` par entrée de plugin, poser la variable sur le
+service `hermes` du compose marche aussi — c'est le processus de l'agent qui lit
+`os.environ` à l'import du plugin, donc **un redémarrage est nécessaire** dans
+les deux cas.
+
+Vérifier ensuite, depuis Discord :
+
+```
+/gk pourquoi on nous facture le port chez Adagio
+```
+
+Attendu dans `/opt/data/gk-bridge.jsonl` : une ligne
+`{"event": "consultation", "rendu": true}`. Si `rendu` est `false`, GK a
+répondu mais sans proposition exploitable ; si la ligne dit
+`consultation_desactivee`, la variable n'est pas arrivée jusqu'au processus.
+
+**Trois sorties possibles, toutes sûres.** Pas de préfixe → `None`, comportement
+d'avant. Préfixe mais GK lent, injoignable ou dégradé → `None`, gb répond
+normalement et le collègue voit seulement qu'il n'a pas eu d'aide. Préfixe et
+GK répond → un bloc accolé à la demande, présenté comme une suggestion de
+recherche et non comme une instruction.
+
+Pour désactiver : retirer la variable et redémarrer. Aucune donnée n'est perdue,
+les consultations déjà enregistrées restent exportables par `gk etiquettes`.
+
 Ne reconstruis pas ces listes : ajoute `gk-bridge` à celle qui existe, sans
 toucher aux autres entrées. Un plugin figure soit dans `enabled`, soit dans
 `disabled`.

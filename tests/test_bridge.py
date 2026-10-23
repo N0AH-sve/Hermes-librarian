@@ -342,3 +342,187 @@ def test_les_kwargs_reels_ne_declenchent_plus_reponse_introuvable(tmp_path, monk
         model="x", platform="cli", telemetry_schema_version=3,
     )
     assert not any(e["event"] == "reponse_introuvable" for e in journal(mod))
+
+
+# -- la consultation demandee : la commande `/gk` --------------------------
+#
+# C'est la SEULE voie par laquelle ce pont rend autre chose que None. Chaque
+# borne a son test, parce que le pont tourne dans l'agent de production et que
+# cette exception est la premiere depuis la phase 1.
+
+
+class CtxConsultation:
+    """Un faux Hermes qui rend une consultation exploitable."""
+
+    def __init__(self, charge=None, leve=None, lent=0.0):
+        self.appels = []
+        self.leve = leve
+        self.lent = lent
+        self.charge = charge if charge is not None else {
+            "v": 1, "ok": True, "consultation_id": 42,
+            "propositions": [
+                {"rang": 1, "name": "gm-factures",
+                 "description": "Factures fournisseurs proforma."},
+                {"rang": 2, "name": "gm-marges", "description": "Marges."},
+            ],
+        }
+
+    def call_mcp(self, server, tool, arguments=None, timeout=30):
+        self.appels.append((server, tool, arguments, timeout))
+        if self.leve:
+            raise self.leve
+        if self.lent:
+            time.sleep(self.lent)
+        # L'enveloppe reelle de Hermes, relevee dans `plugins.py` :
+        # `{"ok": True, "result": <charge>}`.
+        return {"ok": True, "result": self.charge}
+
+
+def _activer(mod, monkeypatch, actif=True):
+    monkeypatch.setattr(mod, "CONSULTATION_ACTIVE", actif)
+
+
+def test_sans_prefixe_le_hook_rend_toujours_none(tmp_path, monkeypatch):
+    """Le comportement d'un tour ordinaire doit rester exactement celui
+    d'avant : c'est la borne qui compte le plus."""
+    mod = charger(tmp_path, monkeypatch)
+    _activer(mod, monkeypatch)
+    ctx = CtxConsultation()
+    assert mod.on_pre_llm_call(ctx=ctx, user_message="pourquoi ce port chez Adagio",
+                               session_id="s1") is None
+    attendre(ctx, 1)
+    # Et aucun appel a `consulter` : seule l'observation a lieu.
+    outils = [a[1] for a in ctx.appels]
+    assert "consulter" not in outils
+    assert "request" in outils
+
+
+def test_le_drapeau_a_l_arret_rend_none_malgre_le_prefixe(tmp_path, monkeypatch):
+    """Par defaut a l'arret, pour que rien ne s'active lors d'une mise a jour."""
+    mod = charger(tmp_path, monkeypatch)
+    assert mod.CONSULTATION_ACTIVE is False, "defaut a l'arret"
+    ctx = CtxConsultation()
+    assert mod.on_pre_llm_call(ctx=ctx, user_message="/gk les factures",
+                               session_id="s1") is None
+    assert any(j["event"] == "consultation_desactivee" for j in journal(mod))
+
+
+def test_avec_le_prefixe_le_hook_rend_un_bloc(tmp_path, monkeypatch):
+    mod = charger(tmp_path, monkeypatch)
+    _activer(mod, monkeypatch)
+    ctx = CtxConsultation()
+    out = mod.on_pre_llm_call(
+        ctx=ctx, user_message="/gk pourquoi ce port chez Adagio", session_id="s1"
+    )
+    assert isinstance(out, str)
+    assert "gm-factures" in out
+    assert "Factures fournisseurs proforma" in out, "la description aussi"
+    assert "consultation 42" in out, "de quoi rattacher un retour"
+    assert "pas une instruction" in out, "suggestion, pas ordre"
+    # La demande envoyee est le texte APRES le prefixe.
+    appel = next(a for a in ctx.appels if a[1] == "consulter")
+    assert appel[2]["demande"] == "pourquoi ce port chez Adagio"
+    assert appel[3] == mod.TIMEOUT_CONSULTATION
+
+
+def test_la_demande_est_observee_meme_quand_c_est_une_consultation(
+    tmp_path, monkeypatch
+):
+    """L'exclure du corpus creerait un trou precisement sur les demandes ou
+    quelqu'un doutait."""
+    mod = charger(tmp_path, monkeypatch)
+    _activer(mod, monkeypatch)
+    ctx = CtxConsultation()
+    mod.on_pre_llm_call(ctx=ctx, user_message="/gk les factures", session_id="s1")
+    attendre(ctx, 2)
+    outils = [a[1] for a in ctx.appels]
+    assert "request" in outils and "consulter" in outils
+
+
+def test_un_prefixe_seul_ne_declenche_rien(tmp_path, monkeypatch):
+    """« /gk » sans demande n'a rien a chercher. Mais il ne doit pas etre
+    confondu avec l'absence de prefixe, qui ne journalise rien."""
+    mod = charger(tmp_path, monkeypatch)
+    _activer(mod, monkeypatch)
+    ctx = CtxConsultation()
+    assert mod.on_pre_llm_call(ctx=ctx, user_message="/gk", session_id="s1") is None
+    assert any(j["event"] == "consultation_vide" for j in journal(mod))
+
+
+def test_gk_injoignable_rend_none(tmp_path, monkeypatch):
+    """gb repond normalement, le collegue voit seulement qu'il n'a pas eu
+    d'aide."""
+    mod = charger(tmp_path, monkeypatch)
+    _activer(mod, monkeypatch)
+    ctx = CtxConsultation(leve=RuntimeError("injoignable"))
+    assert mod.on_pre_llm_call(
+        ctx=ctx, user_message="/gk les factures", session_id="s1"
+    ) is None
+
+
+def test_gk_degrade_rend_none(tmp_path, monkeypatch):
+    """`ok: false` ne doit pas produire un bloc vide dans le prompt."""
+    mod = charger(tmp_path, monkeypatch)
+    _activer(mod, monkeypatch)
+    ctx = CtxConsultation(charge={"v": 1, "ok": False, "degrade": True,
+                                  "propositions": []})
+    assert mod.on_pre_llm_call(
+        ctx=ctx, user_message="/gk les factures", session_id="s1"
+    ) is None
+
+
+def test_zero_proposition_rend_none(tmp_path, monkeypatch):
+    """Mieux vaut rien qu'une liste vide annoncee comme une aide."""
+    mod = charger(tmp_path, monkeypatch)
+    _activer(mod, monkeypatch)
+    ctx = CtxConsultation(charge={"v": 1, "ok": True, "propositions": []})
+    assert mod.on_pre_llm_call(
+        ctx=ctx, user_message="/gk zzz", session_id="s1"
+    ) is None
+
+
+def test_une_consultation_qui_leve_ne_casse_pas_le_tour(tmp_path, monkeypatch):
+    """Une exception qui remonte dans un tour de l'agent est exactement ce que
+    ce fichier de tests existe pour empecher."""
+    mod = charger(tmp_path, monkeypatch)
+    _activer(mod, monkeypatch)
+
+    def _casse(*a, **k):
+        raise ValueError("boum")
+
+    monkeypatch.setattr(mod, "_bloc_consultation", _casse)
+    ctx = CtxConsultation()
+    assert mod.on_pre_llm_call(
+        ctx=ctx, user_message="/gk les factures", session_id="s1"
+    ) is None
+
+
+def test_les_deux_autres_hooks_restent_toujours_nuls(tmp_path, monkeypatch):
+    """`transform_llm_output` peut REMPLACER la reponse que le collegue lit :
+    c'est le None qu'il ne faut jamais toucher. La consultation ne l'approche
+    pas."""
+    mod = charger(tmp_path, monkeypatch)
+    _activer(mod, monkeypatch)
+    ctx = CtxConsultation()
+    assert mod.on_transform_llm_output(
+        ctx=ctx, response_text="/gk une reponse qui parle de gk", session_id="s1"
+    ) is None
+    assert mod.on_skill_lifecycle(
+        ctx=ctx, action="loaded", skill_name="/gk", session_id="s1"
+    ) is None
+
+
+def test_les_prefixes_reconnus_et_la_casse(tmp_path, monkeypatch):
+    mod = charger(tmp_path, monkeypatch)
+    for brut, attendu in (
+        ("/gk les factures", "les factures"),
+        ("  /GK les factures  ", "les factures"),
+        ("!gk les factures", "les factures"),
+        ("gk: les factures", "les factures"),
+        ("/gk", ""),
+        ("/gkqqchose", None),
+        ("parle moi de /gk", None),
+        ("les factures", None),
+        (None, None),
+    ):
+        assert mod._demande_de_consultation(brut) == attendu, brut

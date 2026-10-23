@@ -75,6 +75,26 @@ def build(service: Service, config: Config):
             return {"v": 1, "ok": False, "degrade": True, "besoins": []}
 
     @server.tool(
+        name="consulter",
+        description=(
+            "Une consultation DEMANDEE par un humain (commande `/gk`). Rend les "
+            "skills qui servent la demande, avec leur description, et un "
+            "identifiant de consultation pour y rattacher un retour. "
+            "Contrairement a `request`, cet outil rend du contenu -- c'est le "
+            "seul, et seulement parce qu'une personne l'a demande."
+        ),
+    )
+    def consulter(demande: str, session_id: str = "", limite: int = 5) -> dict:
+        try:
+            return service.consulter(demande, session_id, limite)
+        except Exception as exc:
+            logger.warning("consulter a echoue: %r", exc)
+            # Degrade sans propositions : le pont rendra None, donc l'agent
+            # repond normalement et le collegue voit seulement qu'il n'a pas eu
+            # d'aide.
+            return {"v": 1, "ok": False, "degrade": True, "propositions": []}
+
+    @server.tool(
         name="report",
         description=(
             "Enregistre un retour d'usage ou une notation. `source` vaut hook, agent ou human, "

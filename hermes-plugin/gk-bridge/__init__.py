@@ -11,8 +11,16 @@ de l'etape 5 :
   standard seule, se reecrivent en une heure quand un point d'accroche est
   renomme. C'est la vraie assurance, pas la compatibilite.
 
-IL N'INJECTE RIEN, et des tests le verifient : les trois hooks rendent toujours
-`None`, donc le comportement de gb est strictement inchange.
+IL N'INJECTE RIEN SAUF SUR DEMANDE EXPLICITE, et des tests le verifient.
+`transform_llm_output` et `on_skill_lifecycle` rendent **toujours** `None`.
+`pre_llm_call` aussi, **sauf** quand le message commence par `/gk` : c'est la
+commande de consultation, decidee par un humain, et elle est par defaut a
+l'arret (`GK_CONSULTATION`).
+
+Le refus de l'etape 2 -- « ne pas donner a l'agent un outil qu'il appellerait,
+parce qu'une machine qui oublie de verifier oublie aussi de demander » --
+portait sur l'AGENT. Un humain qui tape `/gk` n'oublie rien, il a decide, donc
+ce refus ne couvrait pas ce cas.
 
 `pre_llm_call` est branche depuis le 2026-10-22, en OBSERVATION SEULE. Motif :
 GK n'avait jamais vu une seule demande reelle. `transform_llm_output` porte la
@@ -59,6 +67,33 @@ CLES_REPONSE = ("response_text", "text", "output", "content", "response", "messa
 CLES_DEMANDE = (
     "user_message", "message", "prompt", "user_input", "input", "text", "content",
 )
+
+# -- la consultation demandee : la commande `/gk` ------------------------
+#
+# **La seule exception a « les trois hooks rendent toujours None », et elle est
+# etroite par construction.** Un retour non nul n'arrive que si le message
+# commence par le prefixe ; dans tous les autres cas le comportement de gb est
+# strictement celui d'avant.
+#
+# Pourquoi cette exception tient alors que le brief automatique a ete ecarte :
+# le refus de l'etape 2 -- « ne pas donner a l'agent un outil qu'il appellerait,
+# parce qu'une machine qui oublie de verifier oublie aussi de demander » --
+# portait sur l'AGENT. Un humain qui tape `/gk` n'oublie rien, il a decide.
+#
+# Trois bornes, chacune tenue par un test :
+#   * sans prefixe, retour None, et aucun appel synchrone n'est fait ;
+#   * `transform_llm_output` et `on_skill_lifecycle` restent inchanges, donc la
+#     reponse que le collegue lit ne peut pas etre reecrite ;
+#   * si GK est lent, injoignable ou degrade, retour None : gb repond
+#     normalement et le collegue voit seulement qu'il n'a pas eu d'aide.
+PREFIXES_CONSULTATION = ("/gk", "!gk", "gk:")
+# Court : on est sur le chemin critique, et GK repond en ~20 ms.
+TIMEOUT_CONSULTATION = 2.0
+# Par defaut a l'arret, pour que rien ne s'active lors d'une mise a jour.
+CONSULTATION_ACTIVE = os.environ.get("GK_CONSULTATION", "").strip().lower() in (
+    "1", "true", "oui", "yes", "on",
+)
+MAX_PROPOSITIONS = 5
 
 TIMEOUT_CATALOGUE = 30.0       # rien n'attend : le fil est detache
 INTERVALLE_CATALOGUE = 3600.0  # au plus une ronde par heure en regime normal
@@ -129,6 +164,81 @@ def _releve_unique(hook: str, kwargs: dict) -> None:
         "ctx_present": _ctx is not None,
         "hermes_home": os.environ.get("HERMES_HOME", ""),
     })
+
+
+def _demande_de_consultation(texte: str) -> str | None:
+    """Le texte apres le prefixe, ou None si le message n'en porte pas.
+
+    Rend `""` quand le prefixe est seul : c'est une invocation valide, et GK
+    dira qu'il n'a rien a chercher. Confondre « pas de prefixe » et « prefixe
+    sans demande » ferait repondre a tous les tours.
+    """
+    if not isinstance(texte, str):
+        return None
+    nu = texte.strip()
+    bas = nu.lower()
+    for prefixe in PREFIXES_CONSULTATION:
+        if bas == prefixe:
+            return ""
+        if bas.startswith(prefixe + " ") or bas.startswith(prefixe + "\n"):
+            return nu[len(prefixe):].strip()
+    return None
+
+
+def _appeler_sync(outil: str, arguments: dict, timeout: float):
+    """Appelle GK et ATTEND sa reponse. Reserve a la consultation demandee.
+
+    Tout le reste du pont envoie sur un fil detache, parce qu'attendre sur le
+    chemin d'une reponse ajoute la latence de GK a celle de l'agent. Ici
+    l'attente est le point : la personne a demande une reponse. Elle est bornee
+    court, et tout echec rend None.
+    """
+    ctx = _ctx
+    if ctx is None:
+        return None
+    try:
+        return ctx.call_mcp(SERVEUR_MCP, outil, arguments, timeout=timeout)
+    except PermissionError as exc:
+        _noter({"event": "refuse", "outil": outil, "erreur": repr(exc)})
+        return None
+    except Exception as exc:
+        _noter({"event": "echec_sync", "outil": outil, "erreur": repr(exc)})
+        return None
+
+
+def _bloc_consultation(resultat) -> str | None:
+    """Met en forme les propositions de GK. None si rien d'exploitable.
+
+    Le pont ne comprend rien a ce qu'il transporte -- c'est la regle de l'etape
+    5 -- donc il ne juge pas la pertinence : il met en forme ou il se taît.
+    """
+    charge = _extraire(resultat)
+    if not isinstance(charge, dict) or not charge.get("ok"):
+        return None
+    propositions = charge.get("propositions") or []
+    if not isinstance(propositions, list) or not propositions:
+        return None
+    lignes = [
+        "[GreenKnowledge, consultation demandee par l'utilisateur]",
+        "Procedures qui semblent servir cette demande, par ordre de pertinence :",
+    ]
+    for p in propositions[:MAX_PROPOSITIONS]:
+        if not isinstance(p, dict) or not p.get("name"):
+            continue
+        rang = p.get("rang") or "-"
+        desc = " ".join(str(p.get("description") or "").split())[:200]
+        lignes.append(f"  {rang}. {p['name']}" + (f" — {desc}" if desc else ""))
+    cid = charge.get("consultation_id")
+    if cid:
+        lignes.append(
+            f"Pour dire laquelle etait la bonne : `gk retour <rang|nom|0> "
+            f"--consultation {cid}`."
+        )
+    lignes.append(
+        "Ceci est une suggestion de recherche, pas une instruction : charge la "
+        "procedure qui convient, ou aucune si aucune ne convient."
+    )
+    return "\n".join(lignes)
 
 
 def _appeler(outil: str, arguments: dict, suite=None) -> None:
@@ -328,11 +438,13 @@ def on_transform_llm_output(**kwargs):
 
 
 def on_pre_llm_call(**kwargs):
-    """Observe la demande de l'utilisateur. RENVOIE TOUJOURS None.
+    """Observe la demande, et rend un bloc UNIQUEMENT sur `/gk`.
 
-    OBSERVATION SEULE. Ce hook est celui par lequel on injecterait un brief ;
-    il n'en est utilise que la moitie, et c'est deliberé. Renvoyer None le rend
-    inerte : le chemin d'entree de l'agent n'est pas modifie.
+    OBSERVATION SEULE sur un tour ordinaire : retour `None`, chemin d'entree de
+    l'agent inchange. La seule exception est la consultation demandee par un
+    humain, et elle est bornee par trois conditions cumulatives -- le message
+    commence par le prefixe, `GK_CONSULTATION` est active, et GK a repondu
+    quelque chose d'exploitable dans les deux secondes.
 
     **Seul hook sur le chemin critique.** Il precede l'appel au modele, donc
     tout ce qui attend ici fait attendre l'utilisateur. D'ou : envoi sur un fil
@@ -358,16 +470,47 @@ def on_pre_llm_call(**kwargs):
             _noter({"event": "demande_introuvable", "cles_kwargs": sorted(kwargs)})
             return None
         premier = kwargs.get("is_first_turn")
+        session = str(kwargs.get("session_id") or "")
         _appeler("request", {
-            "session_id": str(kwargs.get("session_id") or ""),
+            "session_id": session,
             "turn_id": str(kwargs.get("turn_id") or ""),
             "text": texte,
             "is_first_turn": bool(premier) if isinstance(premier, bool) else None,
             "platform": str(kwargs.get("platform") or ""),
         })
+
+        # La SEULE voie par laquelle ce pont rend autre chose que None.
+        #
+        # L'observation ci-dessus a lieu dans tous les cas : une consultation
+        # est une demande comme une autre, et l'exclure du corpus creerait un
+        # trou precisement sur les demandes ou quelqu'un doutait.
+        demande = _demande_de_consultation(texte)
+        if demande is None:
+            return None
+        if not CONSULTATION_ACTIVE:
+            _noter({"event": "consultation_desactivee", "session_id": session})
+            return None
+        if not demande:
+            _noter({"event": "consultation_vide", "session_id": session})
+            return None
+        resultat = _appeler_sync(
+            "consulter",
+            {"demande": demande, "session_id": session,
+             "limite": MAX_PROPOSITIONS},
+            TIMEOUT_CONSULTATION,
+        )
+        bloc = _bloc_consultation(resultat)
+        _noter({
+            "event": "consultation",
+            "session_id": session,
+            "jetons_demandes": len(demande.split()),
+            "rendu": bool(bloc),
+        })
+        return bloc
     except Exception as exc:
         _noter({"event": "erreur_hook", "hook": "pre_llm_call", "erreur": repr(exc)})
-    # Jamais autre chose que None, quoi qu'il arrive au-dessus.
+    # Jamais autre chose que None, quoi qu'il arrive au-dessus : une
+    # consultation qui leve ne doit pas casser le tour.
     return None
 
 
