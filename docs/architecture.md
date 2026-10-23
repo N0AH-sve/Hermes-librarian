@@ -2754,6 +2754,111 @@ skill -- et c'est exactement ce que `gk confronter` mesure.
 A n = 30, un ecart de quelques points ne signifie rien ; un ecart de vingt, si.
 C'est la seule conclusion que ce corpus autorise, et c'est assez pour trancher.
 
+## Le resultat de la confrontation : le brief est mort
+
+Releve du 2026-10-23, sur les 30 demandes reelles ou un humain a designe le bon
+skill. **C'est la mesure qui decidait de la phase 3, et elle tranche contre
+elle.**
+
+| | GK (1 proposition) | gb (9,1 skills charges par session) |
+|---|---|---|
+| Bon skill trouve | 12 / 30 = **0,400** | 10 / 30 = **0,333** |
+
+L'ecart de +0,067 **n'est pas un resultat**. La table de contingence le montre :
+
+| | gb juste | gb faux |
+|---|---|---|
+| **GK juste** | 3 | 9 |
+| **GK faux** | 7 | 11 |
+
+Neuf paires discordantes pour GK, sept pour gb : **McNemar exact, p = 0,80**.
+Autant dire une piece lancee en l'air. L'annonce « GK fait mieux que gb » ne
+tient pas une seconde d'examen, et c'etait annonce d'avance -- « un ecart de
+quelques points ne signifie rien a n = 30 ».
+
+### Le biais structurel, et il va dans notre sens
+
+**La verite terrain vient de la liste de GK.** L'annotateur choisissait parmi
+les cinq propositions de GK ; si le bon skill n'y figurait pas, il repondait
+`0` et le cas sort de la mesure. Donc `attendu` est **toujours un des cinq de
+GK, par construction**, et gb est juge sur le terrain de GK.
+
+Consequence : si gb avait charge le bon skill dans un cas que GK ne proposait
+pas, ce cas est exclu et gb est penalise **invisiblement**. Le 0,333 de gb est
+donc un **plancher**, et le 0,400 de GK est mesure chez lui. La comparaison est
+biaisee en faveur de GK.
+
+C'est ce qui rend la suite solide : **elle tient contre le biais.**
+
+### La ou gb engage, gb gagne
+
+En separant selon que gb a charge quelque chose ou non :
+
+| | cas | GK | gb |
+|---|---|---|---|
+| **gb a charge au moins un skill** | 23 | 6 / 23 = **0,261** | 10 / 23 = **0,435** |
+| **gb n'a rien charge** | 7 | 6 / 7 = **0,857** | 0 par definition |
+
+**Quand gb choisit, il choisit mieux que GK** -- 0,435 contre 0,261, et ce
+malgre un biais qui avantage GK. Sept paires discordantes contre trois
+(p = 0,34, donc non demontre, mais la direction est contre GK).
+
+C'est le troisieme scenario annonce avant la mesure : « gb est nettement
+au-dessus, le projet change de but, et c'est a dire franchement. » Le voici dit.
+
+**Injecter un brief qui designe un skill reviendrait donc a remplacer un
+jugement meilleur par un jugement moins bon.** Ce n'est plus « non faute de
+preuve », c'est **non parce que la mesure dit le contraire**, dans le seul
+endroit ou une comparaison etait possible.
+
+### Ce qui survit, et qui n'etait pas le projet
+
+**Un : les abstentions.** Sur les 7 demandes ou gb n'a rien charge, GK nomme le
+bon skill 6 fois. Ce sont des occasions manquees nettes, et elles **refutent**
+l'hypothese du tour precedent -- j'avais suppose que les 36 % de demandes sans
+reponse et les 21 sessions sans chargement etaient le meme phenomene, donc que
+gb declinait a raison. Faux : il declinait a tort au moins six fois.
+
+Mais l'IC95 va de 0,49 a 0,97, et surtout **les 7 cas ne couvrent que 4 skills
+distincts**, dont `cartes-executeur` a lui seul en porte 4. L'effectif reel est
+donc d'environ quatre situations. **Encourageant, insuffisant pour construire.**
+Ce qui le trancherait est un echantillon **cible** sur les sessions sans
+chargement -- vingt minutes d'annotation sur le seul lot qui compte, au lieu de
+cinquante demandes au hasard.
+
+**Deux : gb charge neuf skills par session.** Moyenne 9,1, maximum 13, et
+**209 chargements pour 10 bonnes cibles** sur les 23 cas. Personne ne regardait
+ce chiffre, il ne depend d'aucune verite terrain, et il change la question.
+
+| GK, sur les memes 30 cas | |
+|---|---|
+| rappel@1 | 0,400 |
+| **rappel@2** | **0,700** |
+| rappel@3 | 0,833 |
+| rappel@4 | **1,000** |
+
+Le bon skill est dans les **deux premiers** de GK sept fois sur dix, et dans les
+quatre premiers **toujours**. En face, gb charge neuf skills pour le trouver une
+fois sur trois.
+
+Donc la valeur de GK n'est pas « trouver le bon skill » -- gb le fait mieux --
+mais **« en charger deux au lieu de neuf »**. C'est un probleme de budget de
+contexte, pas de pertinence, et c'est un autre projet : il se mesure en jetons
+economises et en qualite de reponse, pas en rappel@1.
+
+**Trois : le diagnostic de la bibliotheque.** `gk manques`, `gk confusions`, les
+36 % de demandes sans reponse, les 31 contre-indications sur 186, la couverture
+des declencheurs passee de 36 % a 78 %. Ca marche, ca rend du travail
+actionnable, et c'est deja livre.
+
+### Une affirmation a retirer
+
+Le bras « nom + description » du banc (0,401) a servi deux jours de reference
+pour gb. Le vrai chiffre de gb est 0,333, mesure autrement et sur un autre
+corpus : **la proximite est une coincidence** et ne valide pas le substitut. Un
+moteur de mots sur deux champs n'approxime pas un modele de langage qui lit 186
+descriptions, meme quand les nombres se ressemblent.
+
 ## Points ouverts
 
 Dernière revue : 2026-10-22, après la mise en service partielle de la phase 1
