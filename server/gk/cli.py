@@ -26,6 +26,7 @@ from pathlib import Path
 from .catalog import Catalog
 from .config import Config
 from .declencheurs import decouper, lecture, mesurer
+from .jugement import juger, preparer, relire
 from .corrections import (
     BAD_RECOMMENDATION,
     BRIEF_IGNORED,
@@ -401,6 +402,70 @@ _GRILLES = {
     "information": [0, 2, 4, 6, 8, 10, 13, 16, 20, 25, 30],
     "score": [0, 2, 5, 10, 15, 20, 30, 45, 60, 80],
 }
+
+
+def cmd_echantillon(args, cfg: Config) -> int:
+    """Prepare des demandes reelles a juger a la main.
+
+    Tout est bloque sur le meme manque : aucune verite terrain sur des demandes
+    reelles. Une heure d'annotation donne le rappel reel, le seuil refixe sur
+    les vraies donnees, et donc le feu vert ou le refus pour la phase 3.
+
+    La sortie est du texte brut, a rediriger dans un fichier et a editer. Un
+    format riche couterait une interface, et une interface couterait plus que
+    l'heure qu'elle economise.
+    """
+    with Store(cfg.database) as store:
+        index = Index.construire(store)
+        if index.n == 0:
+            print("catalogue vide, voir `gk catalogue`", file=sys.stderr)
+            return 1
+        texte = preparer(store, index, taille=args.taille)
+        if "## 1." not in texte:
+            print("aucune demande reelle enregistree, voir `gk demandes`", file=sys.stderr)
+            return 1
+        sys.stdout.write(texte)
+    return 0
+
+
+def cmd_juger(args, cfg: Config) -> int:
+    """Relit l'echantillon annote, et rend le rappel REEL.
+
+    Les deux chiffres qu'on attend depuis le debut, sur de vraies demandes et
+    non sur des phrases ecrites par les auteurs des skills.
+    """
+    texte = sys.stdin.read()
+    cas = relire(texte)
+    if not cas:
+        _emit({
+            "ok": False,
+            "erreur": "aucun cas lu : l'entree ne ressemble pas a un echantillon",
+            "suite": "gk echantillon > fichier, annoter, puis gk juger < fichier",
+        }, args)
+        return 1
+    resultat = juger(cas)
+    if not resultat.get("ok"):
+        _emit(resultat, args)
+        return 1
+    resultat["lecture"] = [
+        "Chiffres sur de VRAIES demandes, enfin : tout ce qui precede etait "
+        "mesure sur des phrases ecrites par les auteurs des skills.",
+        f"Rappel en premiere position : {resultat['rappel_1_reel']}. Dans les "
+        f"cinq : {resultat['rappel_5_reel']}.",
+    ]
+    if resultat["part_sans_reponse_possible"] >= 0.25:
+        resultat["lecture"].append(
+            f"{resultat['part_sans_reponse_possible']:.0%} des demandes n'ont "
+            "AUCUN skill qui convienne. Ce n'est pas un echec de recherche : "
+            "c'est un trou de la bibliotheque, ou une demande qui n'appelle "
+            "aucun skill. Les compter comme des echecs fausserait le jugement."
+        )
+    if resultat["non_annotes"]:
+        resultat["lecture"].append(
+            f"{resultat['non_annotes']} cas sans reponse, ignores."
+        )
+    _emit(resultat, args)
+    return 0
 
 
 def cmd_seuil_reel(args, cfg: Config) -> int:
@@ -1436,6 +1501,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="identifiant de session : reprend les demandes precedentes comme contexte",
     )
     c.set_defaults(func=cmd_cherche)
+
+    ec = sub.add_parser(
+        "echantillon",
+        help="preparer des demandes reelles a juger a la main",
+    )
+    ec.add_argument("-n", "--taille", type=int, default=50)
+    ec.set_defaults(func=cmd_echantillon)
+
+    sub.add_parser(
+        "juger",
+        help="relire l'echantillon annote sur l'entree standard",
+    ).set_defaults(func=cmd_juger)
 
     sl = sub.add_parser(
         "seuil",
