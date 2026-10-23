@@ -2861,6 +2861,13 @@ descriptions, meme quand les nombres se ressemblent.
 
 ## Choix contre choix : GK gagne, et la conclusion precedente est retiree
 
+> **RETIRE le 2026-10-23 apres audit.** Le « GK gagne trois fois mieux » de
+> cette section comparait GK a la courbe **par tour** de gb, qui sous-estime gb
+> de 5 cas : il avait deja le bon skill charge avant la demande. La mesure juste
+> est 0,400 contre **0,300**, et elle ne demontre rien. Voir
+> « L'audit de la confrontation » plus bas. La section est conservee parce que
+> l'erreur et sa correction font partie du dossier.
+
 Releve du 2026-10-23, apres correction du denominateur. 30 demandes reelles,
 verite terrain humaine, **le rang du bon skill chez l'un et chez l'autre**.
 
@@ -2956,6 +2963,99 @@ Deux decisions decoulent directement des chiffres :
   ligne de plus, au rang 4 le reste ;
 * **le droit de ne rien dire**, sur un seuil ajuste sur les demandes reelles.
   Sans lui, le brief est faux 36 fois sur 100 par construction.
+
+## L'audit de la confrontation, et l'etat verifie
+
+Demande de GM : « je veux que tu verifies avant tout. » Legitime -- j'avais
+change de conclusion deux fois sur la meme mesure. Quatre points faibles,
+trois verifiables depuis la base.
+
+### Ce que l'audit a trouve
+
+**Un defaut reel dans l'instrument.** `skill_uses` porte 765 `loaded`, mais
+aussi 206 `patched`, 10 `edited`, 4 `created` et 8 `stale` : **228 evenements
+sur 993 ne sont pas des usages**, ce sont des evenements d'ecriture de skill --
+un collegue qui corrige un fichier, pas gb qui le lit. Je les comptais comme des
+choix de gb. Pire que de gonfler son score : un skill fraichement corrige
+pouvait occuper le rang 1 de sa sequence et repousser son vrai choix d'un cran.
+
+**Et le resultat y resiste.** Apres filtrage, `gb_a_choisi_quelque_chose` passe
+de 16 a 15 et **tous les autres chiffres sont identiques** : les evenements
+ecartes portaient sur des skills qui n'etaient pas ceux attendus. C'est le
+meilleur resultat possible d'une verification -- le chiffre tient malgre un vrai
+defaut. A consigner comme tel, parce que l'inverse serait arrive une fois sur
+deux.
+
+**Les reutilisations sont visibles**, et c'etait le risque principal :
+`use_count` monte a 524, et 736 evenements sur 993 portent un compteur
+superieur a 1. La courbe par tour de gb est donc une mesure, pas un artefact de
+l'instrument.
+
+**gb etait bien sous-estime, de 5 cas.** Il avait deja le bon skill charge avant
+la demande 5 fois. En le creditant du tour **ou** d'un chargement anterieur, il
+passe de 0,133 a **0,300**. Plus bas que la mesure de session (0,333) : un cas
+avait son chargement apres la demande suivante, donc il repondait a celle-la.
+
+### L'etat verifie, et il ne demontre rien
+
+| | GK | gb |
+|---|---|---|
+| **Mesure la plus juste par demande** | **0,400** (12/30) | **0,300** (9/30) |
+| Rang 2 | 0,700 | 0,167 (sequence) / 0,333 (session) |
+
+Trois cas d'ecart. **McNemar p entre 0,61 et 0,66**, et l'effectif reel n'est pas
+30 : **13 sessions distinctes**, 18 skills attendus distincts. Un ecart de trois
+cas sur treize observations independantes ne demontre rien, dans aucun sens.
+
+**Troisieme position sur cette mesure, et c'est celle qui reste** quand on
+retire mes trois erreurs : un denominateur faux (rang 1 contre un lot de neuf),
+une courbe qui sous-estimait gb de 5 cas, et 23 % d'evenements qui n'etaient pas
+des usages.
+
+### Le biais de selection, qui ne se verifie pas depuis la base
+
+La verite terrain vient des cinq propositions de GK, donc les 30 cas comparables
+sont **ceux ou GK a reussi son rappel@5**. GK est juge sur un sous-ensemble que
+sa propre reussite a selectionne ; gb n'a pas cet avantage. C'est enonce a
+chaque sortie de la commande, pour qu'il ne disparaisse plus du raisonnement
+comme il l'a fait deux fois.
+
+### Ce que l'audit change pour la decision
+
+Il la deplace, et dans une direction qui n'avait pas ete vue.
+
+**J'ai cherche a justifier la phase 3 par des mesures hors production, alors que
+la phase 3 est elle-meme une experience randomisee** -- un tour sur deux avec le
+brief, les deux moitieés comparees sur la meme periode. Cette mesure repond a la
+question mieux que n'importe quel substitut hors ligne, sans annotation, sur de
+vraies demandes, et c'etait la conception d'origine.
+
+Aucun chiffre hors ligne ne tranchera a 13 sessions. Il en faudrait deux ou
+trois heures d'annotation de plus, ou l'A/B.
+
+**Et le cout de se tromper est borne**, parce que la conception d'origine le
+bornait deja : gb garde le catalogue complet au prompt systeme, donc le brief
+informe sans contraindre, et gb conserve le dernier mot. Le risque n'est pas
+qu'un mauvais choix de GK ecrase un bon choix de gb, c'est **l'ancrage** -- et il
+s'observe des les premiers jours par le compteur de corrections de la phase 1,
+qui existe depuis le debut et n'a jamais servi.
+
+### Les trois conditions que les chiffres dictent
+
+| Condition | Pourquoi | Etat |
+|---|---|---|
+| **Deux entrees, pas une** | 0,700 contre 0,400, pour une ligne de plus | a faire |
+| **Le droit de se taire** | 36 % des demandes n'ont aucune reponse ; un brief qui parle toujours est faux 36 fois sur 100 par construction | **le seul vrai reste** |
+| **Un tour sur deux** | c'est la mesure, pas le risque | concu depuis l'etape 8 |
+
+Et une surveillance a ajouter, parce que le risque a ete identifie et qu'aucune
+mesure ne le couvre : **la part des sessions qui ne chargent aucun skill, par
+bras**. Si le brief detruit des abstentions correctes, elle bougera.
+
+Le seuil se refixe sur les **47 demandes reelles etiquetees, dont 17 sans
+reponse** -- la premiere verite terrain du projet sur de vraies demandes. Avec
+moitie d'ajustement et moitie de verification, la precaution qui avait deja
+attrape un surajustement de 1,0 a 0,333.
 
 ## Points ouverts
 
