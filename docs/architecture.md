@@ -2598,6 +2598,117 @@ reprise. Apres quoi le rappel@1 et @5 reels sont des points, le seuil se refixe
 sur de vraies demandes, et la phase 3 se decide sur des chiffres et non sur une
 borne.
 
+## La phase 3 : la decision, et la mesure qui la precede
+
+Releve du 2026-10-23, apres le premier jugement humain. **Question posee par GM :
+prend-on le risque de brancher ?**
+
+### Les chiffres consolides
+
+| Mesure | Valeur | Corpus |
+|---|---|---|
+| Rappel@1 **reel** | **0,255 a 0,400** | 47 demandes reelles, jugement humain |
+| Rappel@1 au banc | 0,448 | 259 phrases citees par les auteurs |
+| Plafond du moteur | 0,56 | calcule : 67 % des echecs sont de redaction |
+| Demandes sans reponse dans la bibliotheque | 36 % | jugement humain |
+| Rappel@1 avec contexte, sur une suite | 0,682 | 44 sessions **fabriquees** |
+| Part des demandes franchissant le seuil | 7,7 % | demandes reelles |
+| Sessions sans aucun chargement de skill | 21 / 63 | production |
+
+### La decision sur le brief qui nomme un skill : non
+
+Le bon skill arrive premier entre 26 % et 40 % du temps sur de vraies demandes.
+gb voit deja ses 186 descriptions, recoit l'ordre de charger, et **deux autres
+producteurs ecrivent deja dans `pre_llm_call`** (`gm-routing` et le hook shell
+`skills_gate.py`). Injecter un troisieme bloc qui designe le mauvais skill six a
+sept fois sur dix, avant que gb lise la demande, c'est ajouter du bruit a un
+filet qui fonctionne.
+
+**La conclusion tient aux deux bouts de l'intervalle**, donc elle ne demande
+aucune mesure supplementaire. C'est la premiere decision du projet qui se prenne
+contre la conception initiale, et elle se prend sur des chiffres.
+
+### Ce que la reprise aurait achete, et pourquoi elle est abandonnee
+
+Verification faite decision par decision : **une seule** depend de `x`, le
+nombre des 17 `0` qui cachent un skill existant hors des cinq.
+
+| Decision | Depend de `x` ? |
+|---|---|
+| Brief qui nomme **un** skill | non : 0,26 comme 0,40 donnent un refus |
+| Retirer le catalogue du prompt systeme | non, et c'est pire qu'avant |
+| Refixer le seuil | non : mort sans annotation (7,7 %) |
+| Brief qui propose **cinq** skills | **oui**, et c'est la seule |
+
+Donc « quinze minutes debloquent tout » etait faux : seul un brief a cinq
+entrees en depend, parce que son risque est le rappel@5 -- a 1,000 il contient
+toujours le bon skill, a 0,638 il pointe ailleurs dans 36 % des cas ou il
+existe.
+
+Et la reprise sur un echantillon **v1** est a moitie fiable : elle retrouve la
+session en comparant le texte de la demande, or un fichier produit avant le
+repli des demandes multilignes ne porte que la premiere ligne dans son titre.
+Le classement montre ne serait alors pas la suite de celui qui a ete annote.
+L'approximation est desormais comptee (`apparies_par_prefixe`) plutot que
+cachee, mais elle reste une approximation.
+
+**Le moyen court retenu** : lire les 17 demandes. Celui qui connait la
+bibliotheque sait d'un coup d'oeil si un skill devrait exister, et
+« ce skill manque » est une information que le rang ne porte pas.
+
+```bash
+awk '/^## /{t=$0} /^REPONSE:/{if ($2=="0") print t}' echantillon.txt
+```
+
+### La mesure qui n'avait jamais ete faite : GK contre gb
+
+**Le defaut de tout ce qui precede.** Chaque chiffre du projet compare GK a une
+**etiquette**. Aucun ne compare GK a **gb**. Or la phase 3 remplace un
+jugement de gb par un jugement de GK : la seule question qui decide est
+« lequel des deux se trompe le moins ? », et ce chiffre n'existait pas.
+
+Le bras « nom + description » du banc en etait un substitut, et un mauvais : il
+fait tourner le moteur de GK sur deux champs, alors que gb est un modele de
+langage qui lit 186 descriptions d'un coup. **Comparer GK a une version
+appauvrie de lui-meme ne dit rien de gb**, et son 0,401 a servi de reference
+pendant deux jours.
+
+Les deux donnees sont pourtant deja en base, sans aucune injection :
+`requests` porte la demande (`pre_llm_call`), `skill_uses` porte le skill que gb
+a reellement charge (`on_skill_lifecycle`), et l'echantillon annote porte le bon
+skill. `gk confronter` les croise.
+
+Trois honnetetes, parce que la conclusion porte une decision :
+
+* **l'appariement reste une correlation** -- les deux hooks ne partagent aucune
+  clef, donc on rapproche par session et par temps ;
+* **deux fenetres, et la plus genereuse pour gb.** La fenetre courte apres la
+  demande a deja rendu zero : gb charge surtout en debut de session. La mesure
+  de session le credite d'un chargement **meme anterieur** a la demande. Elle
+  l'avantage deliberement : **si gb perd sous une regle qui l'avantage, la
+  conclusion tient** ;
+* **l'abstention n'est pas une erreur.** Une session ou gb n'a rien charge est
+  comptee a part : confondre « gb s'est trompe » et « gb n'a rien charge »
+  rendrait le chiffre inutilisable, les deux ayant des remedes opposes.
+
+**Et une coincidence a ne pas prendre pour un resultat** : 36 % des demandes
+n'ont aucun skill qui convienne, et 21 sessions sur 63 (33 %) n'ont charge aucun
+skill. L'explication la plus economique est que ce sont **les memes demandes**,
+donc que gb decline deja correctement. Si elle est juste, la marge restante de
+GK n'est pas dans les abstentions mais dans les cas ou gb charge **le mauvais**
+skill -- et c'est exactement ce que `gk confronter` mesure.
+
+### Ce que le resultat decidera
+
+| Si | Alors |
+|---|---|
+| gb est nettement **sous** GK (ecart > 0,20) | la phase 3 a un fondement, et le brief se concoit sur les cas ou gb se trompe |
+| les deux sont **proches** | GK ne sert pas de brief. Il reste un outil de diagnostic de la bibliotheque, ce qu'il fait deja tres bien |
+| gb est nettement **au-dessus** | le projet change de but, et c'est a dire franchement |
+
+A n = 30, un ecart de quelques points ne signifie rien ; un ecart de vingt, si.
+C'est la seule conclusion que ce corpus autorise, et c'est assez pour trancher.
+
 ## Points ouverts
 
 Dernière revue : 2026-10-22, après la mise en service partielle de la phase 1

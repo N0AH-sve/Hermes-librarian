@@ -26,6 +26,8 @@ from pathlib import Path
 from .catalog import Catalog
 from .config import Config
 from .declencheurs import decouper, lecture, mesurer
+from .confrontation import FENETRE_SECONDES, confronter
+from .confrontation import lecture as lecture_confrontation
 from .jugement import REPRISE_JUSQU_A, juger, preparer, reprise, relire
 from .corrections import (
     BAD_RECOMMENDATION,
@@ -529,6 +531,36 @@ def cmd_reprise(args, cfg: Config) -> int:
             print("catalogue vide, voir `gk catalogue`", file=sys.stderr)
             return 1
         sys.stdout.write(reprise(store, index, cas, jusqu_a=args.jusqu_a))
+    return 0
+
+
+def cmd_confronter(args, cfg: Config) -> int:
+    """GK contre gb, sur les memes demandes et la meme verite terrain.
+
+    La comparaison qui decide de la phase 3, et la seule qui n'avait jamais ete
+    faite : tout le reste compare GK a une etiquette, jamais a gb.
+
+    Ne demande aucune injection et aucun redemarrage : les deux donnees sont
+    deja en base, posees par `pre_llm_call` et `on_skill_lifecycle`.
+    """
+    texte = sys.stdin.read()
+    cas = relire(texte)
+    if not cas:
+        _emit({
+            "ok": False,
+            "erreur": "aucun cas lu : l'entree ne ressemble pas a un echantillon",
+            "suite": "gk confronter < echantillon-annote.txt",
+        }, args)
+        return 1
+    with Store(cfg.database) as store:
+        resultat = confronter(store, cas, fenetre=args.fenetre)
+    if not resultat.get("ok"):
+        _emit(resultat, args)
+        return 1
+    if not args.details:
+        resultat.pop("details", None)
+    resultat["lecture"] = lecture_confrontation(resultat)
+    _emit(resultat, args)
     return 0
 
 
@@ -1587,6 +1619,20 @@ def build_parser() -> argparse.ArgumentParser:
         help="profondeur du classement montre (defaut %(default)s)",
     )
     rp.set_defaults(func=cmd_reprise)
+
+    cf = sub.add_parser(
+        "confronter",
+        help="GK contre gb, sur les memes demandes et la meme verite terrain",
+    )
+    cf.add_argument(
+        "--fenetre", type=float, default=FENETRE_SECONDES,
+        help="fenetre d'appariement en secondes (defaut %(default)s)",
+    )
+    cf.add_argument(
+        "--details", action="store_true",
+        help="rendre le cas par cas, pour lire les desaccords",
+    )
+    cf.set_defaults(func=cmd_confronter)
 
     sub.add_parser(
         "juger",
