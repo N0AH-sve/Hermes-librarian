@@ -47,6 +47,16 @@ FENETRE_SECONDES = 120.0
 # Les rangs ou les deux courbes sont comparees.
 RANGS = (1, 2, 3, 5)
 
+# Seules ces actions sont un USAGE d'un skill par gb.
+#
+# Releve en production : `skill_uses` porte aussi `patched` (206), `edited`
+# (10), `created` (4) et `stale` (8) -- des evenements d'**ecriture** de skill,
+# pas de lecture. Les compter comme des choix de gb etait un defaut de la
+# premiere confrontation : un skill qu'un collegue venait de corriger entrait
+# dans la sequence de gb et pouvait en occuper le rang 1.
+ACTIONS_USAGE = ("loaded", "reused", "load", "reuse")
+_EN_USAGE = " AND action IN (" + ",".join("?" * len(ACTIONS_USAGE)) + ")"
+
 
 def _une_ligne(texte: str) -> str:
     return " ".join((texte or "").split())
@@ -133,6 +143,10 @@ def _diagnostic(
         # chargements et qu'aucun `use_count` ne depasse 1, un skill deja
         # charge est invisible et la courbe par tour sous-estime gb.
         "actions_observees": actions,
+        "actions_retenues": list(ACTIONS_USAGE),
+        "evenements_ecartes_non_usage": sum(
+            n for a, n in actions.items() if a not in ACTIONS_USAGE
+        ),
         "evenements": (uc["t"] if uc else 0),
         # `use_count` jamais renseigne compte comme une reutilisation
         # invisible, pas comme une absence d'information : c'est le meme effet
@@ -236,8 +250,8 @@ def confronter(
         charges_fenetre = [
             r["skill_name"] for r in store.query(
                 "SELECT skill_name FROM skill_uses WHERE session_id = ? "
-                "AND ts >= ? AND ts <= ? ORDER BY ts",
-                (session, paire["ts"], paire["ts"] + fenetre),
+                "AND ts >= ? AND ts <= ?" + _EN_USAGE + " ORDER BY ts",
+                (session, paire["ts"], paire["ts"] + fenetre, *ACTIONS_USAGE),
             )
         ]
         # La SEQUENCE de choix de gb pour cette demande : ses chargements entre
@@ -256,16 +270,16 @@ def confronter(
             sequence = [
                 r["skill_name"] for r in store.query(
                     "SELECT skill_name FROM skill_uses WHERE session_id = ? "
-                    "AND ts >= ? AND ts < ? ORDER BY ts",
-                    (session, paire["ts"], borne),
+                    "AND ts >= ? AND ts < ?" + _EN_USAGE + " ORDER BY ts",
+                    (session, paire["ts"], borne, *ACTIONS_USAGE),
                 )
             ]
         else:
             sequence = [
                 r["skill_name"] for r in store.query(
                     "SELECT skill_name FROM skill_uses WHERE session_id = ? "
-                    "AND ts >= ? ORDER BY ts",
-                    (session, paire["ts"]),
+                    "AND ts >= ?" + _EN_USAGE + " ORDER BY ts",
+                    (session, paire["ts"], *ACTIONS_USAGE),
                 )
             ]
         # Un meme skill recharge ne compte qu'une fois : c'est un rang, pas un
@@ -277,8 +291,9 @@ def confronter(
         sequence = vus
         charges_session = {
             r["skill_name"] for r in store.query(
-                "SELECT DISTINCT skill_name FROM skill_uses WHERE session_id = ?",
-                (session,),
+                "SELECT DISTINCT skill_name FROM skill_uses WHERE session_id = ?"
+                + _EN_USAGE,
+                (session, *ACTIONS_USAGE),
             )
         }
 
@@ -298,8 +313,8 @@ def confronter(
         avant = {
             r["skill_name"] for r in store.query(
                 "SELECT DISTINCT skill_name FROM skill_uses "
-                "WHERE session_id = ? AND ts < ?",
-                (session, paire["ts"]),
+                "WHERE session_id = ? AND ts < ?" + _EN_USAGE,
+                (session, paire["ts"], *ACTIONS_USAGE),
             )
         }
         gb_avait_deja = attendu in avant
@@ -449,6 +464,13 @@ def lecture(r: dict) -> list[str]:
             f"tour ou d'un chargement anterieur, il passe a "
             f"{r['gb_juste_tour_ou_deja']}. C'est la mesure la plus juste par "
             "demande, et c'est a elle qu'il faut comparer GK."
+        )
+    if d.get("evenements_ecartes_non_usage"):
+        lignes.append(
+            f"CONTROLE : {d['evenements_ecartes_non_usage']} evenements ecartes "
+            "parce qu'ils ne sont pas un usage (`patched`, `edited`, `created`, "
+            "`stale` : un collegue qui corrige un skill, pas gb qui le lit). "
+            "Les compter crediterait gb d'un choix qu'il n'a pas fait."
         )
     if d.get("evenements"):
         visibles = (d.get("evenements_use_count_sup_1") or 0) > 0

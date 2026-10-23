@@ -28,11 +28,11 @@ def svc(tmp_path):
     s.close()
 
 
-def _charge(store, session, skill, ts):
+def _charge(store, session, skill, ts, action="loaded"):
     store.execute(
         "INSERT INTO skill_uses (ts, session_id, skill_name, action, expires_at) "
-        "VALUES (?, ?, ?, 'load', ?)",
-        (ts, session, skill, ts + 1e9),
+        "VALUES (?, ?, ?, ?, ?)",
+        (ts, session, skill, action, ts + 1e9),
     )
 
 
@@ -466,3 +466,65 @@ def test_la_limite_non_mesurable_est_toujours_dite(svc):
     from gk.confrontation import lecture
     assert "rappel@5" in out["diagnostic"]["limite_non_mesurable"]
     assert any(l.startswith("LIMITE :") for l in lecture(out))
+
+
+def test_un_skill_corrige_n_est_pas_un_choix_de_gb(svc):
+    """Releve en production : `skill_uses` porte aussi `patched`, `edited`,
+    `created` et `stale` -- 228 evenements sur 989, soit 23 %.
+
+    Ce sont des evenements d'ECRITURE de skill : un collegue qui corrige un
+    fichier, pas gb qui le lit pour repondre. Les compter crediterait gb d'un
+    choix qu'il n'a pas fait, et pire : un skill fraichement corrige pouvait
+    occuper le rang 1 de sa sequence.
+    """
+    from gk.catalog import Catalog
+    Catalog(svc.store).ingest([
+        {"path": "a/bon/SKILL.md", "name": "bon", "description": "d",
+         "category": "c", "fingerprint": "1"},
+        {"path": "a/corrige/SKILL.md", "name": "corrige", "description": "d",
+         "category": "c", "fingerprint": "1"},
+    ], complete=True)
+    svc.request("s1", "une demande")
+    t = svc.store.one("SELECT ts FROM requests LIMIT 1")["ts"]
+    # Un collegue corrige `bon` pendant le tour : ce n'est pas gb qui choisit.
+    _charge(svc.store, "s1", "bon", t + 1, action="patched")
+    _charge(svc.store, "s1", "corrige", t + 2, action="loaded")
+
+    cas = relire(
+        f"<!-- gk echantillon v{VERSION} -->\n"
+        "## 1. une demande\n   1. bon   [c]  score 9\n"
+        f"{MARQUEUR} 1\n"
+    )
+    out = confronter(svc.store, cas)
+    assert out["courbe_gb"]["5"] == 0.0, "`patched` n'est pas un usage"
+    assert out["gb_rappel_session"] == 0.0
+    assert out["gb_avait_deja_le_bon_avant"] == 0
+    d = out["diagnostic"]
+    assert d["evenements_ecartes_non_usage"] == 1
+    from gk.confrontation import lecture
+    assert any("ne sont pas un usage" in l for l in lecture(out))
+
+
+def test_un_evenement_d_ecriture_ne_decale_pas_le_rang(svc):
+    """Pire que gonfler le score : un skill corrige en tete de sequence
+    repoussait le vrai choix de gb d'un cran."""
+    from gk.catalog import Catalog
+    Catalog(svc.store).ingest([
+        {"path": "a/bon/SKILL.md", "name": "bon", "description": "d",
+         "category": "c", "fingerprint": "1"},
+        {"path": "a/x/SKILL.md", "name": "x", "description": "d",
+         "category": "c", "fingerprint": "1"},
+    ], complete=True)
+    svc.request("s1", "une demande")
+    t = svc.store.one("SELECT ts FROM requests LIMIT 1")["ts"]
+    _charge(svc.store, "s1", "x", t + 1, action="edited")
+    _charge(svc.store, "s1", "bon", t + 2, action="loaded")
+
+    cas = relire(
+        f"<!-- gk echantillon v{VERSION} -->\n"
+        "## 1. une demande\n   1. bon   [c]  score 9\n"
+        f"{MARQUEUR} 1\n"
+    )
+    out = confronter(svc.store, cas)
+    assert out["details"][0]["gb_rang_du_bon"] == 1, "et non 2"
+    assert out["courbe_gb"]["1"] == 1.0
