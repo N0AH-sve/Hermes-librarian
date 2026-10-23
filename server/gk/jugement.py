@@ -74,6 +74,15 @@ TRANCHES = ((0, 5), (6, 12), (13, 25), (26, 10_000))
 # l'annotateur a dit qu'aucun des cinq premiers ne convenait.
 REPRISE_JUSQU_A = 15
 
+# Le contexte MONTRE a l'annotateur, plus large que celui que GK note.
+#
+# **La distinction est importante.** GK note avec trois tours dans une fenetre
+# de trente minutes ; afficher exactement cela contraindrait l'annotateur a la
+# vision de GK, et sa reponse cesserait d'etre independante. Il doit pouvoir
+# voir plus que le service qu'il evalue.
+TOURS_AFFICHES = 8
+FENETRE_AFFICHEE = 7200.0
+
 _CONSIGNE = (
     "Pour chaque demande, ecrivez apres `REPONSE:` une seule chose :",
     "",
@@ -226,6 +235,16 @@ def preparer(
     from .corrections import REQUEST_MAX_CHARS
     from .recherche import jetons
 
+    # Nom -> description, pour que l'annotateur sache ce que fait un skill.
+    # Un nom seul comme `gm-tracking-to-state4` ne dit rien, et juger sans ca
+    # est impossible -- defaut signale par GM apres avoir ouvert le fichier.
+    descriptions = {
+        r["name"]: (r["description"] or "")
+        for r in store.query(
+            "SELECT name, description FROM skills WHERE missing_since IS NULL"
+        )
+    }
+
     rows = store.query(
         "SELECT id, session_id, text_truncated, ts, platform FROM requests "
         "WHERE text_truncated IS NOT NULL AND text_truncated <> '' "
@@ -291,6 +310,11 @@ def preparer(
         "",
         "N'ajoutez rien d'autre : le reste du fichier est relu tel quel.",
         "",
+        "Chaque cas porte la conversation qui precede la demande, et la",
+        "description de chaque skill propose. Pour un skill qui n'est pas dans",
+        "la liste : `gk catalogue --noms` donne les 186 noms, et",
+        "`gk skill <nom>` ce qu'un skill contient.",
+        "",
         f"{len(choisis)} demandes tirees de {len(vues)} conversations "
         f"distinctes, au plus {max(1, par_session)} par conversation.",
         "",
@@ -313,8 +337,14 @@ def preparer(
         demande = _une_ligne(row["text_truncated"])
         # `avant` : sans lui, le contexte serait pris a la FIN de la session,
         # donc dans le futur de cette demande.
+        # Deux contextes, et ils ne servent pas a la meme chose : celui de GK
+        # pour classer, un plus large pour que l'annotateur juge.
         contexte = contexte_de_session(
             store, row["session_id"] or "", avant=row["ts"]
+        )
+        a_montrer = contexte_de_session(
+            store, row["session_id"] or "", avant=row["ts"],
+            tours=TOURS_AFFICHES, fenetre=FENETRE_AFFICHEE,
         )
         if contexte:
             resultats = index.chercher_avec_contexte(
@@ -323,6 +353,8 @@ def preparer(
         else:
             resultats = index.chercher(demande, limite=par_page)
         lignes.append(f"## {i}. {demande}")
+        quand = row["ts"]
+        plateforme = row["platform"] or "?"
         # L'identifiant de la demande, pour que la relecture n'ait pas a
         # l'apparier par son texte. Releve par gb : 16 textes sont dupliques
         # jusqu'a 29 fois, et l'appariement par texte retenait la plus recente
@@ -336,18 +368,35 @@ def preparer(
                 f"<!-- TRONQUEE a {REQUEST_MAX_CHARS} caracteres : la suite "
                 "manque -->"
             )
-        if contexte:
-            lignes.append(f"<!-- contexte : {len(contexte)} tour(s) precedent(s) -->")
+        lignes.append(f"<!-- {plateforme} -->")
+        if a_montrer:
+            # Les tours precedents, du plus ancien au plus recent : une demande
+            # comme « tu peux annoter » est injugeable seule et evidente avec
+            # la conversation qui la precede.
+            lignes.append("")
+            lignes.append(
+                f"La conversation, avant cette demande "
+                f"({len(a_montrer)} tour(s)) :"
+            )
+            for tour in reversed(a_montrer):
+                lignes.append(f"    < {_une_ligne(tour)[:300]}")
+            if len(a_montrer) > len(contexte):
+                lignes.append(
+                    f"    <!-- GK n'en voit que {len(contexte)} : vous en voyez "
+                    "plus que lui, c'est voulu -->"
+                )
+            lignes.append("")
         if aveugle:
             pass  # aucun candidat : la reponse est un nom, independante de GK
         elif not resultats:
             lignes.append("   (aucun skill propose)")
         else:
+            lignes.append("Ce que GK propose :")
             for rang, r in enumerate(resultats, start=1):
-                lignes.append(
-                    f"   {rang}. {r['name']}   [{r['category']}]  "
-                    f"score {r['score']}"
-                )
+                lignes.append(f"   {rang}. {r['name']}   [{r['category']}]")
+                desc = _une_ligne(descriptions.get(r["name"], ""))
+                if desc:
+                    lignes.append(f"      {desc[:220]}")
         lignes.append(f"{MARQUEUR} ")
         lignes.append("")
     return "\n".join(lignes) + "\n"

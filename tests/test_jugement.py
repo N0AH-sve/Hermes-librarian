@@ -74,11 +74,45 @@ def test_l_echantillon_porte_les_demandes_et_les_candidats(prepare):
     assert f"<!-- gk echantillon v{VERSION} -->" in texte
 
 
-def test_l_echantillon_signale_le_contexte_repris(prepare):
+def test_l_echantillon_montre_la_conversation_et_les_descriptions(prepare):
+    """Defaut signale par GM apres avoir ouvert le fichier : « je n'ai pas
+    assez de contexte pour le remplir ».
+
+    Une ligne de texte et cinq noms de skills ne permettent pas de juger. Il
+    faut la conversation qui precede -- « tu peux annoter » est injugeable
+    seule -- et ce que fait chaque skill propose, puisqu'un nom comme
+    `gm-tracking-to-state4` ne dit rien.
+    """
     svc, index = prepare
-    texte = preparer(svc.store, index, taille=10)
-    # La session s1 a deux demandes : la seconde a un contexte.
-    assert "contexte :" in texte
+    texte = preparer(svc.store, index, taille=10, par_session=2)
+    assert "La conversation, avant cette demande" in texte
+    assert "Ce que GK propose" in texte
+    # La description du skill, pas seulement son nom.
+    assert "Factures fournisseurs proforma" in texte
+    # Et de quoi chercher hors de la liste.
+    assert "gk skill <nom>" in texte
+
+
+def test_l_annotateur_voit_plus_de_contexte_que_gk(prepare):
+    """Afficher exactement le contexte de GK contraindrait l'annotateur a sa
+    vision, et sa reponse cesserait d'etre independante.
+
+    GK note avec trois tours dans trente minutes ; l'annotateur en voit huit
+    sur deux heures, et le fichier le dit.
+    """
+    from gk.jugement import FENETRE_AFFICHEE, TOURS_AFFICHES
+    from gk.recherche import CONTEXTE_FENETRE_SECONDES, CONTEXTE_TOURS
+
+    assert TOURS_AFFICHES > CONTEXTE_TOURS
+    assert FENETRE_AFFICHEE > CONTEXTE_FENETRE_SECONDES
+
+    svc, index = prepare
+    for i in range(5):
+        svc.request("s9", f"un tour de conversation numero {i} sur les marges")
+    svc.request("s9", "et donc on fait quoi maintenant pour les marges")
+    index = Index.construire(svc.store)
+    texte = preparer(svc.store, index, taille=20, par_session=9)
+    assert "n'en voit que" in texte, texte[-1500:]
 
 
 # -- la relecture ----------------------------------------------------------
