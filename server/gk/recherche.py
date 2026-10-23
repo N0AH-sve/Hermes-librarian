@@ -82,7 +82,18 @@ STOPWORDS = frozenset(
 
 # Poids des jetons venus des tours precedents. Ils orientent, ils ne decident
 # pas : au poids plein, la conversation ecraserait la question.
+#
+# ACTIVE par defaut depuis le relevé du 2026-10-23, qui est le meilleur resultat
+# du projet : +0,246 de MRR quand la conversation reste sur le sujet, -0,029
+# quand elle change. Le seuil de rentabilite est donc a
+# 0,029 / (0,246 + 0,029) = **11 %** de tours restant sur le sujet. Il faudrait
+# que 89 % des tours changent de sujet pour que le contexte nuise.
 POIDS_CONTEXTE = 0.3
+
+# Combien de tours precedents sont repris, et sur quelle duree. Court a dessein :
+# une conversation de deux heures n'oriente plus la question presente.
+CONTEXTE_TOURS = 3
+CONTEXTE_FENETRE_SECONDES = 1800.0
 
 MIN_JETON = 2        # « PA », « IV », « PRE » sont des termes metier
 MAX_RESULTATS = 50
@@ -120,6 +131,31 @@ def lignes_citees_de(texte: str) -> list[str]:
         ligne for ligne in (texte or "").splitlines()
         if any(g in ligne for g in GUILLEMETS)
     ]
+
+
+def contexte_de_session(
+    store: Store,
+    session_id: str,
+    tours: int = CONTEXTE_TOURS,
+    fenetre: float = CONTEXTE_FENETRE_SECONDES,
+) -> list[str]:
+    """Les demandes precedentes d'une session, les plus recentes d'abord.
+
+    Lues depuis les demandes reelles deja enregistrees : rien de nouveau n'est
+    collecte pour cela. La fenetre est courte parce qu'une conversation de deux
+    heures n'oriente plus la question presente.
+    """
+    if not session_id:
+        return []
+    rows = store.query(
+        "SELECT text_truncated FROM requests WHERE session_id = ? "
+        "AND ts >= (SELECT MAX(ts) FROM requests WHERE session_id = ?) - ? "
+        "ORDER BY ts DESC LIMIT ?",
+        (session_id, session_id, fenetre, max(1, tours) + 1),
+    )
+    textes = [r["text_truncated"] for r in rows if r["text_truncated"]]
+    # La plus recente est la demande courante : elle n'est pas son propre contexte.
+    return textes[1:] if len(textes) > 1 else []
 
 
 @dataclass

@@ -34,7 +34,7 @@ from .corrections import (
     tidy,
 )
 from .patterns import Detector, fold
-from .recherche import POIDS, POIDS_CONTEXTE, Index
+from .recherche import POIDS, POIDS_CONTEXTE, Index, contexte_de_session
 from .service import Service
 from .store import Store, now
 
@@ -364,10 +364,17 @@ def cmd_cherche(args, cfg: Config) -> int:
         if index.n == 0:
             _emit({"ok": False, "erreur": "catalogue vide, voir `gk catalogue`"}, args)
             return 1
-        resultats = index.chercher(
-            args.demande, limite=args.limite,
-            sans_declencheurs=bool(args.sans_declencheurs),
-        )
+        contexte = contexte_de_session(store, getattr(args, "session", "") or "")
+        if contexte:
+            resultats = index.chercher_avec_contexte(
+                args.demande, contexte=contexte, limite=args.limite,
+                sans_declencheurs=bool(args.sans_declencheurs),
+            )
+        else:
+            resultats = index.chercher(
+                args.demande, limite=args.limite,
+                sans_declencheurs=bool(args.sans_declencheurs),
+            )
         _emit({
             "ok": True,
             "demande": args.demande,
@@ -376,6 +383,7 @@ def cmd_cherche(args, cfg: Config) -> int:
             "poids": POIDS if not args.sans_declencheurs else {
                 c: v for c, v in POIDS.items() if c in ("name", "description")
             },
+            "contexte_repris": len(contexte),
             "resultats": resultats,
             "remarque": None if resultats else (
                 "aucun skill ne porte ces mots : reformulez, ou c'est un trou "
@@ -945,6 +953,23 @@ def cmd_demandes(args, cfg: Config) -> int:
             "  SELECT 1 FROM skill_uses u WHERE u.session_id = r.session_id)"
         )
         out["demandes_dans_une_session_sans_skill"] = int(sans["c"]) if sans else 0
+        # Le taux de bascule reel : c'est lui qui decide du solde du contexte.
+        # Seuil de rentabilite mesure au banc : 11 % de tours restant sur le
+        # sujet suffisent a ce que le contexte soit gagnant.
+        distincts = store.query(
+            "SELECT session_id, COUNT(DISTINCT skill_name) n FROM skill_uses "
+            "WHERE session_id <> '' GROUP BY session_id"
+        )
+        if distincts:
+            un_seul = sum(1 for r in distincts if r["n"] == 1)
+            out["sessions_avec_skills"] = len(distincts)
+            out["sessions_a_un_seul_skill"] = un_seul
+            out["taux_de_suite_estime"] = round(un_seul / len(distincts), 3)
+            out["remarque_bascule"] = (
+                "une session qui ne charge qu'un seul skill distinct est une "
+                "conversation restee sur le sujet. Le contexte est gagnant des "
+                "11 % : au-dela, il rapporte plus qu'il ne coute"
+            )
         out["remarque_appariement"] = (
             "deux mesures : la fenetre de deux minutes ne vaut que pour un "
             "premier tour, et c'est le compte par SESSION qui porte la question. "
@@ -1113,6 +1138,10 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument(
         "--sans-declencheurs", action="store_true",
         help="nom et description seulement : le bras temoin du banc",
+    )
+    c.add_argument(
+        "--session",
+        help="identifiant de session : reprend les demandes precedentes comme contexte",
     )
     c.set_defaults(func=cmd_cherche)
 

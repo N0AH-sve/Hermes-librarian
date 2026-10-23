@@ -183,3 +183,64 @@ def test_gk_demandes_ne_montre_le_texte_que_sur_demande(tmp_path, capsys, monkey
     assert "exemples" not in json.loads(capsys.readouterr().out)
     assert cli_main(["--json", "demandes", "--exemples", "3"]) == 0
     assert json.loads(capsys.readouterr().out)["exemples"] == ["du contenu metier"]
+
+
+# -- le contexte lu depuis les demandes reelles ----------------------------
+
+
+def test_le_contexte_de_session_reprend_les_tours_precedents(svc):
+    """Lu depuis les demandes deja enregistrees : rien de nouveau n'est
+    collecte pour le contexte."""
+    from gk.recherche import contexte_de_session
+
+    svc.request("s1", "premiere question sur les factures")
+    svc.request("s1", "deuxieme question sur le port")
+    svc.request("s1", "troisieme question, la courante")
+    svc.request("autre", "une session voisine")
+    contexte = contexte_de_session(svc.store, "s1")
+    # La plus recente est la demande courante : elle n'est pas son propre contexte.
+    assert "troisieme question, la courante" not in contexte
+    assert "deuxieme question sur le port" in contexte
+    assert "une session voisine" not in contexte
+
+
+def test_le_contexte_est_borne_en_nombre_et_en_duree(svc):
+    from gk.recherche import contexte_de_session
+
+    for i in range(8):
+        svc.request("s", f"question numero {i}")
+    assert len(contexte_de_session(svc.store, "s", tours=3)) == 3
+    # Hors fenetre : une conversation de deux heures n'oriente plus la question.
+    svc.store.execute("UPDATE requests SET ts = ts - 7200 WHERE text_truncated LIKE '%numero 0%'")
+    contexte = contexte_de_session(svc.store, "s", tours=8, fenetre=600)
+    assert not any("numero 0" in c for c in contexte)
+
+
+def test_sans_session_il_n_y_a_pas_de_contexte(svc):
+    from gk.recherche import contexte_de_session
+
+    svc.request("s", "une demande")
+    assert contexte_de_session(svc.store, "") == []
+    assert contexte_de_session(svc.store, "inconnue") == []
+    # Une seule demande dans la session : elle est la courante, pas un contexte.
+    assert contexte_de_session(svc.store, "s") == []
+
+
+def test_gk_demandes_estime_le_taux_de_suite(tmp_path, capsys, monkeypatch):
+    """Le seuil de rentabilite du contexte est a 11 % de tours restant sur le
+    sujet : c'est le taux reel qui decide du solde."""
+    s = Service.open(tmp_path / "ts.db")
+    s.request("stable", "une question")
+    s.skill_lifecycle("gm-un", session_id="stable", action="use")
+    s.skill_lifecycle("gm-un", session_id="stable", action="use")
+    s.request("bascule", "une autre question")
+    s.skill_lifecycle("gm-un", session_id="bascule", action="use")
+    s.skill_lifecycle("gm-deux", session_id="bascule", action="use")
+    s.close()
+    monkeypatch.setenv("GK_DATABASE", str(tmp_path / "ts.db"))
+    assert cli_main(["--json", "demandes"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["sessions_avec_skills"] == 2
+    assert out["sessions_a_un_seul_skill"] == 1
+    assert out["taux_de_suite_estime"] == 0.5
+    assert "11 %" in out["remarque_bascule"]

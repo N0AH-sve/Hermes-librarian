@@ -1864,6 +1864,47 @@ sans FTS5 ni BM25 : il vient des 296 phrases écrites à la main. **La valeur es
 dans la bibliothèque ; l'outil la rend utilisable.** C'est ce qu'il faut dire aux
 décideurs, et c'est vérifiable.
 
+## Le contexte de session : le meilleur résultat du projet
+
+Relevé du 2026-10-23, sur 88 sessions synthétiques fabriquées depuis les phrases
+citées — une citation sert de tour précédent, une autre de demande.
+
+| Condition | cas | MRR sans | MRR avec | rappel@1 sans | rappel@1 avec |
+|---|---|---|---|---|---|
+| **Suite** (même skill) | 44 | 0,496 | **0,742** | 0,409 | **0,682** |
+| **Bascule** (autre skill) | 44 | 0,496 | 0,467 | 0,409 | 0,386 |
+
+**+0,246 quand la conversation reste sur le sujet, −0,029 quand elle change.**
+
+Le seuil de rentabilité se calcule : 0,029 / (0,246 + 0,029) = **11 %**. Le
+contexte est donc gagnant dès qu'un tour sur neuf reste sur le sujet. Il
+faudrait que **89 % des tours changent de sujet** pour qu'il nuise, ce qui ne
+décrit aucune conversation réelle. **Activé.**
+
+C'est le meilleur résultat du projet, et de loin : le rappel en première
+position passe de 0,41 à 0,68 sur les suites, là où quatre hypothèses de score
+successives n'avaient rien déplacé de plus de quelques centièmes. Cela confirme
+le découpage de GM : l'étape 3 était près de son plafond, et c'est l'étape 1 —
+l'intention et le contexte — qui portait la marge.
+
+**Comment il marche.** Les jetons des trois tours précédents, dans une fenêtre
+de trente minutes, comptent 0,3 de ceux de la demande : ils orientent, ils ne
+décident pas. Un test vérifie qu'une demande portant son propre domaine garde la
+main. Les demandes précédentes sont lues des enregistrements déjà faits : rien
+de nouveau n'est collecté pour cela.
+
+**Deux réserves à garder.** Les sessions sont **fabriquées** : le chiffre indique
+un sens, pas une amplitude. Et le solde réel dépend du taux de bascule, que
+`gk demandes` estime désormais — une session qui ne charge qu'un seul skill
+distinct est une conversation restée sur le sujet.
+
+**Ce qui n'a pas été fait, et pourquoi.** Un bonus pour les skills **déjà
+chargés** dans la session serait le signal de contexte le plus fort. Il n'est
+pas mesurable : l'étiquette disponible sur les demandes réelles est « le skill
+que gb a chargé », donc mesurer un bonus pour les skills chargés avec cette
+étiquette serait circulaire. Il faudrait un jugement humain, ou une étiquette
+indépendante.
+
 ## Le plafond est dans la bibliothèque, et il est mesuré
 
 **Objectif fixé par GM le 2026-10-23 : le bon skill en première position 9 fois
