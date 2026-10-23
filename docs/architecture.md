@@ -2859,6 +2859,104 @@ corpus : **la proximite est une coincidence** et ne valide pas le substitut. Un
 moteur de mots sur deux champs n'approxime pas un modele de langage qui lit 186
 descriptions, meme quand les nombres se ressemblent.
 
+## Choix contre choix : GK gagne, et la conclusion precedente est retiree
+
+Releve du 2026-10-23, apres correction du denominateur. 30 demandes reelles,
+verite terrain humaine, **le rang du bon skill chez l'un et chez l'autre**.
+
+| Rang | GK | gb (sa sequence du tour) |
+|---|---|---|
+| **1** | **0,400** (12/30) | **0,133** (4/30) |
+| **2** | **0,700** (21/30) | 0,167 (5/30) |
+| 3 | 0,833 | 0,167 |
+| 5 | **1,000** | 0,167 |
+
+**Trois fois mieux au rang 1, et la courbe de gb est plate** : passe le premier
+chargement, il n'en fait presque jamais un second qui rattrape.
+
+### Ce que je retire
+
+La conclusion du releve precedent -- « la ou gb engage, gb gagne, 0,435 contre
+0,261 » -- **est retiree**. Elle etait fausse pour deux raisons cumulees :
+
+* elle comparait le **rang 1 unique** de GK au **lot de 9,1 skills** que gb
+  charge dans une session. « Le bon skill est parmi les neuf charges » mesure un
+  ratissage, pas une decision. gb ne choisit pas un skill, il en charge neuf ;
+* elle conditionnait sur un **sous-ensemble choisi apres coup** (les 23 cas ou
+  gb avait charge quelque chose), ce qui est exactement l'erreur deja commise et
+  consignee sur la ponderation par population.
+
+Le but de GK est de **choisir**. La mesure devait donc comparer deux choix, et
+c'est elle qui compte.
+
+### Les trois lectures de gb, et ce qu'elles encadrent
+
+| Mesure de gb | Valeur | Ce qu'elle suppose |
+|---|---|---|
+| Rang 1, sa sequence du tour | 0,133 | que gb recharge quand il a besoin |
+| Tous rangs, sa sequence du tour | 0,167 | idem |
+| Session entiere, jusqu'a 13 skills | **0,333** | gb credite de tout, meme anterieur |
+
+**gb n'a rien charge apres 14 des 30 demandes (47 %)**, dont 7 dans des sessions
+sans aucun chargement. Les 7 autres sont des demandes ou gb avait deja charge
+plus tot : il pouvait donc avoir le bon skill en contexte **sans nouvel
+evenement**. C'est pourquoi la mesure de session existe comme borne haute.
+
+**La vraie precision par demande de gb est donc entre 0,167 et 0,333.** Et GK
+est a 0,400 au rang 1, 0,700 au rang 2.
+
+| Comparaison | GK | gb | Lecture |
+|---|---|---|---|
+| Rang 1 contre rang 1 | 0,400 | 0,133 | **GK gagne, p entre 0,02 et 0,08** |
+| Rang 1 contre borne haute de gb | 0,400 | 0,333 | egalite (p = 0,80) |
+| **Rang 2 contre borne haute de gb** | **0,700** | 0,333 | **le double, p entre 0,001 et 0,06** |
+
+A n = 30 rien n'est demontre au seuil de 5 % de facon robuste, et il faut le
+dire. Mais la direction est constante sur les trois lectures, et l'amplitude est
+grande : ce n'est plus le +0,067 de tout a l'heure.
+
+### Le biais reste, et il est le dernier point faible
+
+**La verite terrain vient des cinq propositions de GK.** Un cas ou gb aurait
+charge le bon skill que GK ne proposait pas est sorti de la mesure avec la
+reponse `0`. gb est donc juge chez GK, et ses chiffres sont des planchers.
+
+Ce biais se mesure, et pour une fois la question posee a l'humain est **moins
+chere** que la precedente : sur les 17 cas `0`, gb a charge quelque chose ;
+« l'un de ces skills sert-il la demande, oui ou non ? » est un oui/non sur un
+nom deja ecrit, pas une recherche dans 186. Dix minutes, et cela resout **a la
+fois** le biais et `x` -- un skill de gb juge bon sur un cas `0` est precisement
+un bon skill hors des cinq de GK.
+
+### Ce qui bloque encore la phase 3, et ce n'est plus la pertinence
+
+Deux constats se combinent :
+
+* **GK choisit mieux que gb.** C'est etabli, avec les reserves ci-dessus ;
+* **36 % des demandes n'ont aucune reponse**, et GK n'a aujourd'hui aucun moyen
+  fiable de se taire : le seuil ajuste sur les phrases citees ne laisse passer
+  que 7,7 % des demandes reelles.
+
+Un brief qui parle sur 100 % des demandes se trompe donc par construction sur au
+moins 36 % d'entre elles, quelle que soit la qualite du classement. **Le blocage
+a change de nature** : ce n'est plus « GK choisit-il bien ? » mais « GK sait-il
+se taire ? »
+
+Et pour la premiere fois le corpus pour le regler existe : **47 demandes reelles
+etiquetees, dont 17 sans reponse**. Le seuil se refixe la-dessus, avec moitie
+d'ajustement et moitie de verification comme la premiere fois -- la precaution
+qui avait deja attrape un surajustement de 1,0 a 0,333.
+
+### La forme que le brief doit prendre, si brief il y a
+
+Deux decisions decoulent directement des chiffres :
+
+* **deux entrees, pas une.** 0,700 contre 0,400 est le plus gros gain
+  disponible, et il coute une ligne. Au rang 3 on gagne encore 0,133 pour une
+  ligne de plus, au rang 4 le reste ;
+* **le droit de ne rien dire**, sur un seuil ajuste sur les demandes reelles.
+  Sans lui, le brief est faux 36 fois sur 100 par construction.
+
 ## Points ouverts
 
 Dernière revue : 2026-10-22, après la mise en service partielle de la phase 1
