@@ -3364,6 +3364,80 @@ semaine ont fait passer le MRR metier de 0,375 a 0,598 (+58 %) et la couverture
 des declencheurs de 36 % a 78 % en deux jours. C'est le seul mecanisme du projet
 dont l'effet se compte en dizaines de points.
 
+## Les etiquettes etaient celles de gb : la conclusion du jour est nulle
+
+**Confirme par GM le 2026-10-23.** L'echantillon annote avait ete rempli par gb
+lui-meme. Le journal de session le disait -- « annotateur = moi, candidats
+visibles » -- et aucun fichier ne portait de signature.
+
+### Ce que cela detruit
+
+| Affirmation du jour | Statut |
+|---|---|
+| gb a le bon skill 81 % du temps, GK 24 % | **NULLE** |
+| L'ecart de 0,595 est concluant | **NULLE** |
+| Le biais de selection est leve par les 14 etiquettes hors des cinq | **NULLE** |
+| 11,9 % de demandes sans reponse | opinion de gb |
+| Rappel@1 0,243, rappel@5 0,622 | ce sont des **accords avec gb** |
+
+On a mesure GK contre le jugement de gb, puis gb contre ce meme jugement. Le
+0,811 de gb ne mesurait pas sa justesse : il mesurait **sa coherence avec
+lui-meme**, et `gb_avait_deja_le_bon_avant: 26/37` en etait la preuve directe --
+gb designe comme bon le skill qu'il avait charge.
+
+**J'ai annonce « la premiere mesure non biaisee du projet ». C'etait la plus
+biaisee de toutes**, et la seule chose qui m'aurait sauve etait de demander qui
+avait annote. Je ne l'ai pas fait parce que GM avait ecrit « je lance
+l'echantillon et j'annote » la veille, et j'ai tenu cette phrase pour acquise
+dix mesures plus tard.
+
+### Ce qui survit
+
+Tout ce qui ne passe pas par ces etiquettes : les 67 % d'echecs de redaction du
+banc, le plafond calcule a 0,56, le contexte de session (+0,246 sur les suites),
+et les six hypotheses de score rejetees -- dont cinq mesurees au banc. La
+tolerance aux fautes a ete rejetee sur les etiquettes de gb, donc son verdict
+est un accord et non une justesse ; mais son mecanisme tient independamment : il
+y a 185 mauvais skills et un bon, donc toute occasion d'appariement
+supplementaire profite plus aux concurrents.
+
+### La regle, et c'est un refus et non un avertissement
+
+Une etiquette produite par l'une des parties ne peut pas arbitrer entre les
+deux. `gk confronter` **refuse** desormais un echantillon dont l'annotateur est
+l'agent evalue, ou qui n'est pas signe du tout -- l'absence de preuve
+d'independance n'est pas une preuve d'independance.
+
+**Refus et non avertissement, parce que l'avertissement ne marche pas** :
+celui sur le biais de selection etait imprime a chaque sortie de la commande, et
+il a disparu du raisonnement **deux fois dans la meme journee**.
+
+Et `gk juger` ne supprime pas les chiffres, il les **renomme** :
+`accord_1_avec_l_annotateur` au lieu de `rappel_1_reel`. Un accord eleve dirait
+que GK pense comme l'annotateur, pas qu'il a raison.
+
+### L'examen de gb : neuf defauts reels, corriges
+
+Le rapport demande a gb en a trouve neuf que je n'avais pas vus, en plus de
+celui-ci.
+
+| Defaut | Correction |
+|---|---|
+| `gk juger` rend 0,0 sur un echantillon sans candidats : tout nom y est compte « hors des cinq » | Refus explicite, avec renvoi vers `gk reetalonner` qui recalcule les rangs |
+| Deux denominateurs dans la meme sortie (23/42 et 23/37) sans que rien ne les distingue | `cite_dans_les_5_par_annote` + `denominateur_par_annote` |
+| Les rangs lus sont ceux de l'annotation, perimes : 8/37 ont change, dont 2 rangs 1 | `rangs_au_moment_de_l_annotation: true` et renvoi vers le recalcul |
+| Les `?` fondus dans « non annotes » | Trois etats separes : annote, `sans_avis`, non regarde |
+| `gagnes_par_la_tolerance: 1` sans dire qu'elle en perdait 2 | `perdus_par_la_tolerance` ajoute |
+| 16 textes dupliques jusqu'a 29 fois, apparies par texte donc a la mauvaise session | L'echantillon porte `<!-- demande #id -->`, l'appariement est exact |
+| 10 demandes qui sont la consigne d'annotation, 11 « ok » | Motifs de consigne filtres, et moins de deux jetons de contenu = non jugeable |
+| Les compteurs de corrections ne distinguent pas la plateforme, alors que 88/525 sont `cron` | A faire |
+| 40/186 skills sans `skill_sections`, donc indexes sur nom + description seuls | Constat, pas un defaut de score : un champ absent vaut zero, comme une description courte |
+
+**Et une inference inversee dans son rapport, deux fois confirmee** : « 61 echecs
+de rang » etaient 58 echecs de **couverture** et 19 de classement. gb l'a
+recalcule lui-meme et corrige. Son 9/87 n'etait pas reproductible non plus : il
+venait d'un script ad hoc, et `gk juger` rendait 0,0 sur ce fichier.
+
 ## Points ouverts
 
 Dernière revue : 2026-10-22, après la mise en service partielle de la phase 1

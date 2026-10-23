@@ -475,6 +475,26 @@ def cmd_juger(args, cfg: Config) -> int:
         "Denominateur : les demandes qu'un skill de la bibliotheque peut "
         "servir. Une demande que rien ne sert n'est pas un echec de recherche.",
     ]
+    if resultat.get("circulaire"):
+        # L'annotateur est l'agent evalue, ou l'echantillon n'est pas signe :
+        # les chiffres mesurent un ACCORD, pas une justesse, et la lecture doit
+        # le dire avant eux.
+        lecture = [
+            "CIRCULAIRE : " + resultat["avertissement"],
+            f"Accord au rang 1 : {resultat.get('accord_1_avec_l_annotateur')}. "
+            f"Dans les cinq : {resultat.get('accord_5_avec_l_annotateur')}. "
+            f"Sur {resultat.get('denominateur_de_l_accord')} demandes.",
+            "Un accord eleve dirait que GK pense comme l'annotateur, pas qu'il "
+            "a raison. `gk confronter` refuse ce fichier, et c'est voulu.",
+        ]
+        if resultat["non_annotes"] or resultat["sans_avis"]:
+            lecture.append(
+                f"{resultat['sans_avis']} « je ne sais pas » et "
+                f"{resultat['non_annotes']} cas non regardes, comptes a part."
+            )
+        resultat["lecture"] = lecture
+        _emit(resultat, args)
+        return 0
     if resultat.get("version_echantillon", 1) < 2:
         # L'ambiguite de la v1 passe AVANT les chiffres : un intervalle lu
         # comme un point est pire qu'une absence de chiffre.

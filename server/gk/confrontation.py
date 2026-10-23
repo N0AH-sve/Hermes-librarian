@@ -176,6 +176,31 @@ def confronter(
     store: Store, cas: list[dict], fenetre: float = FENETRE_SECONDES
 ) -> dict:
     """Le rappel@1 de GK et celui de gb, sur exactement les memes demandes."""
+    # Une etiquette produite par l'une des parties ne peut pas arbitrer entre
+    # les deux. Refus, pas avertissement : l'avertissement sur le biais de
+    # selection a disparu du raisonnement deux fois dans la meme journee.
+    from .jugement import annotateur_de
+
+    nom, circulaire = annotateur_de(cas)
+    if circulaire:
+        return {
+            "ok": False,
+            "erreur": (
+                f"annotateur « {nom or '(non signe)'} » : la reference a ete "
+                "produite par l'agent qu'on evalue, ou son origine n'est pas "
+                "etablie. Comparer GK a gb sur ces etiquettes mesure la "
+                "coherence de gb avec lui-meme, pas sa justesse"
+            ),
+            "cas_lus": len(cas),
+            "suite": (
+                "faire signer l'echantillon par la personne qui l'a annote "
+                "(ligne `ANNOTATEUR:`), ou produire des etiquettes humaines"
+            ),
+            "ce_qui_reste_utilisable": (
+                "`gk reetalonner` et `gk ordonnance` mesurent l'ACCORD de GK "
+                "avec l'annotateur, ce qui reste informatif sans arbitrer"
+            ),
+        }
     juges = [c for c in cas if attendu_de(c)]
     if not juges:
         return {

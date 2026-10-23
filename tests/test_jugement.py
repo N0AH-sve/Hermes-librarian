@@ -130,6 +130,7 @@ def _cas(numero, reponse=None, nom=None, candidats=("x",), version=VERSION):
     return {
         "numero": numero, "demande": f"d{numero}", "candidats": list(candidats),
         "reponse": reponse, "nom": nom, "brut": "", "version": version,
+        "annotateur": "Noah",
     }
 
 
@@ -203,7 +204,7 @@ def test_un_nom_deja_affiche_revient_a_son_rang():
     echecs hors des cinq.
     """
     cas = relire(
-        f"<!-- gk echantillon v{VERSION} -->\n"
+        "ANNOTATEUR: Noah\n" f"<!-- gk echantillon v{VERSION} -->\n"
         "## 1. une demande\n"
         "   1. gm-factures   [greenmusic]  score 9\n"
         "   2. gm-marges   [greenmusic]  score 3\n"
@@ -241,7 +242,12 @@ def test_gk_echantillon_puis_gk_juger(tmp_path, capsys, monkeypatch):
     texte = capsys.readouterr().out
     assert "## 1." in texte
 
+    # L'echantillon sort avec une ligne `ANNOTATEUR:` vide : la remplir fait
+    # partie de l'annotation, et sans elle la mesure est traitee comme
+    # circulaire.
+    assert "ANNOTATEUR:" in texte
     annote = texte.replace(f"{MARQUEUR} ", f"{MARQUEUR} 1")
+    annote = annote.replace("ANNOTATEUR: \n", "ANNOTATEUR: Noah\n")
     monkeypatch.setattr("sys.stdin", __import__("io").StringIO(annote))
     assert cli_main(["--json", "juger"]) == 0
     out = json.loads(capsys.readouterr().out)
@@ -263,7 +269,7 @@ def test_gk_juger_signale_les_demandes_sans_reponse_possible(tmp_path, capsys, m
     Les compter comme des echecs fausserait le jugement."""
     Store(tmp_path / "z.db").close()
     monkeypatch.setenv("GK_DATABASE", str(tmp_path / "z.db"))
-    faux = f"<!-- gk echantillon v{VERSION} -->\n" + "\n".join(
+    faux = "ANNOTATEUR: Noah\n" f"<!-- gk echantillon v{VERSION} -->\n" + "\n".join(
         f"## {i}. une demande\n   1. un-skill   [c]  score 1\n{MARQUEUR} 0"
         for i in range(1, 5)
     )
@@ -285,7 +291,7 @@ def test_gk_juger_refuse_d_annoncer_un_point_sur_un_echantillon_v1(
     """
     Store(tmp_path / "z.db").close()
     monkeypatch.setenv("GK_DATABASE", str(tmp_path / "z.db"))
-    faux = "\n".join(
+    faux = "ANNOTATEUR: Noah\n" + "\n".join(
         f"## {i}. une demande\n   1. un-skill   [c]  score 1\n{MARQUEUR} "
         + ("1" if i <= 2 else "0")
         for i in range(1, 6)
@@ -335,7 +341,7 @@ def test_la_reprise_corrige_le_premier_fichier(prepare):
         f"{MARQUEUR} 0\n"
     )
     seconde = (
-        f"<!-- gk echantillon v{VERSION} -->\n"
+        "ANNOTATEUR: Noah\n" f"<!-- gk echantillon v{VERSION} -->\n"
         "## 1. quelles commandes sont a perte\n"
         "   2. gm-marges   [greenmusic]  score 7\n"
         f"{MARQUEUR} 2\n"
@@ -401,8 +407,10 @@ def test_le_rang_du_bon_skill_est_rendu_quand_il_est_cite():
     assert out["distribution_des_rangs"] == {"1": 2, "2": 1, "5": 1}
     # Le taux de citation sur TOUT : le denominateur que voit un brief, qui ne
     # sait pas si une demande a une reponse.
-    assert out["cite_dans_les_5_sur_tout"] == 0.8
+    assert out["cite_dans_les_5_par_annote"] == 0.8
+    assert out["denominateur_par_annote"] == 5, "le nom dit le denominateur"
     assert out["part_premier_quand_cite"] == 0.5
+    assert out["rangs_au_moment_de_l_annotation"] is True
 
 
 def test_le_taux_de_citation_ne_depend_d_aucune_hypothese():
@@ -411,7 +419,7 @@ def test_le_taux_de_citation_ne_depend_d_aucune_hypothese():
     cas = [_cas(i, reponse=1, version=1) for i in range(1, 4)]
     cas += [_cas(i, reponse=0, version=1) for i in range(4, 8)]
     out = juger(cas)
-    assert out["cite_dans_les_5_sur_tout"] == round(3 / 7, 3)
+    assert out["cite_dans_les_5_par_annote"] == round(3 / 7, 3)
     assert out["part_premier_quand_cite"] == 1.0
 
 
@@ -478,7 +486,7 @@ def test_une_etiquette_survit_a_un_changement_de_classement(prepare):
     from gk.jugement import etiquettes
 
     cas = relire(
-        f"<!-- gk echantillon v{VERSION} -->\n"
+        "ANNOTATEUR: Noah\n" f"<!-- gk echantillon v{VERSION} -->\n"
         "## 1. la facture proforma du fournisseur ne colle pas\n"
         "   1. gm-marges   [greenmusic]  score 3\n"
         "   2. gm-factures   [greenmusic]  score 2\n"
@@ -489,6 +497,7 @@ def test_une_etiquette_survit_a_un_changement_de_classement(prepare):
         "numero": 1,
         "demande": "la facture proforma du fournisseur ne colle pas",
         "attendu": "gm-factures",
+        "id": None,
     }]
 
 
@@ -500,7 +509,7 @@ def test_une_reponse_zero_n_est_pas_une_etiquette(prepare):
     from gk.jugement import etiquettes
 
     cas = relire(
-        f"<!-- gk echantillon v{VERSION} -->\n"
+        "ANNOTATEUR: Noah\n" f"<!-- gk echantillon v{VERSION} -->\n"
         "## 1. une demande\n   1. gm-marges   [greenmusic]  score 3\n"
         f"{MARQUEUR} 0\n"
     )
@@ -511,7 +520,7 @@ def test_une_injection_n_est_pas_une_etiquette(prepare):
     from gk.jugement import etiquettes
 
     cas = relire(
-        f"<!-- gk echantillon v{VERSION} -->\n"
+        "ANNOTATEUR: Noah\n" f"<!-- gk echantillon v{VERSION} -->\n"
         "## 1. Skill invoked: gm-factures\n"
         "   1. gm-factures   [greenmusic]  score 9\n"
         f"{MARQUEUR} 1\n"
@@ -522,7 +531,7 @@ def test_une_injection_n_est_pas_une_etiquette(prepare):
 def test_le_reetalonnage_rend_la_courbe_et_compte_ce_qu_il_ecarte(prepare):
     svc, index = prepare
     cas = relire(
-        f"<!-- gk echantillon v{VERSION} -->\n"
+        "ANNOTATEUR: Noah\n" f"<!-- gk echantillon v{VERSION} -->\n"
         "## 1. la facture proforma du fournisseur ne colle pas\n"
         "   1. gm-factures   [greenmusic]  score 9\n"
         f"{MARQUEUR} 1\n"
@@ -560,7 +569,7 @@ def test_gk_reetalonner_dit_que_ses_chiffres_remplacent_les_anciens(
     svc.close()
     monkeypatch.setenv("GK_DATABASE", str(tmp_path / "r.db"))
     faux = (
-        f"<!-- gk echantillon v{VERSION} -->\n"
+        "ANNOTATEUR: Noah\n" f"<!-- gk echantillon v{VERSION} -->\n"
         "## 1. la facture proforma du fournisseur\n"
         "   1. gm-f   [c]  score 9\n"
         f"{MARQUEUR} 1\n"
@@ -658,7 +667,7 @@ def test_une_etiquette_sur_une_tache_planifiee_est_ecartee(tmp_path):
     svc.request("s2", "les factures du fournisseur", platform="discord")
     index = Index.construire(svc.store)
     cas = relire(
-        f"<!-- gk echantillon v{VERSION} -->\n"
+        "ANNOTATEUR: Noah\n" f"<!-- gk echantillon v{VERSION} -->\n"
         "## 1. le point quotidien des factures\n   1. gm-f   [c]  score 9\n"
         f"{MARQUEUR} 1\n"
         "\n"
@@ -684,7 +693,7 @@ def test_la_simulation_de_memoire_coupe_par_session(tmp_path):
          "description": f"sujet numero {i} du metier", "category": "c",
          "fingerprint": "1"} for i in range(1, 6)
     ], complete=True)
-    texte = f"<!-- gk echantillon v{VERSION} -->\n"
+    texte = "ANNOTATEUR: Noah\n" f"<!-- gk echantillon v{VERSION} -->\n"
     n = 0
     for sess in range(1, 6):
         for tour in range(2):
@@ -719,7 +728,7 @@ def test_la_simulation_refuse_de_couper_trop_peu_de_sessions(tmp_path):
     svc.request("sess1", "une demande sur un sujet", platform="discord")
     index = Index.construire(svc.store)
     texte = (
-        f"<!-- gk echantillon v{VERSION} -->\n"
+        "ANNOTATEUR: Noah\n" f"<!-- gk echantillon v{VERSION} -->\n"
         "## 1. une demande sur un sujet\n   1. gm-x   [c]  score 9\n"
         f"{MARQUEUR} 1\n"
     )
@@ -834,3 +843,111 @@ def test_le_cumul_de_session_est_l_equivalent_du_chiffre_de_gb(tmp_path):
     assert out["cumul_de_session"] == 1.0
     # Alors que le rang 1 par demande ne vaut pas forcement 1.
     assert out["courbe"]["1"] <= 1.0
+
+
+# -- les defauts releves par gb le 2026-10-23 ------------------------------
+
+
+def test_un_echantillon_sans_candidats_refuse_de_rendre_un_rappel():
+    """Releve par gb : sur un echantillon aveugle, `gk juger` rendait 0,0 et
+    0,0 avec `designe_hors_des_5: 87`.
+
+    Tout nom ecrit a la main y etait compte « hors des cinq », puisqu'il n'y a
+    aucune liste a laquelle le comparer. Le chiffre ne mesurait rien, et c'est
+    de la que venait le 10,3 % du rapport precedent.
+    """
+    cas = relire(
+        "## 1. une demande\n"
+        f"{MARQUEUR} gm-factures\n"
+        "\n"
+        "## 2. une autre demande\n"
+        f"{MARQUEUR} gm-marges\n"
+    )
+    assert all(not c["candidats"] for c in cas)
+    out = juger(cas)
+    assert out["ok"] is False
+    assert "inconnaissables" in out["erreur"]
+    assert "reetalonner" in out["suite"], "les etiquettes restent utilisables"
+
+
+def test_un_point_d_interrogation_n_est_pas_une_absence_de_reponse():
+    """Releve par gb : les 8 `?` etaient fondus dans « non annotes » et la
+    lecture les appelait « cas sans reponse ».
+
+    Trois etats distincts : annote, « je ne sais pas », et pas regarde. Le
+    deuxieme dit que le cas est difficile, le troisieme qu'on ne l'a pas vu.
+    """
+    cas = relire(
+        "ANNOTATEUR: Noah\n" f"<!-- gk echantillon v{VERSION} -->\n"
+        "## 1. une demande\n   1. gm-a   [c]  score 9\n"
+        f"{MARQUEUR} 1\n"
+        "\n"
+        "## 2. une demande difficile\n   1. gm-a   [c]  score 2\n"
+        f"{MARQUEUR} ?\n"
+        "\n"
+        "## 3. une demande non regardee\n   1. gm-a   [c]  score 2\n"
+        f"{MARQUEUR} \n"
+    )
+    assert cas[1]["sans_avis"] is True
+    assert cas[2]["sans_avis"] is False
+    out = juger(cas)
+    assert out["cas_annotes"] == 1
+    assert out["sans_avis"] == 1
+    assert out["non_annotes"] == 1
+
+
+def test_l_echantillon_porte_l_identifiant_de_la_demande(prepare):
+    """Releve par gb : 16 textes sont dupliques jusqu'a 29 fois, et
+    l'appariement par texte retenait la plus recente -- donc la mauvaise
+    session et le mauvais horodatage.
+
+    L'identifiant rend l'appariement exact.
+    """
+    svc, index = prepare
+    texte = preparer(svc.store, index, taille=10)
+    assert "<!-- demande #" in texte
+    cas = relire(texte)
+    assert all(c["id"] is not None for c in cas), [c["id"] for c in cas]
+
+
+def test_un_echantillon_ancien_reste_lisible_sans_identifiant():
+    """Le repli par texte doit survivre, sinon les fichiers deja annotes
+    deviendraient inutilisables."""
+    cas = relire(
+        "ANNOTATEUR: Noah\n" f"<!-- gk echantillon v{VERSION} -->\n"
+        "## 1. une demande sans identifiant\n   1. gm-a   [c]  score 9\n"
+        f"{MARQUEUR} 1\n"
+    )
+    assert cas[0]["id"] is None
+    assert juger(cas)["cas_annotes"] == 1
+
+
+def test_juger_renomme_ses_chiffres_quand_l_annotateur_est_l_agent():
+    """Les chiffres ne disparaissent pas, ils changent de nom -- parce qu'ils
+    mesurent autre chose : l'accord avec l'annotateur, pas la justesse."""
+    corps = (
+        f"<!-- gk echantillon v{VERSION} -->\n"
+        "## 1. une demande\n   1. gm-a   [c]  score 9\n"
+        f"{MARQUEUR} 1\n"
+        "\n"
+        "## 2. une autre demande\n   1. gm-a   [c]  score 2\n"
+        f"{MARQUEUR} gm-ailleurs\n"
+    )
+    out = juger(relire("ANNOTATEUR: gb\n" + corps))
+    assert out["circulaire"] is True
+    assert out["annotateur"] == "gb"
+    assert "rappel_1_reel" not in out, "le nom mentirait"
+    assert out["accord_1_avec_l_annotateur"] == 0.5
+    assert "ACCORD" in out["avertissement"]
+
+    humain = juger(relire("ANNOTATEUR: Noah\n" + corps))
+    assert humain["circulaire"] is False
+    assert humain["rappel_1_reel"] == 0.5
+    assert "accord_1_avec_l_annotateur" not in humain
+
+
+def test_l_echantillon_demande_une_signature(prepare):
+    svc, index = prepare
+    texte = preparer(svc.store, index, taille=5)
+    assert "ANNOTATEUR:" in texte
+    assert "ne peut pas arbitrer" in texte

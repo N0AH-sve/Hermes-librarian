@@ -76,7 +76,7 @@ def test_gk_et_gb_sont_mesures_sur_le_meme_sous_ensemble(svc):
     _charge(svc.store, "s2", "gm-autre", t2 + 10)
 
     cas = relire(
-        f"<!-- gk echantillon v{VERSION} -->\n"
+        "ANNOTATEUR: Noah\n" f"<!-- gk echantillon v{VERSION} -->\n"
         "## 1. la facture proforma ne colle pas\n"
         "   1. gm-factures   [greenmusic]  score 9\n"
         f"{MARQUEUR} 1\n"
@@ -105,7 +105,7 @@ def test_la_mesure_de_session_avantage_gb(svc):
     _charge(svc.store, "s1", "gm-bon", t1 + 5)
 
     cas = relire(
-        f"<!-- gk echantillon v{VERSION} -->\n"
+        "ANNOTATEUR: Noah\n" f"<!-- gk echantillon v{VERSION} -->\n"
         "## 1. et une seconde bien plus tard\n"
         "   1. gm-autre   [c]  score 3\n"
         f"{MARQUEUR} gm-bon\n"
@@ -120,7 +120,7 @@ def test_une_abstention_de_gb_est_comptee_a_part(svc):
     chiffre inutilisable : les deux ont des remedes opposes."""
     svc.request("s9", "une demande que gb n'a pas servie")
     cas = relire(
-        f"<!-- gk echantillon v{VERSION} -->\n"
+        "ANNOTATEUR: Noah\n" f"<!-- gk echantillon v{VERSION} -->\n"
         "## 1. une demande que gb n'a pas servie\n"
         "   1. gm-bon   [c]  score 5\n"
         f"{MARQUEUR} 1\n"
@@ -137,7 +137,7 @@ def test_un_cas_introuvable_en_base_est_exclu_des_deux_cotes(svc):
     t1 = _ts(svc.store, "une demande connue")
     _charge(svc.store, "s1", "gm-bon", t1 + 5)
     cas = relire(
-        f"<!-- gk echantillon v{VERSION} -->\n"
+        "ANNOTATEUR: Noah\n" f"<!-- gk echantillon v{VERSION} -->\n"
         "## 1. une demande connue\n   1. gm-bon   [c]  score 5\n"
         f"{MARQUEUR} 1\n"
         "\n"
@@ -159,7 +159,7 @@ def test_une_demande_multiligne_est_appariee_par_prefixe_et_comptee(svc):
     row = svc.store.one("SELECT ts FROM requests LIMIT 1")
     _charge(svc.store, "s1", "gm-bon", row["ts"] + 5)
     cas = relire(
-        f"<!-- gk echantillon v{VERSION} -->\n"
+        "ANNOTATEUR: Noah\n" f"<!-- gk echantillon v{VERSION} -->\n"
         "## 1. premiere ligne de la demande\n   1. gm-bon   [c]  score 5\n"
         f"{MARQUEUR} 1\n"
     )
@@ -170,7 +170,7 @@ def test_une_demande_multiligne_est_appariee_par_prefixe_et_comptee(svc):
 
 def test_la_confrontation_refuse_un_echantillon_sans_skill_designe(svc):
     cas = relire(
-        f"<!-- gk echantillon v{VERSION} -->\n"
+        "ANNOTATEUR: Noah\n" f"<!-- gk echantillon v{VERSION} -->\n"
         "## 1. une demande\n   1. gm-bon   [c]  score 5\n"
         f"{MARQUEUR} 0\n"
     )
@@ -193,7 +193,7 @@ def test_gk_confronter_rend_les_deux_chiffres(tmp_path, capsys, monkeypatch):
     svc.close()
     monkeypatch.setenv("GK_DATABASE", str(tmp_path / "x.db"))
     faux = (
-        f"<!-- gk echantillon v{VERSION} -->\n"
+        "ANNOTATEUR: Noah\n" f"<!-- gk echantillon v{VERSION} -->\n"
         "## 1. une demande servie\n   1. gm-bon   [c]  score 5\n"
         f"{MARQUEUR} 1\n"
     )
@@ -224,7 +224,7 @@ def test_un_skill_designe_hors_catalogue_est_ecarte(svc):
     _charge(svc.store, "s1", "gm-bon", row["ts"] + 5)
 
     cas = relire(
-        f"<!-- gk echantillon v{VERSION} -->\n"
+        "ANNOTATEUR: Noah\n" f"<!-- gk echantillon v{VERSION} -->\n"
         "## 1. une demande connue\n   1. gm-bon   [greenmusic]  score 5\n"
         f"{MARQUEUR} 1\n"
         "\n"
@@ -250,7 +250,7 @@ def test_une_relecture_massivement_deraillee_refuse_de_conclure(svc):
     ], complete=True)
     for i in range(1, 5):
         svc.request("s1", f"demande numero {i}")
-    texte = f"<!-- gk echantillon v{VERSION} -->\n"
+    texte = "ANNOTATEUR: Noah\n" f"<!-- gk echantillon v{VERSION} -->\n"
     for i in range(1, 5):
         texte += (
             f"## {i}. demande numero {i}\n"
@@ -292,7 +292,7 @@ def test_les_deux_courbes_de_rang_sont_comparees_au_meme_rang(svc):
     _charge(svc.store, "s1", "s2", t1 + 2)
 
     cas = relire(
-        f"<!-- gk echantillon v{VERSION} -->\n"
+        "ANNOTATEUR: Noah\n" f"<!-- gk echantillon v{VERSION} -->\n"
         "## 1. la demande qui nous interesse\n"
         "   1. s1   [c]  score 9\n"
         "   2. s2   [c]  score 7\n"
@@ -328,7 +328,7 @@ def test_la_sequence_de_gb_s_arrete_a_la_demande_suivante(svc):
     _charge(svc.store, "s1", "bon", t1 + 601)
 
     cas = relire(
-        f"<!-- gk echantillon v{VERSION} -->\n"
+        "ANNOTATEUR: Noah\n" f"<!-- gk echantillon v{VERSION} -->\n"
         "## 1. la premiere demande\n   1. bon   [c]  score 9\n"
         f"{MARQUEUR} 1\n"
     )
@@ -354,7 +354,7 @@ def test_un_skill_recharge_ne_compte_qu_une_fois_dans_la_sequence(svc):
     _charge(svc.store, "s1", "bon", t1 + 3)
 
     cas = relire(
-        f"<!-- gk echantillon v{VERSION} -->\n"
+        "ANNOTATEUR: Noah\n" f"<!-- gk echantillon v{VERSION} -->\n"
         "## 1. une demande\n   1. x   [c]  score 9\n   2. bon   [c]  score 7\n"
         f"{MARQUEUR} 2\n"
     )
@@ -387,7 +387,7 @@ def test_un_skill_deja_charge_avant_la_demande_est_credite_a_gb(svc):
     _charge(svc.store, "s1", "bon", t - 300)
 
     cas = relire(
-        f"<!-- gk echantillon v{VERSION} -->\n"
+        "ANNOTATEUR: Noah\n" f"<!-- gk echantillon v{VERSION} -->\n"
         "## 1. une demande tardive\n   1. autre   [c]  score 9\n"
         "   2. bon   [c]  score 7\n"
         f"{MARQUEUR} 2\n"
@@ -409,7 +409,7 @@ def test_le_diagnostic_rend_l_effectif_reel(svc):
     ], complete=True)
     for i in (1, 2, 3):
         svc.request("s1", f"demande {i} de la meme session")
-    texte = f"<!-- gk echantillon v{VERSION} -->\n"
+    texte = "ANNOTATEUR: Noah\n" f"<!-- gk echantillon v{VERSION} -->\n"
     for i in (1, 2, 3):
         texte += (
             f"## {i}. demande {i} de la meme session\n"
@@ -438,7 +438,7 @@ def test_le_diagnostic_dit_si_les_reutilisations_sont_visibles(svc):
     t = svc.store.one("SELECT ts FROM requests LIMIT 1")["ts"]
     _charge(svc.store, "s1", "bon", t + 1)
     cas = relire(
-        f"<!-- gk echantillon v{VERSION} -->\n"
+        "ANNOTATEUR: Noah\n" f"<!-- gk echantillon v{VERSION} -->\n"
         "## 1. une demande\n   1. bon   [c]  score 9\n"
         f"{MARQUEUR} 1\n"
     )
@@ -458,7 +458,7 @@ def test_le_biais_de_selection_est_annonce_quand_il_est_present(svc):
     ], complete=True)
     svc.request("s1", "une demande")
     cas = relire(
-        f"<!-- gk echantillon v{VERSION} -->\n"
+        "ANNOTATEUR: Noah\n" f"<!-- gk echantillon v{VERSION} -->\n"
         "## 1. une demande\n   1. bon   [c]  score 9\n"
         f"{MARQUEUR} 1\n"
     )
@@ -491,7 +491,7 @@ def test_un_skill_corrige_n_est_pas_un_choix_de_gb(svc):
     _charge(svc.store, "s1", "corrige", t + 2, action="loaded")
 
     cas = relire(
-        f"<!-- gk echantillon v{VERSION} -->\n"
+        "ANNOTATEUR: Noah\n" f"<!-- gk echantillon v{VERSION} -->\n"
         "## 1. une demande\n   1. bon   [c]  score 9\n"
         f"{MARQUEUR} 1\n"
     )
@@ -521,7 +521,7 @@ def test_un_evenement_d_ecriture_ne_decale_pas_le_rang(svc):
     _charge(svc.store, "s1", "bon", t + 2, action="loaded")
 
     cas = relire(
-        f"<!-- gk echantillon v{VERSION} -->\n"
+        "ANNOTATEUR: Noah\n" f"<!-- gk echantillon v{VERSION} -->\n"
         "## 1. une demande\n   1. bon   [c]  score 9\n"
         f"{MARQUEUR} 1\n"
     )
@@ -551,7 +551,7 @@ def test_une_etiquette_hors_des_cinq_leve_le_biais_de_selection(svc):
     ], complete=True)
     svc.request("s1", "une demande")
     cas = relire(
-        f"<!-- gk echantillon v{VERSION} -->\n"
+        "ANNOTATEUR: Noah\n" f"<!-- gk echantillon v{VERSION} -->\n"
         "## 1. une demande\n   1. propose   [c]  score 9\n"
         f"{MARQUEUR} ailleurs\n"
     )
@@ -561,3 +561,64 @@ def test_une_etiquette_hors_des_cinq_leve_le_biais_de_selection(svc):
     assert any("BIAIS DE SELECTION LEVE" in l for l in lecture(out))
     # Et l'etiquette compte comme un echec de GK, pas comme une exclusion.
     assert out["comparables"] == 1 and out["gk_rappel_1"] == 0.0
+
+
+def test_la_confrontation_refuse_des_etiquettes_de_l_agent_evalue(svc):
+    """Defaut le plus grave du 2026-10-23 : les etiquettes avaient ete produites
+    par gb lui-meme.
+
+    On a donc mesure GK contre le jugement de gb, puis gb contre ce meme
+    jugement -- et gb a « gagne » 0,811 contre 0,243. Ce 0,811 mesurait sa
+    coherence avec lui-meme : `gb_avait_deja_le_bon_avant: 26/37` en etait la
+    preuve directe, gb designant comme bon le skill qu'il avait charge.
+
+    Refus et non avertissement : l'avertissement sur le biais de selection a
+    disparu du raisonnement deux fois dans la meme journee.
+    """
+    from gk.catalog import Catalog
+    Catalog(svc.store).ingest([
+        {"path": "a/bon/SKILL.md", "name": "bon", "description": "d",
+         "category": "c", "fingerprint": "1"},
+    ], complete=True)
+    svc.request("s1", "une demande de collegue")
+    corps = (
+        f"<!-- gk echantillon v{VERSION} -->\n"
+        "## 1. une demande de collegue\n   1. bon   [c]  score 9\n"
+        f"{MARQUEUR} 1\n"
+    )
+    out = confronter(svc.store, relire("ANNOTATEUR: gb\n" + corps))
+    assert out["ok"] is False
+    assert "coherence de gb avec lui-meme" in out["erreur"]
+    assert "reetalonner" in out["ce_qui_reste_utilisable"]
+
+
+def test_un_echantillon_non_signe_est_traite_comme_circulaire(svc):
+    """L'absence de preuve d'independance n'est pas une preuve
+    d'independance -- c'est exactement l'hypothese qui a coute la journee."""
+    from gk.catalog import Catalog
+    Catalog(svc.store).ingest([
+        {"path": "a/bon/SKILL.md", "name": "bon", "description": "d",
+         "category": "c", "fingerprint": "1"},
+    ], complete=True)
+    svc.request("s1", "une demande de collegue")
+    out = confronter(svc.store, relire(
+        f"<!-- gk echantillon v{VERSION} -->\n"
+        "## 1. une demande de collegue\n   1. bon   [c]  score 9\n"
+        f"{MARQUEUR} 1\n"
+    ))
+    assert out["ok"] is False and "non signe" in out["erreur"]
+
+
+def test_un_annotateur_humain_laisse_passer_la_confrontation(svc):
+    from gk.catalog import Catalog
+    Catalog(svc.store).ingest([
+        {"path": "a/bon/SKILL.md", "name": "bon", "description": "d",
+         "category": "c", "fingerprint": "1"},
+    ], complete=True)
+    svc.request("s1", "une demande de collegue")
+    out = confronter(svc.store, relire(
+        "ANNOTATEUR: Noah\n" f"<!-- gk echantillon v{VERSION} -->\n"
+        "## 1. une demande de collegue\n   1. bon   [c]  score 9\n"
+        f"{MARQUEUR} 1\n"
+    ))
+    assert out["ok"] is True and out["comparables"] == 1

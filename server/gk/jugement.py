@@ -43,6 +43,27 @@ from .recherche import Index, contexte_de_session
 from .store import Store
 
 MARQUEUR = "REPONSE:"
+MARQUEUR_ANNOTATEUR = "ANNOTATEUR:"
+
+# Les annotateurs qui rendent la mesure circulaire.
+#
+# **Defaut le plus grave du 2026-10-23, et il a invalide la conclusion
+# centrale de la journee.** Les etiquettes de l'echantillon avaient ete
+# produites par gb lui-meme. On a donc mesure GK contre le jugement de gb, puis
+# gb contre ce meme jugement -- et gb a « gagne » 0,811 contre 0,243.
+#
+# Ce 0,811 ne mesurait pas la justesse de gb : il mesurait **sa coherence avec
+# lui-meme**. `gb_avait_deja_le_bon_avant: 26/37` en est la preuve directe : gb
+# designe comme bon le skill qu'il avait charge.
+#
+# Une etiquette produite par l'une des parties ne peut pas arbitrer entre les
+# deux. La commande doit donc le refuser, et non le signaler : un avertissement
+# se lit une fois puis s'oublie -- celui sur le biais de selection a disparu du
+# raisonnement deux fois dans la meme journee.
+ANNOTATEURS_CIRCULAIRES = (
+    "gb", "greenbot", "hermes", "agent", "claude", "llm", "modele", "model",
+    "ia", "ai", "bot", "moi", "gk",
+)
 VERSION = 2
 _MARQUE = "<!-- gk echantillon v"
 # Un echantillon stratifie par longueur : les demandes courtes et longues ne
@@ -93,7 +114,19 @@ _CONSIGNE = (
 # se tire des donnees, et `gk demandes --motifs` sert a les regarder.
 PLATEFORMES_NON_HUMAINES = ("cron", "scheduler", "timer", "system")
 
+# En dessous de deux jetons de contenu, aucune demande n'est jugeable.
+#
+# Releve par gb le 2026-10-23 : apres le filtre de plateforme il restait 11
+# demandes « ok » et 10 qui etaient **la consigne d'annotation elle-meme**,
+# tapee dans la conversation. Un « ok » n'appelle aucun skill, et le juger comme
+# une demande gonfle la part « aucun ne convient ».
+MIN_JETONS_JUGEABLES = 2
+
 MOTIFS_INJECTION = (
+    # La consigne d'annotation, quand elle est collee dans la conversation.
+    "ecrivez apres",
+    "reponse:",
+    "echantillon a juger",
     "skill invoked",
     "background process completed",
     "background task completed",
@@ -119,7 +152,11 @@ def est_injection(texte: str, plateforme: str = "") -> bool:
     bas = (texte or "").lower()
     if not bas.strip():
         return True
-    return any(m in bas for m in MOTIFS_INJECTION)
+    if any(m in bas for m in MOTIFS_INJECTION):
+        return True
+    # Trop court pour appeler un skill : « ok », « oui », « go ».
+    from .recherche import jetons as _jetons
+    return len(_jetons(texte)) < MIN_JETONS_JUGEABLES
 
 
 def motifs_repetes(
@@ -162,7 +199,7 @@ def preparer(store: Store, index: Index, taille: int = 50, par_page: int = 5) ->
     from .recherche import jetons
 
     rows = store.query(
-        "SELECT session_id, text_truncated, ts, platform FROM requests "
+        "SELECT id, session_id, text_truncated, ts, platform FROM requests "
         "WHERE text_truncated IS NOT NULL AND text_truncated <> '' "
         "ORDER BY ts DESC LIMIT 1000"
     )
@@ -194,6 +231,12 @@ def preparer(store: Store, index: Index, taille: int = 50, par_page: int = 5) ->
         "# Echantillon a juger",
         f"{_MARQUE}{VERSION} -->",
         "",
+        f"{MARQUEUR_ANNOTATEUR} ",
+        "",
+        "Ecrivez votre nom ci-dessus. Ce n'est pas une formalite : une",
+        "etiquette produite par l'agent qu'on evalue ne peut pas arbitrer entre",
+        "lui et le service. `gk confronter` refusera le fichier.",
+        "",
         *_CONSIGNE,
         "",
         "N'ajoutez rien d'autre : le reste du fichier est relu tel quel.",
@@ -223,6 +266,11 @@ def preparer(store: Store, index: Index, taille: int = 50, par_page: int = 5) ->
         else:
             resultats = index.chercher(demande, limite=par_page)
         lignes.append(f"## {i}. {demande}")
+        # L'identifiant de la demande, pour que la relecture n'ait pas a
+        # l'apparier par son texte. Releve par gb : 16 textes sont dupliques
+        # jusqu'a 29 fois, et l'appariement par texte retenait la plus recente
+        # -- donc la mauvaise session et le mauvais horodatage.
+        lignes.append(f"<!-- demande #{row['id']} -->")
         if contexte:
             lignes.append(f"<!-- contexte : {len(contexte)} tour(s) precedent(s) -->")
         if not resultats:
@@ -340,7 +388,10 @@ def etiquettes(cas: list[dict]) -> list[dict]:
         demande = _une_ligne(c.get("demande") or "")
         if not attendu or not demande or est_injection(demande):
             continue
-        out.append({"numero": c["numero"], "demande": demande, "attendu": attendu})
+        out.append({
+            "numero": c["numero"], "demande": demande, "attendu": attendu,
+            "id": c.get("id"),
+        })
     return out
 
 
@@ -375,7 +426,7 @@ def reetalonner(
     avant_plateforme = len(etqs)
     etqs = [
         e for e in etqs
-        if not est_injection(e["demande"], plateformes.get(e["demande"], ""))
+        if not est_injection(e["demande"], plateformes.get(_clef(e), ""))
     ]
     ecartees_plateforme = avant_plateforme - len(etqs)
     if not etqs:
@@ -398,7 +449,7 @@ def reetalonner(
     avec_contexte = 0
     details: list[dict] = []
     for e in etqs:
-        session, ts = situe.get(e["demande"], ("", None))
+        session, ts = situe.get(_clef(e), ("", None))
         contexte = (
             contexte_de_session(store, session, avant=ts)
             if session and ts is not None else []
@@ -470,19 +521,33 @@ BONUS_CANDIDATS = (0.0, 0.5, 1.0, 2.0, 3.0, 5.0, 8.0)
 
 
 def _situer(store: Store) -> tuple[dict, dict]:
-    """Session, horodatage et plateforme de chaque demande enregistree."""
+    """Session, horodatage et plateforme de chaque demande enregistree.
+
+    Indexe **par identifiant** et par texte. L'appariement par texte est un
+    repli pour les echantillons anterieurs : releve par gb le 2026-10-23, 16
+    textes sont dupliques jusqu'a 29 fois, et retenir la plus recente donne la
+    mauvaise session et le mauvais horodatage. L'impact mesure etait nul sur les
+    echantillons du jour, mais le mecanisme est faux.
+    """
     rows = store.query(
-        "SELECT session_id, text_truncated, ts, platform FROM requests "
+        "SELECT id, session_id, text_truncated, ts, platform FROM requests "
         "WHERE text_truncated IS NOT NULL AND text_truncated <> '' "
         "ORDER BY ts DESC LIMIT 2000"
     )
-    situe: dict[str, tuple[str, float]] = {}
-    plats: dict[str, str] = {}
+    situe: dict[object, tuple[str, float]] = {}
+    plats: dict[object, str] = {}
     for r in rows:
         plat = _une_ligne(r["text_truncated"])
+        situe[r["id"]] = (r["session_id"] or "", r["ts"])
+        plats[r["id"]] = r["platform"] or ""
         situe.setdefault(plat, (r["session_id"] or "", r["ts"]))
         plats.setdefault(plat, r["platform"] or "")
     return situe, plats
+
+
+def _clef(e: dict) -> object:
+    """L'identifiant de la demande s'il est connu, sinon son texte."""
+    return e.get("id") if e.get("id") is not None else e["demande"]
 
 
 def _rejouer(
@@ -496,7 +561,7 @@ def _rejouer(
     """
     par_session: dict[str, list[dict]] = {}
     for e in etqs:
-        session, ts = situe.get(e["demande"], ("", None))
+        session, ts = situe.get(_clef(e), ("", None))
         if ts is None:
             continue
         par_session.setdefault(session, []).append(dict(e, ts=ts, session=session))
@@ -595,11 +660,14 @@ def simuler_memoire(
     """
     etqs = etiquettes(cas)
     situe, plats = _situer(store)
-    etqs = [e for e in etqs if not est_injection(e["demande"], plats.get(e["demande"], ""))]
+    etqs = [
+        e for e in etqs
+        if not est_injection(e["demande"], plats.get(_clef(e), ""))
+    ]
     if not etqs:
         return {"ok": False, "erreur": "aucune etiquette reutilisable"}
 
-    sessions = sorted({situe.get(e["demande"], ("", 0))[0] for e in etqs})
+    sessions = sorted({situe.get(_clef(e), ("", 0))[0] for e in etqs})
     if len(sessions) < 4:
         return {
             "ok": False,
@@ -612,8 +680,8 @@ def simuler_memoire(
     moitie = len(sessions) // 2
     ajust, verif = set(sessions[:moitie]), set(sessions[moitie:])
     lot = {
-        "ajustement": [e for e in etqs if situe.get(e["demande"], ("", 0))[0] in ajust],
-        "verification": [e for e in etqs if situe.get(e["demande"], ("", 0))[0] in verif],
+        "ajustement": [e for e in etqs if situe.get(_clef(e), ("", 0))[0] in ajust],
+        "verification": [e for e in etqs if situe.get(_clef(e), ("", 0))[0] in verif],
     }
 
     # Ajustement : le bonus qui maximise le rang 1 sur la premiere moitie.
@@ -656,6 +724,7 @@ _TITRE = re.compile(r"^##\s*(\d+)\.\s*(.*)$")
 _CANDIDAT = re.compile(r"^\s*(\d+)\.\s+(\S+)\s")
 _VERSION = re.compile(re.escape(_MARQUE) + r"(\d+)")
 _NOM = re.compile(r"^[A-Za-z][A-Za-z0-9._/-]{2,}$")
+_ID = re.compile(r"^<!--\s*demande\s*#(\d+)\s*-->$")
 
 
 def relire(texte: str) -> list[dict]:
@@ -670,6 +739,11 @@ def relire(texte: str) -> list[dict]:
     marque = _VERSION.search(texte or "")
     if marque:
         version = int(marque.group(1))
+    annotateur = ""
+    for ligne in (texte or "").splitlines():
+        if ligne.strip().startswith(MARQUEUR_ANNOTATEUR):
+            annotateur = ligne.split(MARQUEUR_ANNOTATEUR, 1)[1].strip()
+            break
 
     cas: list[dict] = []
     courant: dict | None = None
@@ -681,10 +755,15 @@ def relire(texte: str) -> list[dict]:
             courant = {
                 "numero": int(titre.group(1)), "demande": titre.group(2),
                 "candidats": [], "reponse": None, "nom": None, "brut": "",
-                "version": version,
+                "version": version, "id": None, "sans_avis": False,
+                "annotateur": annotateur,
             }
             continue
         if courant is None:
+            continue
+        marque_id = _ID.match(ligne.strip())
+        if marque_id:
+            courant["id"] = int(marque_id.group(1))
             continue
         candidat = _CANDIDAT.match(ligne)
         if candidat and not ligne.lstrip().startswith(MARQUEUR):
@@ -695,7 +774,11 @@ def relire(texte: str) -> list[dict]:
         if ligne.strip().startswith(MARQUEUR):
             brut = ligne.split(MARQUEUR, 1)[1].strip()
             courant["brut"] = brut
-            if brut.isdigit():
+            if brut in ("?", "??"):
+                # « je ne sais pas » n'est pas « pas annote » : l'un dit que le
+                # cas est difficile, l'autre qu'on ne l'a pas regarde.
+                courant["sans_avis"] = True
+            elif brut.isdigit():
                 courant["reponse"] = int(brut)
             elif _NOM.match(brut):
                 # Le bon skill existe, hors de la liste montree. Si c'est un des
@@ -722,6 +805,21 @@ def relire(texte: str) -> list[dict]:
     return [fusion[n] for n in sorted(fusion)]
 
 
+def annotateur_de(cas: list[dict]) -> tuple[str, bool]:
+    """Qui a annote, et si cela rend toute comparaison circulaire.
+
+    Un fichier sans signature est traite comme circulaire : l'absence de preuve
+    d'independance n'est pas une preuve d'independance, et c'est exactement
+    l'hypothese qui a coute la journee.
+    """
+    nom = next((c.get("annotateur") or "" for c in cas if c.get("annotateur")), "")
+    plat = "".join(ch for ch in nom.lower() if ch.isalnum() or ch == " ").strip()
+    if not plat:
+        return "", True
+    mots = set(plat.split())
+    return nom, bool(mots & set(ANNOTATEURS_CIRCULAIRES))
+
+
 def juger(cas: list[dict], dans_les_n: int = 5) -> dict:
     """Le rappel reel, sur le seul denominateur qui ait un sens.
 
@@ -735,16 +833,36 @@ def juger(cas: list[dict], dans_les_n: int = 5) -> dict:
     annonce -- un chiffre faux est plus couteux qu'un chiffre absent.
     """
     annotes = [c for c in cas if c.get("reponse") is not None or c.get("nom")]
+    sans_avis = sum(1 for c in cas if c.get("sans_avis"))
     total = len(annotes)
     if not total:
         return {
             "ok": False,
             "erreur": "aucune reponse annotee",
             "cas_lus": len(cas),
-            "non_annotes": len(cas),
+            "non_annotes": len(cas) - sans_avis,
+            "sans_avis": sans_avis,
         }
 
     version = max((c.get("version") or 1) for c in annotes)
+    # Un fichier sans candidats affiches ne permet AUCUN rang : tout nom ecrit
+    # a la main y serait compte « hors des cinq », et la commande rendrait
+    # 0,0 partout. Releve par gb le 2026-10-23 sur l'echantillon aveugle.
+    avec_candidats = sum(1 for c in cas if c.get("candidats"))
+    if not avec_candidats:
+        return {
+            "ok": False,
+            "erreur": (
+                "cet echantillon n'affiche aucun candidat : les rangs y sont "
+                "inconnaissables, donc le rappel ne peut pas etre calcule"
+            ),
+            "cas_lus": len(cas),
+            "cas_annotes": total,
+            "suite": (
+                "les etiquettes restent utilisables : `gk reetalonner` et "
+                "`gk ordonnance` recalculent les rangs depuis l'index"
+            ),
+        }
     rangs = [c["reponse"] for c in annotes if c.get("reponse")]
     premier = sum(1 for r in rangs if r == 1)
     dans_cinq = sum(1 for r in rangs if r <= dans_les_n)
@@ -763,8 +881,17 @@ def juger(cas: list[dict], dans_les_n: int = 5) -> dict:
         "ok": True,
         "cas_lus": len(cas),
         "cas_annotes": total,
-        "non_annotes": len(cas) - total,
+        # Trois etats distincts, et les confondre masquait les cas difficiles :
+        # annote, « je ne sais pas », et pas regarde.
+        "sans_avis": sans_avis,
+        "non_annotes": len(cas) - total - sans_avis,
         "version_echantillon": version,
+        "annotateur": annotateur_de(cas)[0] or "(non signe)",
+        "circulaire": annotateur_de(cas)[1],
+        # Les rangs lus ici sont ceux inscrits AU MOMENT DE L'ANNOTATION. Le
+        # classement a change depuis (correction de la fuite de contexte,
+        # reindexations) : `gk reetalonner` les recalcule.
+        "rangs_au_moment_de_l_annotation": True,
         f"designe_dans_les_{dans_les_n}": dans_cinq,
         "designe_au_rang_1": premier,
         f"designe_hors_des_{dans_les_n}": hors_cinq,
@@ -773,16 +900,36 @@ def juger(cas: list[dict], dans_les_n: int = 5) -> dict:
         # Le taux de CITATION sur toutes les demandes annotees. Celui-la ne
         # depend d'aucune hypothese, et c'est le denominateur que voit un brief :
         # un brief ne sait pas si une demande a une reponse.
-        f"cite_dans_les_{dans_les_n}_sur_tout": round(dans_cinq / total, 3),
+        # Deux taux, deux denominateurs, et le nom le dit : la meme sortie en
+        # portait deux (23/42 et 23/37) sans que rien ne distingue lequel.
+        f"cite_dans_les_{dans_les_n}_par_annote": round(dans_cinq / total, 3),
+        "denominateur_par_annote": total,
         "part_premier_quand_cite": (
             round(premier / dans_cinq, 3) if dans_cinq else None
         ),
     }
 
     servables = dans_cinq + hors_cinq
+    if out["circulaire"]:
+        # Les chiffres portent alors un autre nom, parce qu'ils mesurent autre
+        # chose : l'ACCORD avec l'annotateur, pas la justesse.
+        out["denominateur_de_l_accord"] = servables
+        if servables:
+            out["accord_1_avec_l_annotateur"] = round(premier / servables, 3)
+            out[f"accord_{dans_les_n}_avec_l_annotateur"] = round(
+                dans_cinq / servables, 3
+            )
+        out["avertissement"] = (
+            f"annotateur « {out['annotateur']} » : ces chiffres mesurent "
+            "l'ACCORD de GK avec lui, pas sa justesse. Ils ne peuvent pas "
+            "arbitrer entre GK et l'agent, puisque l'une des parties a produit "
+            "la reference."
+        )
+        return out
     if version >= 2:
         # `0` veut dire ce qu'il dit : le denominateur est connu.
         out["demandes_servables"] = servables
+        out["denominateur_du_rappel"] = servables
         out["part_sans_reponse_possible"] = round(aucun / total, 3)
         if servables:
             out["rappel_1_reel"] = round(premier / servables, 3)

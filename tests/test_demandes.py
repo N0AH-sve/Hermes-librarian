@@ -368,7 +368,8 @@ def test_l_echantillon_n_injecte_pas_le_futur_dans_ses_candidats(svc):
          "fingerprint": "1"},
     ], complete=True)
     # Le premier tour ne parle de rien ; le second parle de marges.
-    svc.request("s1", "bonjour")
+    # Deux jetons au moins : en dessous, la demande n'est pas jugeable.
+    svc.request("s1", "bonjour tout le monde")
     svc.request("s1", "les marges et le prix plancher du catalogue")
     index = Index.construire(svc.store)
     texte = preparer(svc.store, index, taille=10)
