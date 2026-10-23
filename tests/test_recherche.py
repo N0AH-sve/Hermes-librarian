@@ -826,3 +826,109 @@ def test_le_banc_contexte_rend_les_deux_conditions(tmp_path, capsys, monkeypatch
         assert "mrr_sans_contexte" in bloc and "mrr_avec_contexte" in bloc
     # La lecture dit sa reserve avant tout chiffre.
     assert "fabriquee n'est pas une vraie" in out["lecture"][0]
+
+
+# -- le seuil de confiance ------------------------------------------------
+
+
+def test_les_signaux_de_confiance_distinguent_un_gagnant_clair(tmp_path):
+    """Tant que GK repond toujours, sa precision est condamnee a etre son
+    rappel. Pouvoir se taire separe les deux."""
+    store = Store(tmp_path / "cf2.db")
+    peupler(store, BIBLIOTHEQUE)
+    index = Index.construire(store)
+    try:
+        # Un mot rare : un seul skill le porte, donc marge maximale.
+        resultats = index.chercher("proforma")
+        signaux = index.confiance("proforma", resultats)
+        assert signaux["marge"] == 1.0, "aucun second : gagnant sans conteste"
+        assert signaux["couverture"] == 1.0
+        assert signaux["information"] > 0
+
+        # Un mot partage : plusieurs skills, donc marge faible.
+        resultats = index.chercher("prestashop")
+        signaux = index.confiance("prestashop", resultats)
+        assert signaux["marge"] < 1.0
+
+        # Une demande qui ne ramene rien ne porte aucune confiance.
+        vide = index.confiance("zzzz", index.chercher("zzzz"))
+        assert vide["marge"] == 0.0 and vide["couverture"] == 0.0
+    finally:
+        store.close()
+
+
+def test_la_couverture_compte_les_mots_portes(tmp_path):
+    store = Store(tmp_path / "cv2.db")
+    peupler(store, BIBLIOTHEQUE)
+    index = Index.construire(store)
+    try:
+        # Deux mots dont un seul est porte par le gagnant.
+        demande = "proforma zzzinconnu"
+        signaux = index.confiance(demande, index.chercher(demande))
+        assert signaux["couverture"] == 0.5
+    finally:
+        store.close()
+
+
+def test_le_seuil_refuse_un_corpus_trop_petit(tmp_path, capsys, monkeypatch):
+    store = Store(tmp_path / "sp.db")
+    peupler(store, BIBLIOTHEQUE)
+    store.close()
+    monkeypatch.setenv("GK_DATABASE", str(tmp_path / "sp.db"))
+    assert cli_main(["--json", "seuil"]) == 1
+    assert "trop peu" in json.loads(capsys.readouterr().out)["erreur"]
+
+
+def test_le_seuil_est_choisi_sur_une_moitie_et_verifie_sur_l_autre(
+    tmp_path, capsys, monkeypatch
+):
+    """La circularite deja commise deux fois dans ce projet : choisir un seuil
+    sur le corpus qui l'evalue donne un chiffre flatteur qui ne tient pas."""
+    store = Store(tmp_path / "sv.db")
+    # 30 skills, chacun avec une citation portant un mot propre : la moitie
+    # est facile a trouver, l'autre non.
+    skills = {}
+    for i in range(30):
+        if i % 2:
+            # Mot propre : trouvable.
+            skills[f"gm-propre{i}"] = (
+                f"Le domaine zorglub{i} et ses regles.",
+                [("Déclencheurs", f'- « zorglub{i} en question »')],
+            )
+        else:
+            # Mot partage par tous : introuvable.
+            skills[f"gm-commun{i}"] = (
+                "Un domaine comme les autres.",
+                [("Déclencheurs", '- « banalite partagee generale »')],
+            )
+    peupler(store, skills)
+    store.close()
+    monkeypatch.setenv("GK_DATABASE", str(tmp_path / "sv.db"))
+    assert cli_main(["--json", "seuil"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["cas"] >= 20
+    assert 0.0 <= out["precision_sans_seuil"] <= 1.0
+    # Chaque signal rend un bloc d'ajustement ET un bloc de verification.
+    for bloc in out["par_signal"].values():
+        if "seuil" in bloc:
+            assert "ajustement" in bloc and "verification" in bloc
+    # La lecture dit la methode avant tout chiffre.
+    assert "VERIFIE sur l'autre" in out["lecture"][0]
+
+
+def test_le_seuil_dit_quand_la_couverture_est_derisoire(tmp_path, capsys, monkeypatch):
+    store = Store(tmp_path / "sd.db")
+    skills = {
+        f"gm-s{i}": ("Un domaine comme les autres, tous pareils.",
+                     [("Déclencheurs", '- « banalite partagee generale »')])
+        for i in range(25)
+    }
+    peupler(store, skills)
+    store.close()
+    monkeypatch.setenv("GK_DATABASE", str(tmp_path / "sd.db"))
+    assert cli_main(["--json", "seuil"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    texte = " ".join(out["lecture"])
+    # Avec 25 skills indistinguables, soit aucun seuil ne marche, soit la
+    # couverture est derisoire : les deux lectures sont acceptables.
+    assert ("Aucun signal" in texte) or ("derisoire" in texte) or ("Defendable" in texte)

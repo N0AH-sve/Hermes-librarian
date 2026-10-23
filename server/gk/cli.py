@@ -393,6 +393,198 @@ def cmd_cherche(args, cfg: Config) -> int:
     return 0
 
 
+# Les signaux de confiance mis a l'epreuve. Aucun n'est combine en une formule
+# inventee : on mesure leur courbe et on garde celui qui couvre le plus.
+_GRILLES = {
+    "marge": [i / 20 for i in range(0, 19)],
+    "couverture": [i / 10 for i in range(0, 10)],
+    "information": [0, 2, 4, 6, 8, 10, 13, 16, 20, 25, 30],
+    "score": [0, 2, 5, 10, 15, 20, 30, 45, 60, 80],
+}
+
+
+def cmd_seuil(args, cfg: Config) -> int:
+    """A quel seuil GK a raison 9 fois sur 10, et sur quelle part des demandes.
+
+    Etape 4 de la liste de GM. Tant que GK repond toujours, sa precision est
+    condamnee a etre son rappel. Pouvoir se taire separe les deux, au prix de la
+    couverture -- et ce prix est le chiffre qui decide si la phase 3 vaut la
+    peine.
+
+    **Le seuil est choisi sur une moitie du corpus et verifie sur l'autre.** Le
+    choisir sur le corpus qui l'evalue donnerait un chiffre flatteur qui ne
+    tiendrait pas en production : c'est la circularite deja commise deux fois
+    dans ce projet, et elle est evitee ici par construction.
+    """
+    with Store(cfg.database) as store:
+        index = Index.construire(store)
+        if args.contexte:
+            brut = index.corpus_avec_contexte()
+            cas = [
+                (c["demande"], c["attendu"], c["ligne"], c["contexte"])
+                for c in brut if c["condition"] == "suite"
+            ]
+        else:
+            cas = [(d, a, l, None) for d, a, l in index.corpus()]
+        if len(cas) < 20:
+            _emit({
+                "ok": False,
+                "erreur": f"{len(cas)} cas seulement : trop peu pour fixer un seuil",
+            }, args)
+            return 1
+        mesures: list[dict] = []
+        for demande, attendu, ligne, contexte in cas:
+            if contexte:
+                resultats = index.chercher_avec_contexte(
+                    demande, contexte=contexte, limite=5, exclure_exemple=ligne
+                )
+            else:
+                resultats = index.chercher(demande, limite=5, exclure_exemple=ligne)
+            signaux = index.confiance(demande, resultats)
+            mesures.append({
+                "juste": bool(resultats) and resultats[0]["name"] == attendu,
+                **signaux,
+            })
+        # Moitie d'ajustement, moitie de verification. Un cas sur deux, pour que
+        # les deux moities se ressemblent.
+        ajust = mesures[0::2]
+        verif = mesures[1::2]
+        out: dict = {
+            "ok": True, "cas": len(mesures), "precision_visee": args.precision,
+            "corpus": "sessions synthetiques (suites)" if args.contexte
+                      else "phrases citees",
+            "precision_sans_seuil": round(
+                sum(1 for m in mesures if m["juste"]) / len(mesures), 3
+            ),
+        }
+        resultats_signaux = {}
+        for signal, grille in _GRILLES.items():
+            choisi = _choisir_seuil(ajust, signal, grille, args.precision)
+            if choisi is None:
+                resultats_signaux[signal] = {
+                    "verdict": "aucun seuil n'atteint la precision visee "
+                               "sur la moitie d'ajustement"
+                }
+                continue
+            resultats_signaux[signal] = {
+                "seuil": choisi,
+                "ajustement": _mesurer_seuil(ajust, signal, choisi),
+                "verification": _mesurer_seuil(verif, signal, choisi),
+            }
+        # Le couple marge + couverture : deux conditions valent souvent mieux
+        # qu'une, et le cout en code est nul.
+        meilleur_couple = None
+        for seuil_marge in _GRILLES["marge"]:
+            for seuil_couv in _GRILLES["couverture"]:
+                retenus = [
+                    m for m in ajust
+                    if m["marge"] >= seuil_marge and m["couverture"] >= seuil_couv
+                ]
+                if len(retenus) < 5:
+                    continue
+                precision = sum(1 for m in retenus if m["juste"]) / len(retenus)
+                if precision < args.precision:
+                    continue
+                couverture = len(retenus) / len(ajust)
+                if meilleur_couple is None or couverture > meilleur_couple[0]:
+                    meilleur_couple = (couverture, seuil_marge, seuil_couv)
+        if meilleur_couple is not None:
+            _, sm, sc = meilleur_couple
+            retenus = [
+                m for m in verif if m["marge"] >= sm and m["couverture"] >= sc
+            ]
+            out["marge_et_couverture"] = {
+                "seuils": {"marge": sm, "couverture": sc},
+                "verification": _mesurer_seuil_liste(retenus, len(verif)),
+            }
+        out["par_signal"] = resultats_signaux
+        out["lecture"] = _lire_seuil(out)
+        _emit(out, args)
+    return 0
+
+
+def _choisir_seuil(mesures, signal, grille, precision_visee):
+    """Le seuil le plus BAS qui atteint la precision visee : on veut la plus
+    grande couverture possible, pas le seuil le plus prudent."""
+    meilleur = None
+    for seuil in grille:
+        retenus = [m for m in mesures if m[signal] >= seuil]
+        if len(retenus) < 5:
+            continue
+        precision = sum(1 for m in retenus if m["juste"]) / len(retenus)
+        if precision >= precision_visee:
+            couverture = len(retenus) / len(mesures)
+            if meilleur is None or couverture > meilleur[1]:
+                meilleur = (seuil, couverture)
+    return None if meilleur is None else meilleur[0]
+
+
+def _mesurer_seuil(mesures, signal, seuil):
+    retenus = [m for m in mesures if m[signal] >= seuil]
+    return _mesurer_seuil_liste(retenus, len(mesures))
+
+
+def _mesurer_seuil_liste(retenus, total):
+    if not retenus:
+        return {"couverture": 0.0, "precision": None, "cas": 0}
+    return {
+        "couverture": round(len(retenus) / total, 3) if total else 0.0,
+        "precision": round(sum(1 for m in retenus if m["juste"]) / len(retenus), 3),
+        "cas": len(retenus),
+    }
+
+
+def _lire_seuil(out: dict) -> list[str]:
+    lignes = [
+        "Seuil choisi sur une moitie du corpus, VERIFIE sur l'autre. Seuls les "
+        "chiffres de verification comptent : choisir un seuil sur le corpus qui "
+        "l'evalue donne un chiffre flatteur qui ne tient pas en production.",
+        f"Sans aucun seuil, GK a raison {out['precision_sans_seuil']} du temps "
+        "et parle sur 100 % des demandes.",
+    ]
+    candidats = []
+    for signal, bloc in (out.get("par_signal") or {}).items():
+        verif = (bloc or {}).get("verification") or {}
+        if verif.get("precision") is not None:
+            candidats.append((verif["couverture"], verif["precision"], signal,
+                              bloc.get("seuil")))
+    couple = out.get("marge_et_couverture")
+    if couple and (couple["verification"].get("precision") is not None):
+        v = couple["verification"]
+        candidats.append((v["couverture"], v["precision"], "marge+couverture",
+                          couple["seuils"]))
+    if not candidats:
+        lignes.append(
+            "=> Aucun signal n'atteint la precision visee. GK ne peut pas encore "
+            "savoir quand il a raison, et un brief injecte serait un pari."
+        )
+        return lignes
+    candidats.sort(key=lambda c: -c[0])
+    couverture, precision, signal, seuil = candidats[0]
+    lignes.append(
+        f"Meilleur signal : {signal} a {seuil}. En verification il parle sur "
+        f"{couverture:.0%} des demandes et a raison {precision:.0%} du temps."
+    )
+    if precision < out["precision_visee"] - 0.05:
+        lignes.append(
+            "=> Le seuil ne tient PAS en verification : il etait ajuste au "
+            "corpus. Il faut plus de cas, ou un signal de confiance different."
+        )
+    elif couverture < 0.15:
+        lignes.append(
+            f"=> La precision est atteinte mais la couverture est derisoire "
+            f"({couverture:.0%}). Un brief qui se tait 85 % du temps ne vaut "
+            "pas le risque de l'injection : le remede est dans la redaction."
+        )
+    else:
+        lignes.append(
+            f"=> Defendable. Un brief qui parle sur {couverture:.0%} des "
+            f"demandes en ayant raison {precision:.0%} du temps est utile, et il "
+            "ne peut presque pas nuire puisqu'il se tait ailleurs."
+        )
+    return lignes
+
+
 def cmd_banc_contexte(args, cfg: Config) -> int:
     """Mesure l'apport du contexte de session, sur des sessions synthetiques.
 
@@ -1144,6 +1336,20 @@ def build_parser() -> argparse.ArgumentParser:
         help="identifiant de session : reprend les demandes precedentes comme contexte",
     )
     c.set_defaults(func=cmd_cherche)
+
+    sl = sub.add_parser(
+        "seuil",
+        help="a quel seuil GK a raison 9 fois sur 10, et sur quelle part des demandes",
+    )
+    sl.add_argument(
+        "--precision", type=float, default=0.9,
+        help="precision visee quand GK parle (defaut 0,9)",
+    )
+    sl.add_argument(
+        "--contexte", action="store_true",
+        help="mesurer sur les sessions synthetiques, contexte active",
+    )
+    sl.set_defaults(func=cmd_seuil)
 
     bc = sub.add_parser(
         "banc-contexte",

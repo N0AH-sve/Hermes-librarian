@@ -408,6 +408,44 @@ class Index:
             "jetons_portes": len(porte_cible),
         }
 
+    # -- la confiance --------------------------------------------------------
+
+    def confiance(self, demande: str, resultats: list[dict]) -> dict:
+        """Les signaux qui disent si le premier resultat est un gagnant clair.
+
+        Etape 4 de la liste de GM : verifier la coherence avant de proposer. GK
+        rendait toujours une liste, donc sa precision etait condamnee a etre son
+        rappel -- 51 % sur le metier. Pouvoir se taire separe les deux : il ne
+        parle que la ou il est fort.
+
+        Aucun de ces signaux n'est combine ici en une formule. `gk seuil`
+        mesure leur courbe precision/couverture et garde celui qui donne la
+        meilleure couverture a la precision visee -- plutot qu'une formule
+        inventee puis defendue.
+        """
+        jetons_demande = jetons(demande)
+        if not resultats or not jetons_demande:
+            return {
+                "marge": 0.0, "couverture": 0.0, "score": 0.0,
+                "information": round(self.information(demande), 3),
+            }
+        premier = resultats[0]
+        second = resultats[1]["score"] if len(resultats) > 1 else 0.0
+        s1 = premier["score"] or 0.0
+        par_nom = {s.name: s for s in self.skills}
+        gagnant = par_nom.get(premier["name"])
+        portes = (
+            self.jetons_apparies(gagnant, jetons_demande) if gagnant is not None
+            else set()
+        )
+        return {
+            # Insensible a la longueur de la demande, contrairement au score.
+            "marge": round((s1 - second) / s1, 3) if s1 > 0 else 0.0,
+            "couverture": round(len(portes) / len(jetons_demande), 3),
+            "score": round(s1, 3),
+            "information": round(self.information(demande), 3),
+        }
+
     # -- paires que rien ne separe -------------------------------------------
 
     def doublons_de_nom(self) -> list[dict]:
