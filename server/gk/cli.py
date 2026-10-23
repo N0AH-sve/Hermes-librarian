@@ -32,6 +32,7 @@ from .jugement import (
     REPRISE_JUSQU_A,
     est_injection,
     etiquettes,
+    motifs_repetes,
     juger,
     preparer,
     reetalonner,
@@ -41,6 +42,7 @@ from .jugement import (
 from .corrections import (
     BAD_RECOMMENDATION,
     BRIEF_IGNORED,
+    REQUEST_MAX_CHARS,
     UNATTRIBUTABLE,
     retire_testcases,
     tidy,
@@ -1421,7 +1423,13 @@ def cmd_demandes(args, cfg: Config) -> int:
                 "WHERE text_truncated IS NOT NULL AND text_truncated <> ''"
             )
         ]
-        injections = [t for t in textes if est_injection(t)]
+        paires = [
+            (r["text_truncated"], r["platform"] or "") for r in store.query(
+                "SELECT text_truncated, platform FROM requests "
+                "WHERE text_truncated IS NOT NULL AND text_truncated <> ''"
+            )
+        ]
+        injections = [t for t, pf in paires if est_injection(t, pf)]
         out: dict = {
             "demandes_observees": total,
             "demandes_gardees": gardees,
@@ -1439,6 +1447,10 @@ def cmd_demandes(args, cfg: Config) -> int:
         out["demandes_de_collegues"] = len(textes) - len(injections)
         if len(textes):
             out["part_injections"] = round(len(injections) / len(textes), 3)
+        if getattr(args, "motifs", 0):
+            # Un filtre se tire des donnees : une injection est un gabarit et
+            # se repete mot pour mot, une question de collegue non.
+            out["debuts_repetes"] = motifs_repetes(textes)[: args.motifs]
         if getattr(args, "injections", 0) and injections:
             # Un motif trop large doit se voir, au lieu de manger des demandes
             # reelles en silence.
@@ -1463,7 +1475,12 @@ def cmd_demandes(args, cfg: Config) -> int:
         if longueurs:
             longueurs.sort()
             out["longueur_medianne"] = longueurs[len(longueurs) // 2]
-            out["tronquees_a_200"] = sum(1 for n in longueurs if n >= 200)
+            # Le libelle `tronquees_a_200` mentait : la troncature est a
+            # REQUEST_MAX_CHARS, et 200 n'etait que l'ancienne limite.
+            out["au_moins_200_caracteres"] = sum(1 for n in longueurs if n >= 200)
+            out["reellement_tronquees"] = sum(
+                1 for n in longueurs if n >= REQUEST_MAX_CHARS
+            )
         # Deux rapprochements, et c'est le second qui porte la question.
         #
         # Le premier regarde les skills charges dans les deux minutes qui
@@ -1810,7 +1827,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     dm.add_argument(
         "--injections", type=int, default=0,
-        help="afficher N injections systeme ecartees, pour verifier le filtre",
+        help="afficher N demandes non humaines ecartees, pour verifier le filtre",
+    )
+    dm.add_argument(
+        "--motifs", type=int, default=0,
+        help="afficher les N debuts de demande les plus repetes (les gabarits "
+             "du systeme remontent en tete : sert a ECRIRE le filtre)",
     )
     dm.set_defaults(func=cmd_demandes)
 

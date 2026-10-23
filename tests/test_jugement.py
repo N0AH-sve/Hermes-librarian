@@ -446,7 +446,7 @@ def test_l_echantillon_ecarte_les_injections_et_le_dit(prepare):
     svc.request("s4", "Background process completed")
     index = Index.construire(svc.store)
     texte = preparer(svc.store, index, taille=20)
-    assert "injections du systeme ecartees" in texte
+    assert "demandes ecartees" in texte
     assert "Skill invoked" not in texte
     assert "Background process completed" not in texte
 
@@ -571,3 +571,101 @@ def test_gk_reetalonner_dit_que_ses_chiffres_remplacent_les_anciens(
     assert out["courbe"]["1"] == 1.0
     assert any("REMPLACENT" in l for l in out["lecture"])
     assert any("ne sont PAS comptees" in l for l in out["lecture"])
+
+
+# -- le filtre tire des donnees --------------------------------------------
+
+
+def test_une_tache_planifiee_n_est_pas_une_demande_de_collegue():
+    """Meilleur filtre que n'importe quel motif de texte, et pour une raison de
+    fond : la plateforme est une donnee STRUCTUREE, pas une devinette.
+
+    Releve en production : 77 demandes `cron` sur 494. Juger GK sur un prompt de
+    cron n'a pas de sens, et les compter dans « aucun skill ne convient » gonfle
+    ce taux d'autant.
+    """
+    from gk.jugement import est_injection
+
+    assert est_injection("fais le point quotidien", plateforme="cron")
+    assert est_injection("n'importe quoi", plateforme="CRON")
+    assert not est_injection("fais le point quotidien", plateforme="discord")
+    assert not est_injection("fais le point quotidien")
+
+
+def test_les_debuts_repetes_font_remonter_les_gabarits():
+    """Comment ECRIRE un filtre au lieu de le deviner.
+
+    La premiere version devinait des motifs depuis un rapport : elle attrapait
+    0 demande sur 494. Une injection du systeme est un gabarit et se repete mot
+    pour mot ; une question de collegue non.
+    """
+    from gk.jugement import motifs_repetes
+
+    textes = [
+        "Rapport automatique du jour : tout va bien",
+        "Rapport automatique du jour : rien a signaler",
+        "Rapport automatique du jour : trois alertes",
+        "pourquoi on a paye 40 balles de port chez Adagio",
+        "ou en sont les factures fournisseurs",
+    ]
+    out = motifs_repetes(textes, prefixe=30, minimum=2)
+    assert len(out) == 1, out
+    assert out[0]["occurrences"] == 3
+    assert out[0]["debut"].startswith("rapport automatique du jour")
+
+
+def test_gk_demandes_rend_les_debuts_repetes(tmp_path, capsys, monkeypatch):
+    svc = Service.open(tmp_path / "m.db")
+    # Le gabarit doit partager ses soixante premiers caracteres : c'est ce qui
+    # le distingue d'une question, dont le debut est toujours different.
+    gabarit = "Rapport automatique du jour, genere par la planification : "
+    for i in range(3):
+        svc.request("s1", gabarit + f"cas {i}", platform="discord")
+    svc.request("s1", "une question bien a moi sur les factures", platform="discord")
+    svc.close()
+    monkeypatch.setenv("GK_DATABASE", str(tmp_path / "m.db"))
+    assert cli_main(["--json", "demandes", "--motifs", "5"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["debuts_repetes"][0]["occurrences"] == 3
+
+
+def test_gk_demandes_ne_mentionne_plus_une_troncature_a_200(
+    tmp_path, capsys, monkeypatch
+):
+    """Le libelle `tronquees_a_200` mentait : la troncature est a 1000, et 200
+    n'etait que l'ancienne limite."""
+    svc = Service.open(tmp_path / "t.db")
+    svc.request("s1", "x" * 300, platform="discord")
+    svc.close()
+    monkeypatch.setenv("GK_DATABASE", str(tmp_path / "t.db"))
+    assert cli_main(["--json", "demandes"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert "tronquees_a_200" not in out
+    assert out["au_moins_200_caracteres"] == 1
+    assert out["reellement_tronquees"] == 0
+
+
+def test_une_etiquette_sur_une_tache_planifiee_est_ecartee(tmp_path):
+    """La plateforme n'est connue qu'en base, pas dans le fichier annote."""
+    from gk.jugement import reetalonner
+
+    svc = Service.open(tmp_path / "p.db")
+    Catalog(svc.store).ingest([
+        {"path": "a/gm-f/SKILL.md", "name": "gm-f", "description": "Factures.",
+         "category": "c", "fingerprint": "1"},
+    ], complete=True)
+    svc.request("s1", "le point quotidien des factures", platform="cron")
+    svc.request("s2", "les factures du fournisseur", platform="discord")
+    index = Index.construire(svc.store)
+    cas = relire(
+        f"<!-- gk echantillon v{VERSION} -->\n"
+        "## 1. le point quotidien des factures\n   1. gm-f   [c]  score 9\n"
+        f"{MARQUEUR} 1\n"
+        "\n"
+        "## 2. les factures du fournisseur\n   1. gm-f   [c]  score 9\n"
+        f"{MARQUEUR} 1\n"
+    )
+    out = reetalonner(svc.store, index, cas)
+    svc.close()
+    assert out["etiquettes_reutilisables"] == 1
+    assert out["etiquettes_ecartees_plateforme"] == 1

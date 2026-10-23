@@ -80,6 +80,19 @@ _CONSIGNE = (
 # La liste est volontairement etroite et verifiable : `gk demandes --injections`
 # montre ce qu'elle attrape, pour qu'un motif trop large se voie au lieu de
 # manger des demandes reelles en silence.
+# Les plateformes qui ne portent pas un collegue.
+#
+# **Meilleur filtre que n'importe quel motif de texte, et pour une raison de
+# fond : c'est une donnee structuree et non une devinette.** `gk demandes`
+# compte 77 demandes `cron` sur 494, soit 16 % : ce sont des taches planifiees,
+# pas des questions. Juger GK sur un prompt de cron n'a aucun sens, et les
+# compter dans « aucun skill ne convient » gonfle ce taux d'autant.
+#
+# La premiere version de ce filtre devinait des motifs de texte depuis un
+# rapport. Elle attrapait **0 demande sur 494**. La lecon est gardee : un filtre
+# se tire des donnees, et `gk demandes --motifs` sert a les regarder.
+PLATEFORMES_NON_HUMAINES = ("cron", "scheduler", "timer", "system")
+
 MOTIFS_INJECTION = (
     "skill invoked",
     "background process completed",
@@ -93,12 +106,44 @@ MOTIFS_INJECTION = (
 )
 
 
-def est_injection(texte: str) -> bool:
-    """Vrai si le texte est une injection du systeme et non une demande."""
+def est_injection(texte: str, plateforme: str = "") -> bool:
+    """Vrai si la demande ne vient pas d'un collegue.
+
+    Deux criteres, et le premier est le solide : la **plateforme**, donnee
+    structuree, ecarte les taches planifiees. Les motifs de texte ne sont qu'un
+    filet de secours, et ils n'ont encore rien attrape en production -- ils sont
+    gardes sans etre crus.
+    """
+    if (plateforme or "").strip().lower() in PLATEFORMES_NON_HUMAINES:
+        return True
     bas = (texte or "").lower()
     if not bas.strip():
         return True
     return any(m in bas for m in MOTIFS_INJECTION)
+
+
+def motifs_repetes(
+    textes: list[str], prefixe: int = 60, minimum: int = 2
+) -> list[dict]:
+    """Les debuts de demande qui se repetent, les plus frequents d'abord.
+
+    **Comment trouver un filtre au lieu de le deviner.** Une injection du
+    systeme est un gabarit : elle se repete mot pour mot. Une question de
+    collegue, non. Grouper les demandes par leur debut fait donc remonter les
+    gabarits en tete, et une liste de motifs ecrite ensuite est verifiable
+    plutot que supposee.
+    """
+    groupes: dict[str, int] = {}
+    for t in textes:
+        cle = " ".join((t or "").split())[:prefixe].lower()
+        if not cle:
+            continue
+        groupes[cle] = groupes.get(cle, 0) + 1
+    return [
+        {"debut": k, "occurrences": v}
+        for k, v in sorted(groupes.items(), key=lambda kv: -kv[1])
+        if v >= minimum
+    ]
 
 
 def _une_ligne(texte: str) -> str:
@@ -117,12 +162,17 @@ def preparer(store: Store, index: Index, taille: int = 50, par_page: int = 5) ->
     from .recherche import jetons
 
     rows = store.query(
-        "SELECT session_id, text_truncated, ts FROM requests "
+        "SELECT session_id, text_truncated, ts, platform FROM requests "
         "WHERE text_truncated IS NOT NULL AND text_truncated <> '' "
         "ORDER BY ts DESC LIMIT 1000"
     )
-    ecartees = sum(1 for r in rows if est_injection(r["text_truncated"]))
-    rows = [r for r in rows if not est_injection(r["text_truncated"])]
+    ecartees = sum(
+        1 for r in rows if est_injection(r["text_truncated"], r["platform"])
+    )
+    rows = [
+        r for r in rows
+        if not est_injection(r["text_truncated"], r["platform"])
+    ]
     par_tranche: dict[tuple[int, int], list] = {t: [] for t in TRANCHES}
     for row in rows:
         n = len(jetons(row["text_truncated"]))
@@ -152,9 +202,9 @@ def preparer(store: Store, index: Index, taille: int = 50, par_page: int = 5) ->
         "par longueur, parce qu'une demande courte et une longue ne posent pas le",
         "meme probleme.",
         "",
-        f"<!-- {ecartees} injections du systeme ecartees (bannieres de skill, "
-        "taches de fond, pieces jointes) : aucun skill ne sert une banniere, et "
-        "les juger gonflerait la part « aucun ne convient » -->",
+        f"<!-- {ecartees} demandes ecartees : taches planifiees (plateforme "
+        "`cron`) et bannieres du systeme. Aucun skill ne sert un prompt de "
+        "cron, et les juger gonflerait la part « aucun ne convient » -->",
         "",
         "---",
         "",
@@ -319,15 +369,35 @@ def reetalonner(
 
     # On retrouve session et horodatage pour rejouer le contexte a l'identique.
     rows = store.query(
-        "SELECT session_id, text_truncated, ts FROM requests "
+        "SELECT session_id, text_truncated, ts, platform FROM requests "
         "WHERE text_truncated IS NOT NULL AND text_truncated <> '' "
         "ORDER BY ts DESC LIMIT 2000"
     )
     situe: dict[str, tuple[str, float]] = {}
+    plateformes: dict[str, str] = {}
     for r in rows:
-        situe.setdefault(
-            _une_ligne(r["text_truncated"]), (r["session_id"] or "", r["ts"])
-        )
+        plat = _une_ligne(r["text_truncated"])
+        situe.setdefault(plat, (r["session_id"] or "", r["ts"]))
+        plateformes.setdefault(plat, r["platform"] or "")
+
+    # Une etiquette portant sur une tache planifiee n'est pas une etiquette :
+    # la plateforme n'est connue qu'ici, pas dans le fichier annote.
+    avant_plateforme = len(etqs)
+    etqs = [
+        e for e in etqs
+        if not est_injection(e["demande"], plateformes.get(e["demande"], ""))
+    ]
+    ecartees_plateforme = avant_plateforme - len(etqs)
+    if not etqs:
+        return {
+            "ok": False,
+            "erreur": (
+                "toutes les etiquettes portent sur des demandes non humaines "
+                "(taches planifiees)"
+            ),
+            "cas_lus": len(cas),
+            "etiquettes_ecartees_plateforme": ecartees_plateforme,
+        }
 
     courbe = {k: 0 for k in rangs}
     distribution: dict[str, int] = {}
@@ -368,6 +438,7 @@ def reetalonner(
         "etiquettes_reutilisables": n,
         "reponses_0_non_reutilisables": zeros,
         "injections_ecartees": injections,
+        "etiquettes_ecartees_plateforme": ecartees_plateforme,
         "demandes_avec_contexte": avec_contexte,
         "courbe": {str(k): round(courbe[k] / n, 3) for k in rangs},
         "distribution_des_rangs": distribution,
