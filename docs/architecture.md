@@ -3571,6 +3571,62 @@ actions.** La confrontation ecartait deja 228 evenements sur 993 -- `patched`,
 `edited`, `created`, `stale` -- au motif qu'ils ne sont pas un usage. gb vient
 d'observer le meme phenomene depuis l'autre bout, sans connaitre ce filtre.
 
+## `/gk` fonctionne, et le journal livre mieux que le test
+
+Releve du 2026-10-23, 15:58:48 :
+
+```json
+{"event": "consultation", "session_id": "20261023_155756_076d7a18",
+ "jetons_demandes": 8, "rendu": true}
+```
+
+**Premiere injection du projet**, et toute la chaine a tenu : Discord -> `!gk`
+-> prefixe reconnu -> appel synchrone -> GK repond -> bloc accole a la demande.
+La variable passe par le `env_file` du compose, pas par
+`plugins.entries.<nom>.env` qui n'est pas propage.
+
+### `conversation_history` est dans les kwargs, et ca vaut plus que le test
+
+Le releve du premier appel donne la forme reelle de `pre_llm_call` :
+
+```
+conversation_history, is_first_turn, model, parent_session_id, platform,
+sender_id, session_id, task_id, telemetry_schema_version, turn_id, user_message
+```
+
+**GK reconstruisait un contexte que Hermes lui tend.** `contexte_de_session`
+relit la table `requests` -- trois tours, fenetre de trente minutes, jetons
+ponderes a 0,3 -- alors que le hook porte l'historique de la conversation,
+**reponses de gb comprises**, que GK n'a jamais vues.
+
+Quatre consequences, toutes favorables :
+
+* le contexte devient **autoritatif** au lieu d'etre reconstruit par
+  correlation ;
+* il porte les tours de l'agent, donc le domaine d'une conversation y est bien
+  plus explicite que dans la seule suite des demandes ;
+* **toute la classe de bugs de fuite retrospective disparait** du chemin vif :
+  il n'y a plus rien a reconstruire, donc plus d'ancrage a se tromper ;
+* aucun acces base, donc rien a payer sur le chemin critique.
+
+`is_first_turn` y est aussi, ce qui rend la **regle du silence implementable la
+ou elle doit l'etre** -- la proposition de GM apres annotation a la main, « GK
+est bon pour le premier prompt ». Et `sender_id` ouvrirait une mesure par
+personne.
+
+**A noter sur la methode** : ce releve n'a rien coute. Il vient de
+`_releve_unique`, ecrit en phase 1 parce que deux details de l'API de Hermes
+etaient inconnus et qu'il valait mieux les **lire que les supposer**. Il a deja
+livre `response_text`, qu'aucune des sept premieres suppositions n'avait trouve ;
+il livre maintenant un contexte meilleur que celui qu'on avait construit.
+
+### La boucle d'etiquetage est fermee
+
+`gk consultations` liste les consultations recentes avec leur identifiant et
+leur retour eventuel. Sans elle la boucle etait incomplete : on ne peut pas
+etiqueter une consultation dont on ne connait pas le numero, et **c'est le
+retour, pas la consultation, qui produit la verite terrain**.
+
 ## Points ouverts
 
 Dernière revue : 2026-10-22, après la mise en service partielle de la phase 1

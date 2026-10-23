@@ -677,6 +677,61 @@ def cmd_consulter(args, cfg: Config) -> int:
     return 0
 
 
+def cmd_consultations(args, cfg: Config) -> int:
+    """Les consultations recentes, avec leur identifiant.
+
+    Sans elle, la boucle `/gk` est incomplete : on ne peut pas etiqueter une
+    consultation dont on ne connait pas le numero. Le retour est la seule chose
+    qui transforme un usage en verite terrain.
+    """
+    with Store(cfg.database) as store:
+        lignes = store.query(
+            "SELECT c.id, c.ts, c.session_id, c.skill_name, c.note, "
+            "  r.skill_name AS retour, r.outcome AS verdict "
+            "FROM reports c LEFT JOIN reports r "
+            "  ON r.brief_id = c.id AND r.source = 'human' "
+            "WHERE c.outcome = 'consultation' "
+            "ORDER BY c.ts DESC LIMIT ?",
+            (max(1, args.limite),),
+        )
+        if not lignes:
+            _emit({
+                "ok": False,
+                "erreur": "aucune consultation enregistree",
+                "suite": "depuis Discord : `!gk <ta demande>`",
+            }, args)
+            return 1
+        out = []
+        sans_retour = 0
+        for row in lignes:
+            if row["verdict"] is None:
+                sans_retour += 1
+            out.append({
+                "consultation": row["id"],
+                "demande": " ".join((row["note"] or "").split())[:120],
+                "propose_en_1": row["skill_name"],
+                "retour": (
+                    "aucun ne convient" if row["verdict"] == "aucun_ne_convient"
+                    else (row["retour"] or None)
+                ),
+            })
+        _emit({
+            "ok": True,
+            "consultations": out,
+            "sans_retour": sans_retour,
+            "lecture": [
+                "Chaque consultation sans retour est une etiquette humaine "
+                "perdue : c'est le retour, pas la consultation, qui produit la "
+                "verite terrain.",
+                "Pour en poser un : gk retour <rang|nom|0> --consultation <id>",
+                "`0` veut dire qu'aucun skill de la bibliotheque ne sert la "
+                "demande -- et ce n'est pas un echec de recherche, c'est un "
+                "trou de la bibliotheque.",
+            ],
+        }, args)
+    return 0
+
+
 def cmd_retour(args, cfg: Config) -> int:
     """Le retour humain sur une consultation : une etiquette."""
     svc = Service.open(cfg.database, cfg.patterns)
@@ -2165,6 +2220,13 @@ def build_parser() -> argparse.ArgumentParser:
     co.add_argument("--session", default="", help="identifiant de session")
     co.add_argument("-n", "--limite", type=int, default=5)
     co.set_defaults(func=cmd_consulter)
+
+    cs = sub.add_parser(
+        "consultations",
+        help="les consultations recentes et leur identifiant, pour les etiqueter",
+    )
+    cs.add_argument("-n", "--limite", type=int, default=20)
+    cs.set_defaults(func=cmd_consultations)
 
     rt = sub.add_parser(
         "retour",

@@ -169,3 +169,58 @@ def test_gk_consulter_dit_comment_etiqueter(tmp_path, capsys, monkeypatch):
     assert any("gk retour --consultation" in l for l in out["lecture"])
     assert any("plus dures que la moyenne" in l for l in out["lecture"])
     assert any("Rien n'est injecte" in l for l in out["lecture"])
+
+
+def test_les_consultations_se_listent_avec_leur_identifiant(
+    tmp_path, capsys, monkeypatch
+):
+    """Sans cette commande la boucle est incomplete : on ne peut pas etiqueter
+    une consultation dont on ne connait pas le numero."""
+    s = Service.open(tmp_path / "l.db")
+    Catalog(s.store).ingest([
+        {"path": "a/f/SKILL.md", "name": "gm-factures",
+         "description": "Factures fournisseurs proforma.", "category": "gm",
+         "fingerprint": "1"},
+    ], complete=True)
+    c1 = s.consulter("probleme de factures fournisseurs proforma")
+    c2 = s.consulter("une autre question sur les factures proforma")
+    s.retour(c1["consultation_id"], "1", propositions=["gm-factures"])
+    s.close()
+
+    monkeypatch.setenv("GK_DATABASE", str(tmp_path / "l.db"))
+    assert cli_main(["--json", "consultations"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    par_id = {c["consultation"]: c for c in out["consultations"]}
+    assert par_id[c1["consultation_id"]]["retour"] == "gm-factures"
+    assert par_id[c2["consultation_id"]]["retour"] is None
+    assert out["sans_retour"] == 1
+    assert any("etiquette humaine perdue" in l for l in out["lecture"])
+
+
+def test_un_retour_aucun_ne_convient_se_lit_dans_la_liste(
+    tmp_path, capsys, monkeypatch
+):
+    s = Service.open(tmp_path / "l2.db")
+    Catalog(s.store).ingest([
+        {"path": "a/f/SKILL.md", "name": "gm-factures",
+         "description": "Factures fournisseurs.", "category": "gm",
+         "fingerprint": "1"},
+    ], complete=True)
+    c = s.consulter("probleme de factures fournisseurs")
+    s.retour(c["consultation_id"], "0", propositions=["gm-factures"])
+    s.close()
+    monkeypatch.setenv("GK_DATABASE", str(tmp_path / "l2.db"))
+    assert cli_main(["--json", "consultations"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["consultations"][0]["retour"] == "aucun ne convient"
+    assert out["sans_retour"] == 0
+
+
+def test_sans_consultation_la_commande_renvoie_vers_discord(
+    tmp_path, capsys, monkeypatch
+):
+    Service.open(tmp_path / "l3.db").close()
+    monkeypatch.setenv("GK_DATABASE", str(tmp_path / "l3.db"))
+    assert cli_main(["--json", "consultations"]) == 1
+    out = json.loads(capsys.readouterr().out)
+    assert "!gk" in out["suite"]
