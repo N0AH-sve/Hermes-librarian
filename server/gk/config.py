@@ -21,6 +21,10 @@ DEFAULTS: dict[str, str] = {
     # Les intitules que GK demande au pont de decouper, separes par des
     # virgules. Vide = les valeurs par defaut de `catalog.py`.
     "section_headings": "",
+    # Longueur gardee d'une demande reelle. 41 % des demandes etaient coupees a
+    # 200 ; 1000 couvre la quasi-totalite. L'expiration a 90 jours et
+    # `gk forget` s'appliquent de la meme facon.
+    "request_max_chars": "1000",
     # Bon defaut hors conteneur. Dans un conteneur, le compose impose
     # GK_HOST=0.0.0.0 et c'est la publication du port qui restreint.
     "host": "127.0.0.1",

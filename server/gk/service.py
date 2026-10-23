@@ -17,7 +17,12 @@ import logging
 from dataclasses import dataclass
 
 from .catalog import DEFAULT_HEADINGS, Catalog
-from .corrections import PENDING_SECONDS, Recorder, reconcile_on_start
+from .corrections import (
+    PENDING_SECONDS,
+    REQUEST_MAX_CHARS,
+    Recorder,
+    reconcile_on_start,
+)
 from .patterns import Detector
 from .store import Store, now
 
@@ -36,6 +41,7 @@ class Service:
     catalog_: Catalog
     require_token: bool = False
     headings: tuple[str, ...] = DEFAULT_HEADINGS
+    request_max_chars: int = REQUEST_MAX_CHARS
 
     @classmethod
     def open(
@@ -44,6 +50,7 @@ class Service:
         patterns_path=None,
         require_token: bool = False,
         headings: tuple[str, ...] | None = None,
+        request_max_chars: int = REQUEST_MAX_CHARS,
     ) -> "Service":
         store = Store(database)
         reconcile_on_start(store)
@@ -54,6 +61,7 @@ class Service:
             catalog_=Catalog(store),
             require_token=require_token,
             headings=tuple(headings) if headings else DEFAULT_HEADINGS,
+            request_max_chars=max(50, int(request_max_chars or REQUEST_MAX_CHARS)),
         )
 
     def reload_patterns(self, patterns_path) -> str:
@@ -125,6 +133,7 @@ class Service:
         request_id = self.recorder.record_request(
             session_id or "", text, turn_id=turn_id or "",
             is_first_turn=is_first_turn, platform=platform or "",
+            limite=self.request_max_chars,
         )
         # Aucun contenu n'est rendu : la phase d'observation ne doit pas pouvoir
         # devenir une injection par accident.

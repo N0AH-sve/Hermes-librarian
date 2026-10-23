@@ -16,7 +16,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "server"))
 
 from gk.cli import main as cli_main  # noqa: E402
-from gk.corrections import REQUEST_TTL_SECONDS, tidy  # noqa: E402
+from gk.corrections import REQUEST_MAX_CHARS, REQUEST_TTL_SECONDS, tidy  # noqa: E402
 from gk.service import Service  # noqa: E402
 from gk.store import Store, now  # noqa: E402
 
@@ -49,10 +49,29 @@ def test_une_demande_vide_ou_absurde_ne_leve_pas(svc):
 # -- la retention ----------------------------------------------------------
 
 
-def test_le_texte_est_tronque_a_200_caracteres(svc):
-    svc.request("s", "x" * 500)
+def test_le_texte_est_tronque_a_la_longueur_configuree(svc, tmp_path):
+    """Releve du 2026-10-23 : sur 240 demandes reelles, mediane 112 caracteres
+    mais 98 coupees a 200, soit 41 %. La mesure portait donc sur des demandes
+    mutilees. La limite est montee a 1000 et rendue configurable."""
+    svc.request("s", "x" * 5000)
     row = svc.store.one("SELECT text_truncated FROM requests")
-    assert len(row["text_truncated"]) == 200
+    assert len(row["text_truncated"]) == REQUEST_MAX_CHARS == 1000
+
+    court = Service.open(tmp_path / "court.db", request_max_chars=120)
+    try:
+        court.request("s", "y" * 500)
+        assert len(court.store.one("SELECT text_truncated FROM requests")[
+            "text_truncated"
+        ]) == 120
+    finally:
+        court.close()
+
+    # Un plancher, pour qu'une configuration absurde ne vide pas la mesure.
+    plancher = Service.open(tmp_path / "plancher.db", request_max_chars=0)
+    try:
+        assert plancher.request_max_chars == REQUEST_MAX_CHARS
+    finally:
+        plancher.close()
 
 
 def test_la_demande_expire_et_le_compteur_reste(svc):

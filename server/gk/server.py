@@ -214,6 +214,7 @@ def run(config: Config | None = None) -> None:
         cfg.patterns,
         require_token=bool(cfg["bridge_token"]),
         headings=_intitules(cfg),
+        request_max_chars=int(cfg["request_max_chars"] or 1000),
     )
     server = build(service, cfg)
     app = server.streamable_http_app(streamable_http_path=cfg["bridge_path"])

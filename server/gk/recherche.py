@@ -300,6 +300,117 @@ class Index:
             return skill.champs.get("exemples") or set()
         return set(jetons("\n".join(gardees)))
 
+    # -- diagnostic d'un echec ----------------------------------------------
+
+    def jetons_apparies(
+        self, skill: Skill, jetons_demande: list[str], exclure_exemple: str | None = None
+    ) -> set[str]:
+        """Les jetons de la demande que ce skill porte, tous champs confondus."""
+        porte: set[str] = set()
+        for champ, presents in skill.champs.items():
+            if champ == "exemples" and exclure_exemple is not None:
+                presents = self._exemples_sans(skill, exclure_exemple)
+            porte |= presents
+        return {j for j in jetons_demande if j in porte}
+
+    def diagnostic(
+        self, demande: str, attendu: str, exclure_exemple: str | None = None,
+        limite: int = 5,
+    ) -> dict:
+        """Pourquoi un cas echoue, et **quel remede** s'applique.
+
+        "88 echecs de classement" est un tas indifferencie, et les remedes sont
+        opposes. Trois causes, dans l'ordre ou elles s'excluent :
+
+        * `texte_absent` — le skill attendu ne marque **aucun point**. Les mots
+          de la demande n'existent nulle part dans son texte : c'est de la
+          REDACTION, et aucun coefficient n'y changera rien ;
+        * `texte_domine` — le gagnant porte **tous** les jetons que porte
+          l'attendu, et au moins un de plus. Aucune ponderation ne peut inverser
+          cela sans casser tout le reste : REDACTION encore ;
+        * `ordre` — les deux portent des jetons differents, mais le classement
+          se trompe. C'est la seule cause que le SCORE peut corriger.
+
+        Ce decoupage borne la valeur du reglage : si la majorite des echecs sont
+        du texte, regler les coefficients ne sert presque a rien.
+        """
+        jetons_demande = jetons(demande)
+        resultats = self.chercher(
+            demande, limite=max(limite, 10), exclure_exemple=exclure_exemple
+        )
+        noms = [r["name"] for r in resultats]
+        rang = noms.index(attendu) + 1 if attendu in noms else None
+        if rang is not None and rang <= limite:
+            return {"cause": None, "rang": rang}
+        par_nom = {s.name: s for s in self.skills}
+        cible = par_nom.get(attendu)
+        if cible is None:
+            return {"cause": "skill_inconnu", "rang": None}
+        porte_cible = self.jetons_apparies(cible, jetons_demande, exclure_exemple)
+        if not porte_cible:
+            return {
+                "cause": "texte_absent", "remede": "redaction", "rang": rang,
+                "jetons_demande": len(jetons_demande), "jetons_portes": 0,
+            }
+        gagnant = par_nom.get(noms[0]) if noms else None
+        if gagnant is not None:
+            porte_gagnant = self.jetons_apparies(gagnant, jetons_demande, exclure_exemple)
+            if porte_cible < porte_gagnant:
+                return {
+                    "cause": "texte_domine", "remede": "redaction", "rang": rang,
+                    "gagnant": gagnant.name,
+                    "jetons_portes": len(porte_cible),
+                    "jetons_du_gagnant": len(porte_gagnant),
+                }
+        return {
+            "cause": "ordre", "remede": "score", "rang": rang,
+            "gagnant": noms[0] if noms else None,
+            "jetons_portes": len(porte_cible),
+        }
+
+    # -- paires que rien ne separe -------------------------------------------
+
+    def confusions(self, seuil: float = 0.6) -> list[dict]:
+        """Les paires de skills dont les textes sont trop proches pour être
+        départagés.
+
+        Ce n'est pas un défaut de GK : si deux textes ne se distinguent pas,
+        aucun index ne les distinguera. C'est un défaut de la bibliothèque, et
+        GK est bien placé pour le signaler.
+
+        La moitié négative des déclencheurs **est** le mécanisme de
+        désambiguïsation prévu par la conception. Une paire confuse dont aucun
+        des deux ne porte d'interdiction est donc une paire où le mécanisme
+        existe et n'a pas été utilisé : c'est là que l'écriture rapporte le plus.
+        """
+        sacs = []
+        for skill in self.skills:
+            sac: set[str] = set()
+            for presents in skill.champs.values():
+                sac |= presents
+            if len(sac) >= 3:
+                sacs.append((skill, sac))
+        paires: list[dict] = []
+        for i, (a, sac_a) in enumerate(sacs):
+            for b, sac_b in sacs[i + 1:]:
+                commun = len(sac_a & sac_b)
+                if not commun:
+                    continue
+                jaccard = commun / len(sac_a | sac_b)
+                if jaccard < seuil:
+                    continue
+                paires.append({
+                    "skills": sorted((a.name, b.name)),
+                    "proximite": round(jaccard, 3),
+                    "jetons_communs": commun,
+                    # Le point qui rend la ligne actionnable.
+                    "interdiction": sorted(
+                        nom for nom, s in ((a.name, a), (b.name, b)) if s.negatif
+                    ),
+                })
+        paires.sort(key=lambda p: -p["proximite"])
+        return paires
+
     # -- le corpus du banc ---------------------------------------------------
 
     def information(self, demande: str) -> float:

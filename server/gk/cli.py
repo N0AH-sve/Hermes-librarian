@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from collections import Counter
 import re
 import sys
 from pathlib import Path
@@ -437,6 +438,11 @@ def cmd_banc(args, cfg: Config) -> int:
         # redaction. Le second dit que le classement se trompe, ce qui est une
         # remarque sur le score.
         aucun = mauvais = 0
+        # La decomposition des echecs par REMEDE. "88 echecs" est un tas
+        # indifferencie, et les remedes sont opposes : la redaction d'un cote,
+        # le score de l'autre. Ce decoupage borne la valeur du reglage.
+        causes: Counter = Counter()
+        par_cause: dict[str, list[dict]] = {}
         for (demande, attendu, ligne), info in zip(cas, informations):
             metier = categorie.get(attendu) == "greenmusic"
             etiquettes = [
@@ -463,6 +469,18 @@ def cmd_banc(args, cfg: Config) -> int:
                         mauvais += 1
                     else:
                         aucun += 1
+                    diag = index.diagnostic(
+                        demande, attendu, exclure_exemple=ligne, limite=args.limite
+                    )
+                    cause = diag.get("cause") or "indetermine"
+                    causes[cause] += 1
+                    exemples = par_cause.setdefault(cause, [])
+                    if len(exemples) < 3:
+                        exemples.append({
+                            "demande": demande, "attendu": attendu, **{
+                                c: v for c, v in diag.items() if c != "cause"
+                            },
+                        })
                     if len(echecs) < args.echecs:
                         echecs.append({
                             "demande": demande, "attendu": attendu,
@@ -500,6 +518,12 @@ def cmd_banc(args, cfg: Config) -> int:
         out["gain_mrr_des_declencheurs"] = round(gain, 3)
         out["echecs_sans_aucun_resultat"] = aucun
         out["echecs_mauvais_skill"] = mauvais
+        out["echecs_par_cause"] = dict(causes.most_common())
+        out["echecs_par_remede"] = {
+            "redaction": causes["texte_absent"] + causes["texte_domine"],
+            "score": causes["ordre"],
+        }
+        out["exemples_par_cause"] = par_cause
         out["lecture"] = _lire_banc(out, gain)
         out["echecs"] = echecs
         _emit(out, args)
@@ -608,6 +632,27 @@ def _lire_banc(out: dict, gain: float) -> list[str]:
             "cette lecture affirmait le contraire, et les donnees la "
             "contredisaient."
         )
+    remede = out.get("echecs_par_remede") or {}
+    red, sco = remede.get("redaction", 0), remede.get("score", 0)
+    if red or sco:
+        total_echecs = red + sco
+        part = 100.0 * red / total_echecs if total_echecs else 0.0
+        lignes.append(
+            f"Sur {total_echecs} echecs : {red} relevent de la REDACTION "
+            f"({part:.0f} %) et {sco} du SCORE. Un echec de redaction est un "
+            "skill dont les mots de la demande sont absents, ou domines par ceux "
+            "d'un concurrent -- aucun coefficient n'y changera rien."
+        )
+        if part >= 60:
+            lignes.append(
+                "=> Regler les coefficients ne peut corriger qu'une minorite des "
+                "echecs. Le plafond est dans la bibliotheque, pas dans le moteur."
+            )
+        elif part <= 30:
+            lignes.append(
+                "=> La majorite des echecs est un probleme de classement : le "
+                "reglage du score a de la marge."
+            )
     aucun = out.get("echecs_sans_aucun_resultat", 0)
     mauvais = out.get("echecs_mauvais_skill", 0)
     if aucun or mauvais:
@@ -619,6 +664,41 @@ def _lire_banc(out: dict, gain: float) -> list[str]:
             "une remarque sur le SCORE."
         )
     return lignes
+
+
+def cmd_confusions(args, cfg: Config) -> int:
+    """Les paires de skills trop proches pour etre departagees.
+
+    Ce n'est pas un defaut de GK : si deux textes ne se distinguent pas, aucun
+    index ne les distinguera. C'est un defaut de la bibliotheque, et la moitie
+    negative des declencheurs est le mecanisme prevu pour le corriger.
+    """
+    with Store(cfg.database) as store:
+        index = Index.construire(store)
+        if index.n == 0:
+            _emit({"ok": False, "erreur": "catalogue vide, voir `gk catalogue`"}, args)
+            return 1
+        paires = index.confusions(seuil=args.seuil)
+        sans_interdiction = [p for p in paires if not p["interdiction"]]
+        _emit({
+            "ok": True,
+            "skills_indexes": index.n,
+            "seuil": args.seuil,
+            "paires": len(paires),
+            "paires_sans_aucune_interdiction": len(sans_interdiction),
+            "detail": paires[: max(1, args.limite)],
+            "lecture": [
+                "La moitie negative des declencheurs EST le mecanisme de "
+                "desambiguisation prevu par la conception.",
+                f"{len(sans_interdiction)} paires sur {len(paires)} n'ont "
+                "d'interdiction d'aucun cote : le mecanisme existe et n'a pas "
+                "ete utilise. C'est la que l'ecriture rapporte le plus.",
+            ] if paires else [
+                f"Aucune paire au-dela de {args.seuil} de proximite : la "
+                "bibliotheque se distingue bien d'elle-meme a ce seuil."
+            ],
+        }, args)
+    return 0
 
 
 def cmd_demandes(args, cfg: Config) -> int:
@@ -881,6 +961,14 @@ def build_parser() -> argparse.ArgumentParser:
     b.add_argument("-n", "--limite", type=int, default=5, help="rang maximal compte")
     b.add_argument("--echecs", type=int, default=5, help="nombre d'echecs a montrer")
     b.set_defaults(func=cmd_banc)
+
+    cf = sub.add_parser(
+        "confusions",
+        help="les paires de skills que leurs textes ne separent pas",
+    )
+    cf.add_argument("--seuil", type=float, default=0.6, help="proximite minimale")
+    cf.add_argument("-n", "--limite", type=int, default=15)
+    cf.set_defaults(func=cmd_confusions)
 
     dm = sub.add_parser(
         "demandes",

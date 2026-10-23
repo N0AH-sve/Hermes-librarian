@@ -520,3 +520,102 @@ def test_le_banc_rend_le_bras_normalise(tmp_path, capsys, monkeypatch):
     assert "normalise_par_longueur" in out
     for bloc in out["par_population"].values():
         assert "mrr_normalise" in bloc
+
+
+# -- la decomposition des echecs ------------------------------------------
+
+
+def test_le_diagnostic_distingue_redaction_et_score(tmp_path):
+    """« 88 echecs » est un tas indifferencie, et les remedes sont opposes : la
+    redaction d'un cote, le score de l'autre. Ce decoupage borne la valeur du
+    reglage des coefficients."""
+    store = Store(tmp_path / "dg.db")
+    peupler(store, {
+        "gm-absent": ("Rien a voir avec la demande.", []),
+        "gm-domine": ("proforma.", []),
+        "gm-dominant": ("proforma fournisseur facture port.", []),
+        "gm-ordre": ("zorglub particulier.", []),
+        "gm-concurrent": ("zorglub autre chose.", []),
+    })
+    index = Index.construire(store)
+    try:
+        # Aucun jeton porte : c'est de la redaction.
+        d = index.diagnostic("proforma fournisseur", "gm-absent")
+        assert d["cause"] == "texte_absent" and d["remede"] == "redaction"
+        assert d["jetons_portes"] == 0
+
+        # Le gagnant porte tout ce que porte l'attendu, et plus : redaction
+        # aussi, aucun coefficient ne peut inverser cela.
+        d = index.diagnostic("proforma fournisseur facture", "gm-domine", limite=1)
+        assert d["cause"] == "texte_domine" and d["remede"] == "redaction"
+        assert d["gagnant"] == "gm-dominant"
+        assert d["jetons_du_gagnant"] > d["jetons_portes"]
+    finally:
+        store.close()
+
+
+def test_le_diagnostic_ne_dit_rien_quand_le_cas_reussit(tmp_path):
+    store = Store(tmp_path / "ok.db")
+    peupler(store, BIBLIOTHEQUE)
+    index = Index.construire(store)
+    try:
+        d = index.diagnostic("proforma", "gm-supplier-invoice-control")
+        assert d["cause"] is None and d["rang"] == 1
+    finally:
+        store.close()
+
+
+def test_le_banc_decompose_les_echecs_par_remede(tmp_path, capsys, monkeypatch):
+    store = Store(tmp_path / "db.db")
+    peupler(store, BIBLIOTHEQUE)
+    store.close()
+    monkeypatch.setenv("GK_DATABASE", str(tmp_path / "db.db"))
+    assert cli_main(["--json", "banc"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert "echecs_par_cause" in out
+    assert set(out["echecs_par_remede"]) == {"redaction", "score"}
+    assert out["echecs_par_remede"]["redaction"] + out["echecs_par_remede"]["score"] \
+        <= out["echecs_mauvais_skill"] + out["echecs_sans_aucun_resultat"]
+
+
+# -- les paires que rien ne separe ----------------------------------------
+
+
+def test_les_paires_trop_proches_sont_signalees(tmp_path, capsys, monkeypatch):
+    """Si deux textes ne se distinguent pas, aucun index ne les distinguera.
+    C'est un defaut de la bibliotheque, et la moitie negative des declencheurs
+    est le mecanisme prevu pour le corriger."""
+    store = Store(tmp_path / "cf.db")
+    peupler(store, {
+        "baoyu-comic": ("Planches dessinees style visuel narratif.",
+                        [("Déclencheurs", "- « style planche visuel narratif »")]),
+        "baoyu-infographic": ("Planches dessinees style visuel narratif.",
+                              [("Déclencheurs", "- « style planche visuel narratif »")]),
+        "gm-distinct": ("Factures fournisseurs proforma Qonto.", []),
+    })
+    store.close()
+    monkeypatch.setenv("GK_DATABASE", str(tmp_path / "cf.db"))
+    assert cli_main(["--json", "confusions"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["paires"] >= 1
+    paire = out["detail"][0]
+    assert paire["skills"] == ["baoyu-comic", "baoyu-infographic"]
+    assert paire["interdiction"] == [], "ni l'un ni l'autre n'a d'interdiction"
+    assert out["paires_sans_aucune_interdiction"] >= 1
+    assert any("n'a pas ete utilise" in l for l in out["lecture"])
+
+
+def test_une_interdiction_est_signalee_sur_la_paire(tmp_path, capsys, monkeypatch):
+    store = Store(tmp_path / "ci.db")
+    peupler(store, {
+        "a-skill": ("Texte commun partage entierement.",
+                    [("Déclencheurs", "- « commun partage »\nNe pas charger pour b.")]),
+        "b-skill": ("Texte commun partage entierement.",
+                    [("Déclencheurs", "- « commun partage »")]),
+    })
+    store.close()
+    monkeypatch.setenv("GK_DATABASE", str(tmp_path / "ci.db"))
+    assert cli_main(["--json", "confusions"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["detail"][0]["interdiction"] == ["a-skill"]
+    assert out["paires_sans_aucune_interdiction"] == 0

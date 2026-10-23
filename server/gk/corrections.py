@@ -34,6 +34,14 @@ EXTRACT_TTL_SECONDS = 90 * 86400.0
 REQUEST_TTL_SECONDS = 90 * 86400.0
 USE_DETAIL_TTL_SECONDS = 30 * 86400.0
 REQUEST_TRUNCATE_CHARS = 200
+# Les demandes reelles sont gardees plus longues que les extraits.
+#
+# Releve du 2026-10-23 : sur 240 demandes reelles, mediane 112 caracteres mais
+# **98 coupees a 200**, soit 41 %. La fin de deux demandes sur cinq etait perdue,
+# donc la mesure portait sur des demandes mutilees. C'est une decision de
+# donnees, prise par GM : on garde plus de texte, avec la meme expiration a 90
+# jours et le meme effacement par `gk forget`.
+REQUEST_MAX_CHARS = 1000
 
 BAD_RECOMMENDATION = "bad_recommendation"
 BRIEF_IGNORED = "brief_ignored"
@@ -85,20 +93,21 @@ class Recorder:
         turn_id: str = "",
         is_first_turn: bool | None = None,
         platform: str = "",
+        limite: int = REQUEST_MAX_CHARS,
     ) -> int:
         """Enregistre une demande d'utilisateur, tronquee.
 
         GK n'avait jamais vu de demande reelle avant le 2026-10-22 : tout ce qui
         avait ete mesure venait de textes ecrits par les auteurs des skills. Le
-        texte est tronque a 200 caracteres et expire au bout de 90 jours ; le
-        compteur, sans texte, reste sans limite.
+        texte est tronque (1000 caracteres par defaut, configurable) et expire
+        au bout de 90 jours ; le compteur, sans texte, reste sans limite.
         """
         ts = now()
         cur = self.store.execute(
             "INSERT INTO requests (ts, session_id, turn_id, text_truncated, "
             "is_first_turn, platform, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
             (
-                ts, session_id or "", turn_id or "", truncate(text),
+                ts, session_id or "", turn_id or "", truncate(text, limite),
                 None if is_first_turn is None else int(bool(is_first_turn)),
                 platform or "", ts + REQUEST_TTL_SECONDS,
             ),
