@@ -3508,6 +3508,69 @@ commence par le prefixe, rien sinon, et un test par propriete -- comme pour
 l'observation seule. Un drapeau de configuration par defaut a l'arret, pour que
 rien ne s'active par accident lors d'une mise a jour.
 
+## Hermes ne propage pas `plugins.entries.<nom>.env`
+
+Releve le 2026-10-23, en branchant `/gk`. **Inconnue tranchee, et par la
+negative.**
+
+La variable `GK_CONSULTATION: "1"` est bien dans `config.yaml`, sous
+`plugins.entries.gk-bridge.env`, validee par relecture YAML. Le pont la lit par
+`os.environ` a l'import. Resultat dans le journal :
+
+```json
+{"event": "consultation_desactivee", "session_id": "20261023_134712_92b72281"}
+```
+
+Le prefixe est reconnu, le pont arrive jusqu'au controle, **la variable n'est pas
+dans l'environnement du processus**. Hermes v2026.9.21 lit donc cette clef pour
+autre chose, ou pas du tout.
+
+**Le repli** : poser la variable sur le service `hermes` du compose, ou dans son
+`env_file`. C'est le processus de l'agent qui lit `os.environ`, donc n'importe
+quelle voie qui l'atteint convient.
+
+### Et `/` est reserve par le routeur de commandes
+
+Premier essai depuis Discord : `/gk ...` n'arrive **jamais** au modele. Le
+routeur de Hermes repond lui-meme « Unknown command `/gk`. Type /commands ». Le
+message ne devient pas un message d'utilisateur, donc `pre_llm_call` ne voit
+rien.
+
+L'indice etait dans les logs de demarrage, lu sans en tirer la conclusion :
+
+```
+agent.skill_commands: Skill 'plan' generates slash command '/plan'
+which collides with a core Hermes command; skipping auto-registration
+```
+
+Hermes a un registre de commandes slash, et **un skill nomme `gk` enregistrerait
+`/gk` tout seul**. Ce serait une integration plus propre : commande native,
+visible dans `/commands`, aucun prefixe exotique a retenir. Le mecanisme serait
+different -- gb chargerait un skill `gk` dont le contenu lui dit d'appeler
+l'outil MCP `consulter` -- et il reste compatible avec le refus de l'etape 2,
+puisque c'est l'humain qui tape la commande : gb n'y choisit rien, il y est
+force.
+
+`!gk` et `gk:` passent, eux, puisqu'ils ne sont pas des commandes slash. Les
+trois prefixes etaient prevus, et c'est le seul endroit de la journee ou avoir
+prevu large a servi.
+
+### Les evenements d'ecriture mal attribues, confirmes de l'exterieur
+
+gb signale trois evenements `patched`, `patched`, `edited` sur
+`gk-observation-service` attribues a sa session, **sans aucun `skill_manage` de
+sa part**.
+
+C'est la faiblesse d'attribution deja consignee : `on_skill_lifecycle` ne porte
+pas de `turn_id`, donc un evenement est rattache a une session **par
+correlation temporelle**. Un evenement venu d'un autre acteur dans la meme
+fenetre atterrit sur la session active.
+
+**C'est une confirmation independante du defaut qui avait fait filtrer ces
+actions.** La confrontation ecartait deja 228 evenements sur 993 -- `patched`,
+`edited`, `created`, `stale` -- au motif qu'ils ne sont pas un usage. gb vient
+d'observer le meme phenomene depuis l'autre bout, sans connaitre ce filtre.
+
 ## Points ouverts
 
 Dernière revue : 2026-10-22, après la mise en service partielle de la phase 1
