@@ -677,6 +677,97 @@ def cmd_consulter(args, cfg: Config) -> int:
     return 0
 
 
+def cmd_verdicts(args, cfg: Config) -> int:
+    """Le triplet complet : la demande, ce que GK proposait, ce que gb a charge.
+
+    **C'est ce qui permet de lire un retour de trois mots.** Un collegue dit
+    « ca m'a servi » ou « a cote » : il ne sait pas quel skill a ete charge, il
+    ne le voit pas, et il y en a 186. Le rang se retrouve ici, en croisant sa
+    phrase avec les deux listes.
+
+    Deux familles de verdicts, rendues separement parce qu'elles ne mesurent pas
+    la meme chose : `servi` / `a_cote` portent **la reponse de gb de bout en
+    bout**, un rang ou un nom portent **la justesse de GK**. Les additionner
+    produirait un chiffre qui ne veut rien dire.
+    """
+    with Store(cfg.database) as store:
+        lignes = store.query(
+            "SELECT c.id, c.ts, c.session_id, c.note, c.skill_name AS proposes, "
+            "  r.outcome AS verdict, r.skill_name AS designe "
+            "FROM reports c JOIN reports r "
+            "  ON r.brief_id = c.id AND r.source = 'human' "
+            "WHERE c.outcome = 'consultation' "
+            "  AND COALESCE(c.session_id, '') <> '' "
+            "ORDER BY c.ts DESC LIMIT ?",
+            (max(1, args.limite),),
+        )
+        if not lignes:
+            _emit({
+                "ok": False,
+                "erreur": "aucun verdict humain enregistre",
+                "suite": "gk consultations pour voir celles qui en attendent un",
+            }, args)
+            return 1
+        out = []
+        de_bout_en_bout = {"servi": 0, "a_cote": 0, "inconnu": 0}
+        rangs: dict[str, int] = {}
+        trous = 0
+        for row in lignes:
+            proposes = [n for n in (row["proposes"] or "").split(",") if n]
+            # Ce que gb a charge entre la consultation et la demande suivante
+            # de la meme session. Correlation et non verite : les deux hooks ne
+            # partagent aucune clef.
+            charges = [
+                u["skill_name"] for u in store.query(
+                    "SELECT DISTINCT skill_name FROM skill_uses "
+                    "WHERE session_id = ? AND ts >= ? AND ts <= ? "
+                    "AND action IN ('loaded', 'reused', 'load', 'reuse') "
+                    "ORDER BY ts",
+                    (row["session_id"], row["ts"], row["ts"] + args.fenetre),
+                )
+            ]
+            verdict = row["verdict"]
+            rang = None
+            if verdict == "bon_skill" and row["designe"] in proposes:
+                rang = proposes.index(row["designe"]) + 1
+                rangs[str(rang)] = rangs.get(str(rang), 0) + 1
+            elif verdict == "bon_skill":
+                rangs["hors"] = rangs.get("hors", 0) + 1
+            elif verdict == "aucun_ne_convient":
+                trous += 1
+            elif verdict in de_bout_en_bout:
+                de_bout_en_bout[verdict] += 1
+            out.append({
+                "consultation": row["id"],
+                "demande": " ".join((row["note"] or "").split())[:110],
+                "gk_proposait": proposes,
+                "gb_a_charge": charges or None,
+                "verdict": verdict,
+                "skill_designe": row["designe"],
+                "rang_du_bon": rang,
+            })
+        _emit({
+            "ok": True,
+            "verdicts": out,
+            "de_bout_en_bout": de_bout_en_bout,
+            "rangs_quand_le_skill_est_designe": rangs,
+            "trous_de_bibliotheque": trous,
+            "lecture": [
+                "Deux familles de verdicts, et elles ne mesurent PAS la meme "
+                "chose : `servi` / `a_cote` portent la reponse de gb de bout en "
+                "bout, un rang ou un nom portent la justesse de GK. Les "
+                "additionner produirait un chiffre vide.",
+                "`gb_a_charge` est une CORRELATION par session et par temps : "
+                "`on_skill_lifecycle` ne porte pas de `turn_id`, donc un "
+                "evenement d'un autre acteur dans la meme fenetre atterrit ici.",
+                "Un verdict `servi` avec un seul skill charge, present dans les "
+                "propositions de GK, est le cas le plus informatif : on y lit "
+                "le rang sans avoir rien demande au collegue.",
+            ],
+        }, args)
+    return 0
+
+
 def cmd_consultations(args, cfg: Config) -> int:
     """Les consultations recentes, avec leur identifiant.
 
@@ -713,7 +804,10 @@ def cmd_consultations(args, cfg: Config) -> int:
                 # L'etiqueter mettrait un doublon d'essai dans le corpus.
                 "origine": "essai_cli" if not (row["session_id"] or "") else "agent",
                 "demande": " ".join((row["note"] or "").split())[:120],
-                "propose_en_1": row["skill_name"],
+                # `skill_name` porte la liste complete, separee par des
+                # virgules : c'est elle qui permet de retrouver le rang quand
+                # un collegue dit seulement « ca m'a servi ».
+                "propositions": (row["skill_name"] or "").split(",") or None,
                 "retour": (
                     "aucun ne convient" if row["verdict"] == "aucun_ne_convient"
                     else (row["retour"] or None)
@@ -728,7 +822,12 @@ def cmd_consultations(args, cfg: Config) -> int:
                 "Chaque consultation sans retour est une etiquette humaine "
                 "perdue : c'est le retour, pas la consultation, qui produit la "
                 "verite terrain.",
-                "Pour en poser un : gk retour <rang|nom|0> --consultation <id>",
+                "Pour en poser un : `gk retour servi --consultation 2`, ou "
+                "`a-cote`, ou `inconnu`. Un collegue ne sait pas quel skill a "
+                "ete charge : il juge la reponse, pas le classement.",
+                "Si vous connaissez la bibliotheque, un rang ou un nom de skill "
+                "marche aussi, et mesure autre chose -- la justesse de GK au "
+                "lieu de la reponse de bout en bout.",
                 "`0` veut dire qu'aucun skill de la bibliotheque ne sert la "
                 "demande -- et ce n'est pas un echec de recherche, c'est un "
                 "trou de la bibliotheque.",
@@ -2232,6 +2331,17 @@ def build_parser() -> argparse.ArgumentParser:
     co.add_argument("--session", default="", help="identifiant de session")
     co.add_argument("-n", "--limite", type=int, default=5)
     co.set_defaults(func=cmd_consulter)
+
+    vd = sub.add_parser(
+        "verdicts",
+        help="le triplet demande / propositions de GK / skills charges par gb",
+    )
+    vd.add_argument("-n", "--limite", type=int, default=30)
+    vd.add_argument(
+        "--fenetre", type=float, default=300.0,
+        help="fenetre en secondes pour rattacher un chargement (defaut %(default)s)",
+    )
+    vd.set_defaults(func=cmd_verdicts)
 
     cs = sub.add_parser(
         "consultations",

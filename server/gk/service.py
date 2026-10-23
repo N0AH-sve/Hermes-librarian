@@ -275,8 +275,18 @@ class Service:
         ]
         # La consultation est tracee pour qu'un retour puisse s'y rattacher :
         # sans ce lien, « c'etait le bon » ne designerait rien.
+        #
+        # `skill_name` porte **la liste complete** des propositions, separees
+        # par des virgules, et non la seule premiere. C'est elle qui permet de
+        # retrouver a quel rang se trouvait le bon skill quand un collegue dit
+        # seulement « ca m'a servi » -- il ne connait pas les 186 noms, donc on
+        # ne peut pas lui demander de nommer.
+        #
+        # Pourquoi ici et pas dans `briefs`, qui a une colonne `skills` faite
+        # pour ca : les briefs expirent a sept jours, et une etiquette humaine
+        # est la donnee la plus couteuse du projet. Elle ne doit pas expirer.
         consultation_id = self.recorder.record_report(
-            skill_name=(propositions[0]["name"] if propositions else None),
+            skill_name=",".join(p["name"] for p in propositions) or None,
             outcome="consultation",
             source="hook",
             session_id=session_id,
@@ -310,6 +320,46 @@ class Service:
         brut = (choix or "").strip()
         if not brut:
             return {"v": 1, "ok": False, "erreur": "choix_vide"}
+
+        # Deux grammaires, et la premiere est celle des collegues.
+        #
+        # **Un collegue ne sait pas quel skill a ete charge** : il ne le voit
+        # pas, et il y en a 186. Lui demander d'en nommer un n'avait aucun sens,
+        # et c'est le defaut que GM a releve en relisant la note de consignes.
+        # Il juge donc ce qu'il a sous les yeux -- la reponse de gb -- et le lien
+        # avec le skill se fait de notre cote, par la liste des propositions
+        # gardee sur la consultation.
+        #
+        # La seconde grammaire reste : un rang ou un nom, pour qui connait la
+        # bibliotheque. Les deux ne mesurent pas la meme chose, et
+        # `gk verdicts` les rend separement plutot que de les additionner.
+        verdicts = {
+            "servi": "servi", "sert": "servi", "oui": "servi", "bon": "servi",
+            "a-cote": "a_cote", "a_cote": "a_cote", "acote": "a_cote",
+            "non": "a_cote", "mauvais": "a_cote", "rate": "a_cote",
+            "inconnu": "inconnu", "?": "inconnu", "sais-pas": "inconnu",
+            "rien": "aucun_ne_convient", "aucun": "aucun_ne_convient",
+        }
+        bas = brut.lower()
+        if bas in verdicts:
+            verdict = verdicts[bas]
+            report_id = self.recorder.record_report(
+                skill_name=None,
+                outcome=verdict,
+                source="human",
+                session_id=session_id,
+                note=(f"consultation {consultation_id}" if consultation_id else None),
+                brief_id=consultation_id,
+            )
+            return {
+                "v": 1, "ok": True, "report_id": report_id,
+                "verdict": verdict, "etiquette": None,
+                "porte": (
+                    "la reponse de gb de bout en bout, pas le rang de GK"
+                    if verdict in ("servi", "a_cote") else "rien a mesurer"
+                ),
+            }
+
         nom = None
         if brut.isdigit():
             rang = int(brut)
@@ -329,7 +379,11 @@ class Service:
             note=(f"consultation {consultation_id}" if consultation_id else None),
             brief_id=consultation_id,
         )
-        return {"v": 1, "ok": True, "report_id": report_id, "etiquette": nom}
+        return {
+            "v": 1, "ok": True, "report_id": report_id, "etiquette": nom,
+            "verdict": ("aucun_ne_convient" if nom is None else "bon_skill"),
+            "porte": "le rang de GK, donc sa justesse",
+        }
 
     def catalog(self, skills: list[dict], complete: bool = False) -> dict:
         """Recoit le manifeste et rend la liste des tranches voulues.

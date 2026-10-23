@@ -266,3 +266,115 @@ def test_un_essai_en_ligne_de_commande_est_distingue(tmp_path, capsys, monkeypat
     assert cli_main(["etiquettes", "--annotateur", "Noah"]) == 0
     texte = capsys.readouterr().out
     assert texte.count("REPONSE:") == 1, texte
+
+
+# -- les verdicts d'un collegue --------------------------------------------
+
+
+def test_un_collegue_juge_la_reponse_pas_le_classement(svc):
+    """Defaut releve par GM en relisant la note de consignes : un collegue ne
+    sait pas quel skill a ete charge.
+
+    Il ne le voit pas, et il y en a 186. Lui demander d'en nommer un n'avait
+    aucun sens. Il juge donc ce qu'il a sous les yeux -- la reponse de gb.
+    """
+    c = svc.consulter("probleme de factures fournisseurs proforma",
+                      session_id="s1")
+    for mot, attendu in (("servi", "servi"), ("a-cote", "a_cote"),
+                         ("inconnu", "inconnu"), ("oui", "servi"),
+                         ("non", "a_cote"), ("?", "inconnu")):
+        out = svc.retour(c["consultation_id"], mot, session_id="s1")
+        assert out["ok"] is True, mot
+        assert out["verdict"] == attendu, mot
+        assert out["etiquette"] is None, "aucun skill n'est designe"
+
+
+def test_un_verdict_dit_ce_qu_il_mesure(svc):
+    """`servi` porte la reponse de bout en bout, un rang porte la justesse de
+    GK. Les additionner produirait un chiffre vide."""
+    c = svc.consulter("probleme de factures fournisseurs proforma",
+                      session_id="s1")
+    bout = svc.retour(c["consultation_id"], "servi", session_id="s1")
+    assert "bout en bout" in bout["porte"]
+    rang = svc.retour(c["consultation_id"], "1", session_id="s1",
+                      propositions=["gm-factures"])
+    assert "rang de GK" in rang["porte"] and "justesse" in rang["porte"]
+
+
+def test_la_consultation_garde_toute_la_liste_des_propositions(svc):
+    """C'est elle qui permet de retrouver le rang quand un collegue dit
+    seulement « ca m'a servi ».
+
+    Gardee dans `reports` et non dans `briefs` -- qui a une colonne `skills`
+    faite pour ca -- parce que les briefs expirent a sept jours et qu'une
+    etiquette humaine est la donnee la plus couteuse du projet.
+    """
+    c = svc.consulter("factures fournisseurs proforma et marges",
+                      session_id="s1")
+    row = svc.store.one(
+        "SELECT skill_name FROM reports WHERE id = ?", (c["consultation_id"],)
+    )
+    noms = row["skill_name"].split(",")
+    assert len(noms) == len(c["propositions"]) >= 2
+    assert noms == [p["name"] for p in c["propositions"]]
+
+
+def test_les_verdicts_rendent_le_triplet_complet(tmp_path, capsys, monkeypatch):
+    """La demande, ce que GK proposait, ce que gb a charge : c'est le croisement
+    qui donne le rang sans rien demander au collegue."""
+    s = Service.open(tmp_path / "v.db")
+    Catalog(s.store).ingest([
+        {"path": "a/f/SKILL.md", "name": "gm-factures",
+         "description": "Factures fournisseurs proforma et port.",
+         "category": "gm", "fingerprint": "1"},
+        {"path": "a/m/SKILL.md", "name": "gm-marges",
+         "description": "Marges et prix plancher.", "category": "gm",
+         "fingerprint": "1"},
+    ], complete=True)
+    c = s.consulter("probleme de factures fournisseurs proforma",
+                    session_id="s1")
+    ts = s.store.one("SELECT ts FROM reports WHERE id = ?",
+                     (c["consultation_id"],))["ts"]
+    s.store.execute(
+        "INSERT INTO skill_uses (ts, session_id, skill_name, action, expires_at) "
+        "VALUES (?, 's1', 'gm-factures', 'loaded', ?)", (ts + 5, ts + 1e9)
+    )
+    s.retour(c["consultation_id"], "servi", session_id="s1")
+    s.close()
+
+    monkeypatch.setenv("GK_DATABASE", str(tmp_path / "v.db"))
+    assert cli_main(["--json", "verdicts"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    v = out["verdicts"][0]
+    assert v["verdict"] == "servi"
+    assert "gm-factures" in v["gk_proposait"]
+    assert v["gb_a_charge"] == ["gm-factures"]
+    assert out["de_bout_en_bout"]["servi"] == 1
+    assert any("ne mesurent PAS la meme chose" in l for l in out["lecture"])
+    assert any("CORRELATION" in l for l in out["lecture"])
+
+
+def test_les_deux_familles_de_verdicts_ne_s_additionnent_pas(
+    tmp_path, capsys, monkeypatch
+):
+    s = Service.open(tmp_path / "v2.db")
+    Catalog(s.store).ingest([
+        {"path": "a/f/SKILL.md", "name": "gm-factures",
+         "description": "Factures fournisseurs proforma.", "category": "gm",
+         "fingerprint": "1"},
+    ], complete=True)
+    c1 = s.consulter("probleme de factures fournisseurs", session_id="s1")
+    s.retour(c1["consultation_id"], "servi", session_id="s1")
+    c2 = s.consulter("autre probleme de factures fournisseurs", session_id="s2")
+    s.retour(c2["consultation_id"], "1", session_id="s2",
+             propositions=["gm-factures"])
+    c3 = s.consulter("troisieme probleme de factures", session_id="s3")
+    s.retour(c3["consultation_id"], "rien", session_id="s3")
+    s.close()
+
+    monkeypatch.setenv("GK_DATABASE", str(tmp_path / "v2.db"))
+    assert cli_main(["--json", "verdicts"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["de_bout_en_bout"]["servi"] == 1
+    assert out["rangs_quand_le_skill_est_designe"]["1"] == 1
+    assert out["trous_de_bibliotheque"] == 1
