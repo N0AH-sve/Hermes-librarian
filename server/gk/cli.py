@@ -609,6 +609,73 @@ def cmd_reetalonner(args, cfg: Config) -> int:
     return 0
 
 
+def cmd_ordonnance(args, cfg: Config) -> int:
+    """La liste de redaction, tiree des demandes reelles etiquetees.
+
+    Releve du 2026-10-23 : **32 % des bons skills n'entrent jamais dans les neuf
+    premiers de GK sur toute une conversation.** Ni les coefficients (quatre
+    hypotheses rejetees), ni la memoire de session (zero rattrapage mesure) n'y
+    changent quoi que ce soit -- un skill qui ne marque aucun point ne se classe
+    pas.
+
+    Difference avec `gk manques` : celui-la travaille sur les phrases citees
+    dans les skills, donc sur ce que leurs auteurs ont imagine. Ici les mots
+    viennent de demandes reellement tapees.
+    """
+    texte = sys.stdin.read()
+    cas = relire(texte)
+    if not cas:
+        _emit({
+            "ok": False,
+            "erreur": "aucun cas lu : l'entree ne ressemble pas a un echantillon",
+            "suite": "gk ordonnance < echantillon-annote.txt",
+        }, args)
+        return 1
+    with Store(cfg.database) as store:
+        index = Index.construire(store)
+        if index.n == 0:
+            _emit({"ok": False, "erreur": "catalogue vide, voir `gk catalogue`"}, args)
+            return 1
+        etqs = etiquettes(cas)
+        if not etqs:
+            _emit({
+                "ok": False,
+                "erreur": "aucune etiquette reutilisable dans cet echantillon",
+            }, args)
+            return 1
+        liste = index.ordonnance(
+            [(e["demande"], e["attendu"]) for e in etqs],
+            profondeur=args.profondeur,
+        )
+    jamais = sum(g["jamais_retrouve"] for g in liste)
+    bas = sum(g["trouve_trop_bas"] for g in liste)
+    _emit({
+        "ok": True,
+        "etiquettes": len(etqs),
+        "skills_a_enrichir": len(liste),
+        "demandes_jamais_retrouvees": jamais,
+        "demandes_trouvees_trop_bas": bas,
+        "detail": liste[: max(1, args.limite)],
+        "lecture": [
+            "Pour chaque skill : les mots qui MANQUENT a son texte, dans la "
+            "langue ou les collegues les tapent -- pas dans celle que ses "
+            "auteurs ont imaginee.",
+            f"{jamais} demandes dont le bon skill n'entre jamais dans les "
+            f"{args.profondeur} premiers : celles-la demandent une LIGNE DE "
+            "DECLENCHEMENT, et rien d'autre ne les recuperera. Ni les "
+            "coefficients, ni la memoire de session, tous deux mesures sans "
+            "effet.",
+            f"{bas} demandes trouvees mais trop bas : un mot ou deux suffisent.",
+            "Les mots sont ordonnes par frequence puis par pouvoir "
+            "discriminant : un mot deja porte par toute la bibliotheque "
+            "rapportera moins qu'un mot propre au skill.",
+            "Le levier est mesure : les lignes de declenchement ecrites cette "
+            "semaine ont fait passer le MRR metier de 0,375 a 0,598.",
+        ],
+    }, args)
+    return 0
+
+
 def cmd_memoire(args, cfg: Config) -> int:
     """GK avec la memoire de session que gb a deja.
 
@@ -1805,6 +1872,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="ne rendre que les etiquettes reutilisables, sans les re-mesurer",
     )
     re_.set_defaults(func=cmd_reetalonner)
+
+    od = sub.add_parser(
+        "ordonnance",
+        help="la liste de redaction tiree des demandes reelles etiquetees",
+    )
+    od.add_argument(
+        "--profondeur", type=int, default=9,
+        help="au-dela de ce rang, le skill est dit jamais retrouve "
+             "(defaut %(default)s, la largeur de gb)",
+    )
+    od.add_argument("--limite", type=int, default=20)
+    od.set_defaults(func=cmd_ordonnance)
 
     mm = sub.add_parser(
         "memoire",

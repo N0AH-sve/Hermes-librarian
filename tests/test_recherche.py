@@ -1028,3 +1028,86 @@ def test_le_bonus_de_memoire_est_uniforme(tmp_path):
     assert round(avec["un"] - base["un"], 6) == 2.0
     assert round(avec["deux"] - base["deux"], 6) == 2.0
     svc.close()
+
+
+# -- l'ordonnance : la liste de redaction tiree du reel ---------------------
+
+
+def _index_deux_skills(tmp_path, nom):
+    from gk.catalog import Catalog
+    from gk.recherche import Index
+    from gk.service import Service
+
+    svc = Service.open(tmp_path / nom)
+    Catalog(svc.store).ingest([
+        {"path": "a/port/SKILL.md", "name": "gm-port",
+         "description": "Frais de port et transporteurs.", "category": "gm",
+         "fingerprint": "1"},
+        {"path": "a/marges/SKILL.md", "name": "gm-marges",
+         "description": "Marges et prix plancher.", "category": "gm",
+         "fingerprint": "1"},
+    ], complete=True)
+    return svc, Index.construire(svc.store)
+
+
+def test_l_ordonnance_separe_jamais_retrouve_et_trouve_trop_bas(tmp_path):
+    """Les deux ne demandent pas le meme travail : un skill jamais retrouve a
+    besoin d'une ligne de declenchement, un skill trouve trop bas d'un mot ou
+    deux. Les confondre donnerait une liste qu'on ne sait pas attaquer.
+    """
+    svc, index = _index_deux_skills(tmp_path, "o1.db")
+    cas = [
+        # Aucun mot commun : gm-marges ne marquera rien.
+        ("pourquoi adagio nous facture quarante balles", "gm-marges"),
+        # « port » est porte, mais « transporteur » domine peut-etre.
+        ("le port est-il correct", "gm-port"),
+    ]
+    liste = index.ordonnance(cas, profondeur=5)
+    par_nom = {g["name"]: g for g in liste}
+    assert "gm-marges" in par_nom
+    assert par_nom["gm-marges"]["jamais_retrouve"] == 1
+    assert par_nom["gm-marges"]["exemples"][0]["rang_actuel"] is None
+    assert "declenchement" in par_nom["gm-marges"]["exemples"][0]["remede"]
+    svc.close()
+
+
+def test_l_ordonnance_ignore_un_skill_qui_gagne_deja(tmp_path):
+    """Une liste de courses qui contient ce qu'on a deja ne se lit pas."""
+    svc, index = _index_deux_skills(tmp_path, "o2.db")
+    liste = index.ordonnance(
+        [("les marges et le prix plancher", "gm-marges")], profondeur=5
+    )
+    assert liste == []
+    svc.close()
+
+
+def test_l_ordonnance_ordonne_les_mots_par_pouvoir_discriminant(tmp_path):
+    """Sur des etiquettes reelles chaque skill n'a que quelques cas, donc la
+    frequence vaut presque toujours 1 : sans l'IDF, l'ordre retombe sur
+    l'alphabet et met en tete le mot le moins utile."""
+    svc, index = _index_deux_skills(tmp_path, "o3.db")
+    # « marges » est porte par la bibliotheque, « adagio » non : a frequence
+    # egale, le second doit passer devant.
+    liste = index.ordonnance(
+        [("adagio applique des marges inconnues ailleurs", "gm-port")],
+        profondeur=5,
+    )
+    mots = liste[0]["mots_a_ajouter"]
+    assert "adagio" in mots
+    assert mots.index("adagio") < mots.index("marges"), mots
+    svc.close()
+
+
+def test_l_ordonnance_met_les_jamais_retrouves_en_tete(tmp_path):
+    """C'est la part que rien d'autre ne peut recuperer : ni les coefficients,
+    ni la memoire de session, tous deux mesures sans effet."""
+    svc, index = _index_deux_skills(tmp_path, "o4.db")
+    cas = [
+        ("le port est-il correct", "gm-port"),
+        ("pourquoi adagio nous facture quarante balles", "gm-marges"),
+        ("et chez saico aussi quarante balles", "gm-marges"),
+    ]
+    liste = index.ordonnance(cas, profondeur=5)
+    assert liste[0]["name"] == "gm-marges"
+    assert liste[0]["jamais_retrouve"] == 2
+    svc.close()

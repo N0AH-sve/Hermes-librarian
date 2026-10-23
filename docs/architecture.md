@@ -3280,6 +3280,90 @@ devines). C'est l'ordre choisi qui le permet, pas un retard.
 Ce qui reste et qui sert deja : le catalogue auto-entretenu, `gk manques`,
 `gk confusions`, et les chiffres qui disent ou la bibliotheque a des trous.
 
+## Fin du diagnostic : le verrou est le rappel, et il est chiffre
+
+Releve du 2026-10-23. **Derniere mesure avant de passer a l'amelioration.**
+
+### La comparaison a largeur egale
+
+Le 0,811 de gb vaut « le bon skill est quelque part dans les neuf charges
+pendant la session ». L'equivalent cote GK est le **cumul de session** : le bon
+skill a-t-il jamais paru dans ses `top` premiers au cours de la conversation ?
+Les deux creditent une trouvaille faite a n'importe quel tour, donc ils se
+comparent -- ce qu'aucun des quatre denominateurs precedents ne faisait.
+
+| | GK | gb |
+|---|---|---|
+| Cumul de session, 3 gardes | 0,421 | — |
+| **Cumul de session, 9 gardes** | **0,684** | **0,811** |
+
+**A largeur egale, gb garde 0,127 d'avance.** Et le verrou se lit directement :
+**32 % des bons skills n'entrent jamais dans les neuf premiers de GK sur toute
+une conversation**, contre 19 % que gb ne charge jamais.
+
+### La memoire de session : mesuree, sans effet
+
+| Verification, 19 demandes / 6 sessions | sans | avec |
+|---|---|---|
+| Rang 1 | 0,211 | 0,263 |
+| Rang 2 | 0,316 | 0,421 |
+| Rang 3 | 0,421 | 0,421 |
+| Rang 5 | 0,526 | 0,526 |
+| **Cumul (top 3)** | **0,421** | **0,421** |
+| **Cumul (top 9)** | **0,684** | **0,684** |
+
+**Zero rattrapage**, cumul identique, et a `--top 9` le bonus retenu est **0,0**
+-- l'ajustement lui-meme n'en veut pas. La courbe d'ajustement est plate de 0 a
+3 et gagne un seul cas a 5 : c'est du bruit, et l'avoir retenu est exactement ce
+a quoi ressemble un surajustement. La verification le confirme a la meme
+amplitude, +1 cas sur 19.
+
+**Pourquoi ca ne marche pas alors que ca marche pour gb.** Une memoire
+**multiplie** un taux de reussite, elle n'en cree pas. gb garde ce que gb a
+choisi, et gb loge le bon skill 81 % du temps. GK garderait ce que GK a classe
+dans son top 3, et son rang 3 vaut 0,42 : il remplit sa memoire d'une majorite
+de mauvais skills. Et un bonus reordonne -- il ne peut pas faire apparaitre un
+skill qui ne marque jamais de points. C'est ce que le cumul identique demontre.
+
+**Cinquieme hypothese rejetee par la mesure**, apres la ponderation par
+population, le retrait de la prose, la normalisation par la longueur et la
+deduplication des marqueurs.
+
+### Un defaut de mon instrument, trouve par contradiction
+
+`gk memoire` a d'abord annonce **4 rattrapages alors que le rappel@5 etait
+identique des deux cotes**. Le compteur comparait le bras « avec memoire » a une
+recherche **sans contexte**, alors que le bras temoin a deja le contexte : il
+creditait la memoire du travail du contexte. Corrige, il rend **0**.
+
+A garder comme regle : deux chiffres d'une meme sortie qui se contredisent
+valent mieux qu'un chiffre seul. C'est la contradiction qui a trouve le defaut,
+pas une relecture.
+
+### Ce que l'amelioration devient, et c'est la seule voie mesuree
+
+Trois mecanismes ont ete essayes sur le classement et aucun ne bouge : les
+coefficients (quatre hypotheses), le contexte de jetons (deja active, +0,246 sur
+les suites) et la memoire de session (sans effet). **Il reste le texte.**
+
+`gk ordonnance` rend la liste de redaction, tiree des **demandes reelles
+etiquetees** et non des phrases que les auteurs ont imaginees. Deux priorites
+separees, parce qu'elles ne demandent pas le meme travail :
+
+* **jamais retrouve** -> il faut une **ligne de declenchement**. Rien d'autre ne
+  recuperera ces cas ;
+* **trouve trop bas** -> un mot ou deux suffisent.
+
+Les mots sont ordonnes par frequence **puis par pouvoir discriminant**. Sans
+l'IDF, chaque skill n'ayant que quelques cas reels, la frequence vaut presque
+toujours 1 et l'ordre retombait sur l'alphabet -- ce qui mettait en tete le mot
+le moins utile.
+
+**Le levier est deja mesure chez GM** : les lignes de declenchement ecrites cette
+semaine ont fait passer le MRR metier de 0,375 a 0,598 (+58 %) et la couverture
+des declencheurs de 36 % a 78 % en deux jours. C'est le seul mecanisme du projet
+dont l'effet se compte en dizaines de points.
+
 ## Points ouverts
 
 Dernière revue : 2026-10-22, après la mise en service partielle de la phase 1

@@ -625,12 +625,94 @@ class Index:
                 groupe["exemples"].append(demande)
         sortie = []
         for groupe in groupes.values():
+            # Frequence d'abord, puis **pouvoir discriminant**. Sur un corpus
+            # d'etiquettes reelles, chaque skill n'a que quelques cas, donc la
+            # frequence vaut presque toujours 1 et l'ordre retombait sur
+            # l'alphabet -- ce qui mettait en tete le mot le moins utile.
             mots = sorted(
-                groupe["mots_manquants"].items(), key=lambda kv: (-kv[1], kv[0])
+                groupe["mots_manquants"].items(),
+                key=lambda kv: (-kv[1], -self.idf(kv[0]), kv[0]),
             )
             groupe["mots_manquants"] = [m for m, _ in mots[:12]]
             sortie.append(groupe)
         sortie.sort(key=lambda g: (-g["cas"], g["name"]))
+        return sortie
+
+    def ordonnance(
+        self, cas: list[tuple[str, str]], profondeur: int = 9
+    ) -> list[dict]:
+        """La liste de redaction, tiree des **demandes reelles etiquetees**.
+
+        **Pourquoi celle-la plutot que `manques`.** `manques` travaille sur les
+        phrases citees dans les skills, donc sur ce que leurs auteurs ont
+        imagine. Ici les cas viennent de demandes reellement tapees par des
+        collegues, avec le bon skill designe par un humain : ce sont les mots
+        que la bibliotheque ne connait pas, dans la langue ou ils arrivent.
+
+        Le releve qui la motive : **32 % des bons skills n'entrent jamais dans
+        les neuf premiers de GK sur toute une conversation.** Ni les
+        coefficients -- quatre hypotheses rejetees -- ni la memoire de session
+        -- zero rattrapage mesure -- n'y changent quoi que ce soit. Un skill qui
+        ne marque aucun point ne se classe pas.
+
+        Deux priorites separees, parce qu'elles ne demandent pas le meme travail
+        : un skill **jamais retrouve** a besoin d'une ligne de declenchement, un
+        skill retrouve **trop bas** d'un mot ou deux.
+        """
+        par_nom = {s.name: s for s in self.skills}
+        groupes: dict[str, dict] = {}
+        for demande, attendu in cas:
+            cible = par_nom.get(attendu)
+            if cible is None:
+                continue
+            jetons_demande = jetons(demande)
+            if not jetons_demande:
+                continue
+            resultats = self.chercher(demande, limite=profondeur)
+            noms = [r["name"] for r in resultats]
+            rang = noms.index(attendu) + 1 if attendu in noms else None
+            if rang == 1:
+                continue  # rien a ecrire : il gagne deja
+            portes = self.jetons_apparies(cible, jetons_demande)
+            manquants = [
+                j for j in jetons_demande
+                if j not in portes and not j.isdigit() and len(j) >= 3
+            ]
+            groupe = groupes.setdefault(
+                attendu,
+                {"name": attendu, "category": cible.category,
+                 "jamais_retrouve": 0, "trouve_trop_bas": 0,
+                 "mots": {}, "exemples": []},
+            )
+            if rang is None:
+                groupe["jamais_retrouve"] += 1
+            else:
+                groupe["trouve_trop_bas"] += 1
+            for j in manquants:
+                groupe["mots"][j] = groupe["mots"].get(j, 0) + 1
+            if len(groupe["exemples"]) < 3:
+                groupe["exemples"].append({
+                    "demande": demande,
+                    "rang_actuel": rang,
+                    "remede": (
+                        "une ligne de declenchement" if rang is None
+                        else "un mot ou deux"
+                    ),
+                })
+        sortie = []
+        for groupe in groupes.values():
+            mots = sorted(
+                groupe["mots"].items(),
+                key=lambda kv: (-kv[1], -self.idf(kv[0]), kv[0]),
+            )
+            groupe["mots_a_ajouter"] = [m for m, _ in mots[:12]]
+            groupe.pop("mots")
+            sortie.append(groupe)
+        # Les « jamais retrouve » d'abord : c'est la part que rien d'autre ne
+        # peut recuperer.
+        sortie.sort(
+            key=lambda g: (-g["jamais_retrouve"], -g["trouve_trop_bas"], g["name"])
+        )
         return sortie
 
     # -- le contexte de session ----------------------------------------------
