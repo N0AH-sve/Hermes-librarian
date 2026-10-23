@@ -3126,6 +3126,81 @@ le filtre ne filtre rien et les 36 % restent pollues. **A verifier avant de
 refixer le seuil**, puisque le seuil se calibre precisement sur la part des
 demandes sans reponse.
 
+## La premiere mesure non biaisee, et elle est severe
+
+Releve du 2026-10-23, echantillon **v2**, 50 demandes reelles, 42 annotees.
+**C'est la premiere mesure du projet qui ne soit pas biaisee en faveur de GK**,
+et c'est l'echappatoire qui la rend telle : 14 des 37 etiquettes designent un
+skill que GK **ne proposait pas**. La verite terrain ne sort plus de la liste de
+GK.
+
+| | v1 (biaise) | **v2 (franc)** |
+|---|---|---|
+| Rappel@1 | 0,433 | **0,243** |
+| Rappel@5 | 0,900 | **0,622** |
+| Part sans reponse possible | 0,36 | **0,119** |
+
+**Le biais valait +0,19 de rappel@1 et +0,28 de rappel@5.** C'etait l'ordre de
+grandeur annonce, mais pas sa taille : il portait la moitie du resultat.
+
+### Ce que les 36 % etaient en realite
+
+Ils tombent a **11,9 %**. La v1 confondait « aucun skill ne sert cette demande »
+et « aucun de ces cinq-la » ; des que l'annotateur a pu nommer un skill hors des
+cinq, 14 des 17 cas ont trouve une reponse. **Les trous de la bibliotheque sont
+donc trois fois moins nombreux qu'estime**, et le « brief faux 36 fois sur 100
+par construction » devient 12 fois sur 100.
+
+**Consequence sur la phase 3, et elle est favorable** : le droit de se taire
+reste necessaire, mais il ne porte plus sur un tiers des demandes. Un brief qui
+parle toujours serait faux par construction sur 12 % et non 36 %.
+
+### Le diagnostic s'inverse : c'est le rappel, pas le classement
+
+| Sur 37 demandes servables | Cas | Part |
+|---|---|---|
+| Bon skill au rang 1 | 9 | 0,243 |
+| Bon skill aux rangs 2 a 5 | 14 | 0,378 |
+| **Bon skill hors des cinq** | **14** | **0,378** |
+
+**38 % des demandes servables ont leur bon skill hors des cinq premiers.** Ce
+n'est pas un probleme de classement, c'est un probleme de **rappel** : le skill
+ne marque pas assez de points pour entrer dans la liste.
+
+Cela confirme le constat du banc -- 67 % des echecs etaient `texte_absent` --
+et le transpose aux demandes reelles. **Le remede est dans le texte des skills,
+pas dans les coefficients**, et `gk manques` rend exactement cette liste.
+
+**Et cela tranche le desaccord avec le rapport de gb.** Il annoncait « 61 cas ou
+le bon skill existe mais n'est pas dans les 5 → probleme de classement, pas de
+couverture. » Le phenomene est reel et confirme ici ; **l'etiquette etait
+inversee** : un bon skill absent des cinq est par definition un echec de
+couverture. Le constat etait juste, sa lecture non.
+
+### Une regularite a deux echantillons
+
+Les deux distributions de rang, sur deux echantillons independants, ne portent
+**aucun cas au rang 5** :
+
+| Rang | 1 | 2 | 3 | 4 | 5 |
+|---|---|---|---|---|---|
+| v1 reetalonne (30) | 13 | 5 | 3 | 6 | **0** |
+| v2 (23) | 9 | 5 | 4 | 5 | **0** |
+
+Zero sur 53 observations, la ou le hasard en attendrait quelques-unes. A
+verifier avant d'en conclure quoi que ce soit : ce peut etre une troncature a
+quatre quelque part dans le chemin, ou l'effet d'un `limite=5` applique apres un
+filtre. **C'est le genre de regularite trop propre pour etre un resultat.**
+
+### Ce que la comparaison avec gb devient
+
+Elle est enfin franche, et elle n'est plus acquise : GK est a **0,243**, gb
+etait mesure a **0,300** sur les anciennes etiquettes biaisees. Il faut la
+refaire sur ce fichier. Le code a ete corrige pour cela : `confronter` detecte
+desormais les etiquettes nommees hors des cinq et annonce
+`biais_de_selection: LEVE` au lieu de repeter un avertissement perime -- sinon
+on sous-estimerait une mesure devenue valide.
+
 ## Points ouverts
 
 Dernière revue : 2026-10-22, après la mise en service partielle de la phase 1

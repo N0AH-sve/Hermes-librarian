@@ -448,9 +448,9 @@ def test_le_diagnostic_dit_si_les_reutilisations_sont_visibles(svc):
     assert any("INVISIBLES" in l for l in lecture(out))
 
 
-def test_la_limite_non_mesurable_est_toujours_dite(svc):
-    """Le biais de selection ne sort pas de la base : il doit etre enonce a
-    chaque sortie, sinon il disparait du raisonnement."""
+def test_le_biais_de_selection_est_annonce_quand_il_est_present(svc):
+    """Le biais de selection doit etre enonce a chaque sortie, sinon il
+    disparait du raisonnement -- ce qui est arrive deux fois."""
     from gk.catalog import Catalog
     Catalog(svc.store).ingest([
         {"path": "a/bon/SKILL.md", "name": "bon", "description": "d",
@@ -464,8 +464,8 @@ def test_la_limite_non_mesurable_est_toujours_dite(svc):
     )
     out = confronter(svc.store, cas)
     from gk.confrontation import lecture
-    assert "rappel@5" in out["diagnostic"]["limite_non_mesurable"]
-    assert any(l.startswith("LIMITE :") for l in lecture(out))
+    assert out["diagnostic"]["biais_de_selection"].startswith("PRESENT")
+    assert any("BIAIS DE SELECTION PRESENT" in l for l in lecture(out))
 
 
 def test_un_skill_corrige_n_est_pas_un_choix_de_gb(svc):
@@ -528,3 +528,36 @@ def test_un_evenement_d_ecriture_ne_decale_pas_le_rang(svc):
     out = confronter(svc.store, cas)
     assert out["details"][0]["gb_rang_du_bon"] == 1, "et non 2"
     assert out["courbe_gb"]["1"] == 1.0
+
+
+def test_une_etiquette_hors_des_cinq_leve_le_biais_de_selection(svc):
+    """Le biais de selection n'est pas une fatalite : il depend du format.
+
+    Tant que l'annotateur ne peut designer qu'un des cinq montres, les cas
+    comparables sont ceux ou GK a reussi son rappel@5 -- il est juge sur un
+    sous-ensemble que sa propre reussite a selectionne. Des qu'il peut NOMMER un
+    skill hors de la liste, la verite terrain devient independante de GK.
+
+    Si la sortie continuait d'annoncer le biais, on sous-estimerait une mesure
+    devenue franche.
+    """
+    from gk.catalog import Catalog
+    from gk.confrontation import lecture
+    Catalog(svc.store).ingest([
+        {"path": "a/propose/SKILL.md", "name": "propose", "description": "d",
+         "category": "c", "fingerprint": "1"},
+        {"path": "a/ailleurs/SKILL.md", "name": "ailleurs", "description": "d",
+         "category": "c", "fingerprint": "1"},
+    ], complete=True)
+    svc.request("s1", "une demande")
+    cas = relire(
+        f"<!-- gk echantillon v{VERSION} -->\n"
+        "## 1. une demande\n   1. propose   [c]  score 9\n"
+        f"{MARQUEUR} ailleurs\n"
+    )
+    out = confronter(svc.store, cas)
+    assert out["diagnostic"]["etiquettes_hors_des_cinq"] == 1
+    assert out["diagnostic"]["biais_de_selection"].startswith("LEVE")
+    assert any("BIAIS DE SELECTION LEVE" in l for l in lecture(out))
+    # Et l'etiquette compte comme un echec de GK, pas comme une exclusion.
+    assert out["comparables"] == 1 and out["gk_rappel_1"] == 0.0

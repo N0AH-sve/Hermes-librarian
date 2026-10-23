@@ -117,7 +117,8 @@ def _apparier(store: Store, demandes: list[str]) -> dict[str, dict]:
 
 
 def _diagnostic(
-    store: Store, n: int, sessions: set[str], attendus: set[str]
+    store: Store, n: int, sessions: set[str], attendus: set[str],
+    hors_des_cinq: int = 0,
 ) -> dict:
     """Ce qui peut rendre la comparaison fausse, mesure plutot qu'affirme.
 
@@ -153,12 +154,20 @@ def _diagnostic(
         # sur la mesure.
         "use_count_max": (uc["m"] if uc else None),
         "evenements_use_count_sup_1": int((uc["r"] or 0) if uc else 0),
-        "limite_non_mesurable": (
-            "la verite terrain vient des cinq propositions de GK : les cas "
-            "comparables sont ceux ou GK a REUSSI son rappel@5. GK est donc "
-            "juge sur un sous-ensemble que sa propre reussite a selectionne, "
-            "et gb n'a pas cet avantage. Seule une etiquette independante des "
-            "propositions de GK leve ce biais."
+        # Le biais de selection n'est pas une fatalite : il depend du format
+        # d'annotation, et il se leve.
+        "etiquettes_hors_des_cinq": hors_des_cinq,
+        "biais_de_selection": (
+            "LEVE : "
+            f"{hors_des_cinq} etiquettes designent un skill que GK ne "
+            "proposait pas. La verite terrain ne sort donc plus de la liste de "
+            "GK, et la comparaison avec gb est franche."
+            if hors_des_cinq else
+            "PRESENT : la verite terrain vient des cinq propositions de GK, "
+            "donc les cas comparables sont ceux ou GK a REUSSI son rappel@5. "
+            "GK est juge sur un sous-ensemble que sa propre reussite a "
+            "selectionne, et gb n'a pas cet avantage. Un echantillon v2, ou "
+            "l'annotateur peut nommer un skill hors des cinq, leve ce biais."
         ),
     }
 
@@ -219,6 +228,7 @@ def confronter(
     gb_a_choisi = 0
     gb_deja_avant = 0
     gb_tour_ou_avant = 0
+    hors_des_cinq_vus = 0
     sessions_vues: set[str] = set()
     attendus_vus: set[str] = set()
     gk_juste = 0
@@ -245,6 +255,10 @@ def confronter(
         # reprise commence a 6, et son premier candidat n'est pas un rang 1.
         gk_premier = candidats[0] if (candidats and depart == 1) else None
         gk_ok = bool(gk_premier) and gk_premier == attendu
+        # Une etiquette nommee a la main, hors de la liste montree : c'est elle
+        # qui leve le biais de selection.
+        if c.get("nom"):
+            hors_des_cinq_vus += 1
 
         session = paire["session_id"]
         charges_fenetre = [
@@ -393,7 +407,8 @@ def confronter(
         "gb_avait_deja_le_bon_avant": gb_deja_avant,
         "gb_juste_tour_ou_deja": part(gb_tour_ou_avant),
         "diagnostic": _diagnostic(
-            store, comparables, sessions_vues, attendus_vus
+            store, comparables, sessions_vues, attendus_vus,
+            hors_des_cinq=hors_des_cinq_vus,
         ),
         "details": details,
     }
@@ -491,8 +506,8 @@ def lecture(r: dict) -> list[str]:
             "L'effectif reel est le plus petit des trois, et toute "
             "significativite calculee sur 30 est optimiste."
         )
-    if d.get("limite_non_mesurable"):
-        lignes.append("LIMITE : " + d["limite_non_mesurable"])
+    if d.get("biais_de_selection"):
+        lignes.append("BIAIS DE SELECTION " + d["biais_de_selection"])
     lignes.append(
         "L'appariement demande/chargement reste une CORRELATION : les deux "
         "hooks ne partagent aucune clef. Un ecart de quelques points ne "
