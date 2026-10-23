@@ -244,3 +244,57 @@ def test_gk_demandes_estime_le_taux_de_suite(tmp_path, capsys, monkeypatch):
     assert out["sessions_a_un_seul_skill"] == 1
     assert out["taux_de_suite_estime"] == 0.5
     assert "11 %" in out["remarque_bascule"]
+
+
+# -- la transferabilite du seuil ------------------------------------------
+
+
+def test_le_seuil_se_mesure_sur_les_demandes_reelles_sans_etiquette(
+    tmp_path, capsys, monkeypatch
+):
+    """Le seuil retenu au banc est `couverture >= 0,6`. Les phrases citees font
+    2 a 6 mots, les demandes reelles une vingtaine : un seuil mesure sur les
+    secondes ne veut pas dire la meme chose sur les premieres. La question est
+    la transferabilite, et elle se mesure SANS verite terrain."""
+    from gk.catalog import Catalog
+
+    s = Service.open(tmp_path / "tr.db")
+    cat = Catalog(s.store)
+    cat.ingest([{
+        "path": "greenmusic/gm-factures/SKILL.md", "name": "gm-factures",
+        "description": "Factures fournisseurs proforma.",
+        "category": "greenmusic", "fingerprint": "1",
+    }], complete=True)
+    cat.store_sections([{
+        "path": "greenmusic/gm-factures/SKILL.md", "fingerprint": "1",
+        "sections": [{"heading": "Déclencheurs", "text": '- « proforma fournisseur »'}],
+    }])
+    # Une demande courte, bien couverte, et une longue, mal couverte.
+    s.request("s1", "proforma fournisseur")
+    s.request("s2", "bonjour je voudrais comprendre pourquoi la facture du "
+                    "fournisseur ne correspond pas au bon de commande envoye "
+                    "la semaine derniere par le service achat")
+    s.close()
+    monkeypatch.setenv("GK_DATABASE", str(tmp_path / "tr.db"))
+    assert cli_main(["--json", "seuil", "--reel"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["demandes_reelles"] == 2
+    # La demande longue porte beaucoup plus de jetons que le corpus.
+    assert out["jetons_mediane_reelle"] >= out["jetons_mediane_du_corpus"]
+    # Une seule des deux franchit un seuil de couverture eleve.
+    assert out["passeraient_couverture_0_6"] <= 0.5
+    assert "TRANSFERABILITE" in out["lecture"][0]
+
+
+def test_seuil_reel_sans_demande(tmp_path, capsys, monkeypatch):
+    from gk.catalog import Catalog
+
+    s = Service.open(tmp_path / "vide.db")
+    Catalog(s.store).ingest([{
+        "path": "c/a/SKILL.md", "name": "a", "description": "Un skill.",
+        "category": "c", "fingerprint": "1",
+    }], complete=True)
+    s.close()
+    monkeypatch.setenv("GK_DATABASE", str(tmp_path / "vide.db"))
+    assert cli_main(["--json", "seuil", "--reel"]) == 1
+    assert "aucune demande reelle" in json.loads(capsys.readouterr().out)["erreur"]

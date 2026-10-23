@@ -403,6 +403,104 @@ _GRILLES = {
 }
 
 
+def cmd_seuil_reel(args, cfg: Config) -> int:
+    """Combien des demandes REELLES passeraient un seuil, et avec quels signaux.
+
+    Sans etiquette, donc sans precision : la question posee est **la
+    transferabilite**, et elle se mesure sans verite terrain.
+
+    Le motif : le seuil retenu par `gk seuil --contexte` est
+    `couverture >= 0,6`, c'est-a-dire que le gagnant doit porter 60 % des mots
+    de la demande. Les phrases citees font 2 a 6 mots, donc en porter 60 % est
+    facile. Les demandes reelles ont une mediane de 112 caracteres, soit une
+    vingtaine de mots : aucun skill n'en portera 60 %. Un seuil mesure sur des
+    phrases courtes et applique a des demandes trois fois plus longues ne
+    transfere pas, et cela se verifie sans aucune etiquette.
+    """
+    from .recherche import jetons
+
+    with Store(cfg.database) as store:
+        index = Index.construire(store)
+        if index.n == 0:
+            _emit({"ok": False, "erreur": "catalogue vide, voir `gk catalogue`"}, args)
+            return 1
+        demandes = store.query(
+            "SELECT session_id, text_truncated FROM requests "
+            "WHERE text_truncated IS NOT NULL AND text_truncated <> '' "
+            "ORDER BY ts DESC LIMIT 500"
+        )
+        if not demandes:
+            _emit({
+                "ok": False,
+                "erreur": "aucune demande reelle enregistree",
+                "suite": "voir `gk demandes`",
+            }, args)
+            return 1
+        longueurs_cas = [len(jetons(d)) for d, _, _ in index.corpus()]
+        signaux: list[dict] = []
+        for row in demandes:
+            demande = row["text_truncated"]
+            contexte = contexte_de_session(store, row["session_id"] or "")
+            if contexte:
+                resultats = index.chercher_avec_contexte(
+                    demande, contexte=contexte, limite=5
+                )
+            else:
+                resultats = index.chercher(demande, limite=5)
+            mesure = index.confiance(demande, resultats)
+            mesure["jetons"] = len(jetons(demande))
+            mesure["a_un_resultat"] = bool(resultats)
+            signaux.append(mesure)
+
+        def part(predicat) -> float:
+            return round(sum(1 for s in signaux if predicat(s)) / len(signaux), 3)
+
+        longueurs_reelles = sorted(s["jetons"] for s in signaux)
+        longueurs_cas.sort()
+        out = {
+            "ok": True,
+            "demandes_reelles": len(signaux),
+            "jetons_mediane_reelle": longueurs_reelles[len(longueurs_reelles) // 2],
+            "jetons_mediane_du_corpus": (
+                longueurs_cas[len(longueurs_cas) // 2] if longueurs_cas else None
+            ),
+            "aucun_resultat": part(lambda s: not s["a_un_resultat"]),
+            # Le seuil retenu par `gk seuil --contexte`.
+            "passeraient_couverture_0_6": part(lambda s: s["couverture"] >= 0.6),
+            "passeraient_couverture_0_4": part(lambda s: s["couverture"] >= 0.4),
+            "passeraient_couverture_0_3": part(lambda s: s["couverture"] >= 0.3),
+            "passeraient_marge_0_25": part(lambda s: s["marge"] >= 0.25),
+            "couverture_medianne": sorted(s["couverture"] for s in signaux)[
+                len(signaux) // 2
+            ],
+            "marge_medianne": sorted(s["marge"] for s in signaux)[len(signaux) // 2],
+        }
+        out["lecture"] = [
+            "Sans etiquette, donc sans precision : la question posee est la "
+            "TRANSFERABILITE du seuil, et elle se mesure sans verite terrain.",
+            f"Une demande reelle porte {out['jetons_mediane_reelle']} jetons "
+            f"contre {out['jetons_mediane_du_corpus']} pour une phrase citee du "
+            "corpus. Un seuil de couverture mesure sur les secondes ne veut pas "
+            "dire la meme chose sur les premieres.",
+        ]
+        if out["passeraient_couverture_0_6"] < 0.1:
+            out["lecture"].append(
+                f"=> Le seuil retenu au banc (couverture >= 0,6) ne serait "
+                f"franchi que par {out['passeraient_couverture_0_6']:.0%} des "
+                "demandes reelles. Il ne transfere PAS : GK se tairait presque "
+                "toujours. Le seuil doit etre refixe sur des demandes reelles, "
+                "ce qui demande une verite terrain qui n'existe pas encore."
+            )
+        else:
+            out["lecture"].append(
+                f"=> {out['passeraient_couverture_0_6']:.0%} des demandes "
+                "reelles franchiraient le seuil du banc. Reste a verifier la "
+                "precision sur ces demandes, ce qui demande une verite terrain."
+            )
+        _emit(out, args)
+    return 0
+
+
 def cmd_seuil(args, cfg: Config) -> int:
     """A quel seuil GK a raison 9 fois sur 10, et sur quelle part des demandes.
 
@@ -416,6 +514,8 @@ def cmd_seuil(args, cfg: Config) -> int:
     tiendrait pas en production : c'est la circularite deja commise deux fois
     dans ce projet, et elle est evitee ici par construction.
     """
+    if getattr(args, "reel", False):
+        return cmd_seuil_reel(args, cfg)
     with Store(cfg.database) as store:
         index = Index.construire(store)
         if args.contexte:
@@ -1348,6 +1448,10 @@ def build_parser() -> argparse.ArgumentParser:
     sl.add_argument(
         "--contexte", action="store_true",
         help="mesurer sur les sessions synthetiques, contexte active",
+    )
+    sl.add_argument(
+        "--reel", action="store_true",
+        help="appliquer les seuils aux demandes REELLES : combien passeraient",
     )
     sl.set_defaults(func=cmd_seuil)
 

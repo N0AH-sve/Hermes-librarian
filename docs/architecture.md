@@ -1864,6 +1864,49 @@ sans FTS5 ni BM25 : il vient des 296 phrases écrites à la main. **La valeur es
 dans la bibliothèque ; l'outil la rend utilisable.** C'est ce qu'il faut dire aux
 décideurs, et c'est vérifiable.
 
+## Le seuil de confiance : le chiffre est bon, le corpus ne l'est pas
+
+Relevé du 2026-10-23. Étape 4 de la liste de GM : savoir se taire.
+
+| Corpus | sans seuil | seuil retenu | couverture (vérif.) | précision (vérif.) |
+|---|---|---|---|---|
+| Phrases citées, 259 cas | 0,448 | marge 0,25 **et** couverture 0,70 | 0,426 | 0,855 |
+| Sessions synthétiques (suites), 44 cas | 0,682 | **couverture 0,60** | 0,864 | **0,895** |
+
+Lu naïvement, l'objectif de GM est atteint : avec le contexte, GK parlerait sur
+86 % des demandes en ayant raison 90 % du temps. **Quatre réserves, et la
+dernière est rédhibitoire.**
+
+**n = 44**, donc 22 cas en vérification dont 19 retenus. 17 bons sur 19 font
+89,5 %, mais l'intervalle de confiance va d'environ 67 % à 98 %.
+
+**C'est le corpus le plus favorable possible** : la seule condition `suite`,
+alors que le taux de suite réel est de 0,29.
+
+**Le score absolu a surajusté exactement comme prévu** : précision 1,0 sur
+7 cas d'ajustement, puis **0,333 sur 3 cas de vérification**. C'est la
+démonstration de pourquoi la moitié de vérification existe, et elle vaut d'être
+gardée comme telle. La marge, elle, a perdu : son seuil retenu est `0,0`, donc
+elle n'apporte rien et c'est la couverture seule qui porte tout.
+
+**Et le seuil ne transfère pas.** La couverture mesure quelle part des mots de
+la demande le gagnant porte. Une phrase citée fait 2 à 6 mots, donc en porter
+60 % est facile. Une demande réelle a une médiane de 112 caractères, soit une
+vingtaine de mots : aucun skill n'en portera 60 %. **Un seuil mesuré sur des
+phrases courtes et appliqué à des demandes trois fois plus longues ne veut pas
+dire la même chose.**
+
+Cela se vérifie **sans aucune étiquette** : `gk seuil --reel` applique les
+seuils aux demandes réelles et dit combien les franchiraient. Sans vérité
+terrain il n'y a pas de précision à mesurer, mais la question posée est la
+**transférabilité**, et elle n'en demande pas.
+
+**Ce que ça implique pour la phase 3.** Le seuil ne peut pas être fixé sur le
+corpus curé. Il demande une vérité terrain sur des demandes réelles — c'est-à-dire
+soit des corrections de la phase 1 en nombre (6 à ce jour), soit un jugement
+humain sur un échantillon. Tant que ni l'un ni l'autre n'existe, injecter un
+brief revient à parier sur un seuil mesuré ailleurs.
+
 ## Le contexte de session : le meilleur résultat du projet
 
 Relevé du 2026-10-23, sur 88 sessions synthétiques fabriquées depuis les phrases
