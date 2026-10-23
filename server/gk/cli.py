@@ -438,7 +438,10 @@ def cmd_echantillon(args, cfg: Config) -> int:
         if index.n == 0:
             print("catalogue vide, voir `gk catalogue`", file=sys.stderr)
             return 1
-        texte = preparer(store, index, taille=args.taille)
+        texte = preparer(
+            store, index, taille=args.taille,
+            par_session=args.par_session, aveugle=bool(args.aveugle),
+        )
         if "## 1." not in texte:
             print("aucune demande reelle enregistree, voir `gk demandes`", file=sys.stderr)
             return 1
@@ -1558,6 +1561,19 @@ def cmd_confusions(args, cfg: Config) -> int:
     return 0
 
 
+def _a_colonne(store: Store, table: str, colonne: str) -> bool:
+    """Vrai si la table porte cette colonne.
+
+    Teste plutot que suppose : le schema evolue par migrations additives, donc
+    un conteneur en retard n'a pas forcement la derniere colonne.
+    """
+    try:
+        rows = store.query(f"PRAGMA table_info({table})")
+    except Exception:
+        return False
+    return any((r["name"] or "") == colonne for r in rows)
+
+
 def cmd_demandes(args, cfg: Config) -> int:
     """L'etat des demandes reelles, et le skill charge dans la foulee.
 
@@ -1600,6 +1616,22 @@ def cmd_demandes(args, cfg: Config) -> int:
             )
             _emit(out, args)
             return 0
+        # Le taux de corrections melangeait les plateformes : 88 demandes sur
+        # 525 sont `cron`, et un prompt de cron n'a pas la meme chance de
+        # produire un aveu d'erreur qu'une question de collegue.
+        par_plat = {
+            (r["platform"] or "(vide)"): r["n"] for r in store.query(
+                "SELECT platform, COUNT(*) n FROM corrections "
+                "GROUP BY platform ORDER BY n DESC LIMIT 10"
+            )
+        } if _a_colonne(store, "corrections", "platform") else None
+        if par_plat is not None:
+            out["corrections_par_plateforme"] = par_plat
+        else:
+            out["corrections_par_plateforme"] = (
+                "non ventilable : la table `corrections` ne porte pas de "
+                "plateforme, alors que les demandes en portent une"
+            )
         out["injections_systeme"] = len(injections)
         out["demandes_de_collegues"] = len(textes) - len(injections)
         if len(textes):
@@ -1877,6 +1909,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="preparer des demandes reelles a juger a la main",
     )
     ec.add_argument("-n", "--taille", type=int, default=50)
+    ec.add_argument(
+        "--par-session", type=int, default=1,
+        help="au plus N demandes par conversation (defaut %(default)s). "
+             "L'effectif reel d'une mesure est le nombre de conversations, "
+             "pas de demandes",
+    )
+    ec.add_argument(
+        "--aveugle", action="store_true",
+        help="ne pas afficher les candidats : la reponse est un nom, "
+             "independante de GK, mais plus lente a ecrire",
+    )
     ec.set_defaults(func=cmd_echantillon)
 
     rp = sub.add_parser(

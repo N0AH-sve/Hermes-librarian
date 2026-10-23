@@ -372,7 +372,9 @@ def test_l_echantillon_n_injecte_pas_le_futur_dans_ses_candidats(svc):
     svc.request("s1", "bonjour tout le monde")
     svc.request("s1", "les marges et le prix plancher du catalogue")
     index = Index.construire(svc.store)
-    texte = preparer(svc.store, index, taille=10)
+    # Les deux tours de la meme session sont necessaires ici : c'est
+    # precisement le second qui pourrait fuir dans le classement du premier.
+    texte = preparer(svc.store, index, taille=10, par_session=2)
     # Le bloc du premier tour ne doit pas etre classe grace au second.
     bloc = texte.split("## ")
     premier = [b for b in bloc if b.startswith("1. ") or b.startswith("2. ")]

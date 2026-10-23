@@ -109,7 +109,9 @@ def test_un_cas_sans_aucun_candidat_est_conserve(prepare):
 
 def test_la_relecture_tolere_les_lignes_mal_remplies(prepare):
     svc, index = prepare
-    texte = preparer(svc.store, index, taille=10)
+    # `par_session=3` : ce test a besoin de trois cas, et la regle par defaut
+    # n'en tire qu'un par conversation.
+    texte = preparer(svc.store, index, taille=10, par_session=3)
     # Une reponse vide, une « ? », une absurde : aucune ne doit etre fatale.
     lignes = texte.splitlines()
     marqueurs = [i for i, l in enumerate(lignes) if l.startswith(MARQUEUR)]
@@ -951,3 +953,54 @@ def test_l_echantillon_demande_une_signature(prepare):
     texte = preparer(svc.store, index, taille=5)
     assert "ANNOTATEUR:" in texte
     assert "ne peut pas arbitrer" in texte
+
+
+def test_l_echantillon_tire_une_demande_par_conversation(prepare):
+    """Le reglage qui compte le plus pour une heure d'annotation.
+
+    Le releve du 2026-10-23 a tire 37 demandes de seulement 12 conversations,
+    soit 3,1 par session. Or les demandes d'une meme conversation ont presque
+    toujours le meme bon skill -- 21 skills attendus pour 12 sessions -- donc
+    elles ne comptent pas pour deux : l'effectif reel d'une mesure est le
+    nombre de conversations.
+    """
+    svc, index = prepare
+    # Le fixture porte deux demandes sur s1 et une sur s2.
+    texte = preparer(svc.store, index, taille=10)
+    cas = relire(texte)
+    assert len(cas) == 2, "une par conversation, pas trois"
+    assert "conversations distinctes" in texte
+
+    large = relire(preparer(svc.store, index, taille=10, par_session=3))
+    assert len(large) == 3, "le reglage reste ouvrable"
+
+
+def test_l_echantillon_aveugle_n_affiche_aucun_candidat(prepare):
+    """Montrer les cinq fait gagner du temps mais ancre : l'annotateur choisit
+    dans la liste au lieu de chercher dans la bibliotheque.
+
+    Sans eux la reponse est un nom, independante de GK.
+    """
+    svc, index = prepare
+    texte = preparer(svc.store, index, taille=10, aveugle=True)
+    cas = relire(texte)
+    assert cas and all(not c["candidats"] for c in cas)
+    assert MARQUEUR in texte and "## 1." in texte
+
+
+def test_une_demande_tronquee_est_signalee_dans_l_echantillon(tmp_path):
+    """Une demande coupee a l'enregistrement a pu perdre les mots qui
+    identifiaient le skill : ce n'est pas un echec de recherche, et
+    l'annotateur doit le voir. 61 demandes sur 525 sont dans ce cas."""
+    from gk.corrections import REQUEST_MAX_CHARS
+
+    svc = Service.open(tmp_path / "tr.db")
+    Catalog(svc.store).ingest([
+        {"path": "a/x/SKILL.md", "name": "gm-x", "description": "un sujet",
+         "category": "c", "fingerprint": "1"},
+    ], complete=True)
+    svc.request("s1", "mot " * 600, platform="discord")
+    index = Index.construire(svc.store)
+    texte = preparer(svc.store, index, taille=5)
+    svc.close()
+    assert f"TRONQUEE a {REQUEST_MAX_CHARS}" in texte

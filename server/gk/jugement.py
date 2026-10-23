@@ -86,6 +86,10 @@ _CONSIGNE = (
     "La distinction entre un nom et `0` est celle qui porte la mesure : sans",
     "elle, le rappel dans les cinq vaut mecaniquement l'inverse du taux de `0`",
     "et ne mesure plus rien.",
+    "",
+    "Les cinq propositions sont une commodite, pas un menu. Si le bon skill",
+    "n'y est pas, ecrivez son nom : c'est la reponse la plus utile du lot,",
+    "parce qu'elle est la seule qui ne vienne pas de GK.",
 )
 
 
@@ -194,8 +198,32 @@ def _une_ligne(texte: str) -> str:
     return " ".join((texte or "").split())
 
 
-def preparer(store: Store, index: Index, taille: int = 50, par_page: int = 5) -> str:
-    """Rend l'echantillon, en texte a annoter."""
+def preparer(
+    store: Store,
+    index: Index,
+    taille: int = 50,
+    par_page: int = 5,
+    par_session: int = 1,
+    aveugle: bool = False,
+) -> str:
+    """Rend l'echantillon, en texte a annoter.
+
+    **Une demande par session, et c'est le reglage qui compte le plus.** Le
+    releve du 2026-10-23 a tire 37 demandes de seulement **12 conversations**,
+    soit 3,1 par session. Or les demandes d'une meme conversation partagent
+    presque toujours le meme bon skill -- 21 skills attendus pour 12 sessions --
+    donc elles ne sont pas des observations independantes, et l'effectif reel
+    d'une mesure est le nombre de SESSIONS.
+
+    A heure d'annotation egale, une demande par session **triple** l'effectif.
+
+    `aveugle` cache les candidats. Les montrer fait gagner du temps mais ancre :
+    l'annotateur choisit dans la liste au lieu de chercher dans la
+    bibliotheque. Sans eux la reponse est un nom, plus lente a ecrire et
+    independante de GK -- `gk juger` ne sait pas lire un tel fichier, mais
+    `gk reetalonner` et `gk ordonnance` recalculent les rangs depuis l'index.
+    """
+    from .corrections import REQUEST_MAX_CHARS
     from .recherche import jetons
 
     rows = store.query(
@@ -218,13 +246,35 @@ def preparer(store: Store, index: Index, taille: int = 50, par_page: int = 5) ->
                 par_tranche[borne].append(row)
                 break
     choisis: list = []
+    vues: dict[str, int] = {}
+
+    def retenir(r) -> bool:
+        """Au plus `par_session` demandes par conversation."""
+        sess = r["session_id"] or ""
+        if vues.get(sess, 0) >= max(1, par_session):
+            return False
+        vues[sess] = vues.get(sess, 0) + 1
+        return True
+
     quota = max(1, taille // len(TRANCHES))
     for borne in TRANCHES:
-        choisis.extend(par_tranche[borne][:quota])
-    # On complete avec les plus recentes si une tranche etait maigre.
+        pris = 0
+        for r in par_tranche[borne]:
+            if pris >= quota:
+                break
+            if retenir(r):
+                choisis.append(r)
+                pris += 1
+    # On complete avec les plus recentes si une tranche etait maigre, en
+    # gardant la regle d'une demande par session.
     if len(choisis) < taille:
         deja = {id(r) for r in choisis}
-        choisis.extend(r for r in rows if id(r) not in deja)
+        for r in rows:
+            if len(choisis) >= taille:
+                break
+            if id(r) in deja or not retenir(r):
+                continue
+            choisis.append(r)
     choisis = choisis[:taille]
 
     lignes = [
@@ -241,9 +291,16 @@ def preparer(store: Store, index: Index, taille: int = 50, par_page: int = 5) ->
         "",
         "N'ajoutez rien d'autre : le reste du fichier est relu tel quel.",
         "",
-        f"{len(choisis)} demandes, prises parmi les plus recentes et reparties",
-        "par longueur, parce qu'une demande courte et une longue ne posent pas le",
-        "meme probleme.",
+        f"{len(choisis)} demandes tirees de {len(vues)} conversations "
+        f"distinctes, au plus {max(1, par_session)} par conversation.",
+        "",
+        "C'est le reglage qui compte le plus : les demandes d'une meme",
+        "conversation ont presque toujours le meme bon skill, donc elles ne",
+        "comptent pas pour deux. L'effectif reel d'une mesure est le nombre de",
+        "conversations.",
+        "",
+        "Elles sont aussi reparties par longueur, parce qu'une demande courte et",
+        "une longue ne posent pas le meme probleme.",
         "",
         f"<!-- {ecartees} demandes ecartees : taches planifiees (plateforme "
         "`cron`) et bannieres du systeme. Aucun skill ne sert un prompt de "
@@ -271,12 +328,26 @@ def preparer(store: Store, index: Index, taille: int = 50, par_page: int = 5) ->
         # jusqu'a 29 fois, et l'appariement par texte retenait la plus recente
         # -- donc la mauvaise session et le mauvais horodatage.
         lignes.append(f"<!-- demande #{row['id']} -->")
+        if len(row["text_truncated"] or "") >= REQUEST_MAX_CHARS:
+            # La demande a ete coupee a l'enregistrement : les mots qui
+            # identifiaient le skill peuvent manquer, et ce n'est pas un echec
+            # de recherche. 61 demandes sur 525 sont dans ce cas.
+            lignes.append(
+                f"<!-- TRONQUEE a {REQUEST_MAX_CHARS} caracteres : la suite "
+                "manque -->"
+            )
         if contexte:
             lignes.append(f"<!-- contexte : {len(contexte)} tour(s) precedent(s) -->")
-        if not resultats:
+        if aveugle:
+            pass  # aucun candidat : la reponse est un nom, independante de GK
+        elif not resultats:
             lignes.append("   (aucun skill propose)")
-        for rang, r in enumerate(resultats, start=1):
-            lignes.append(f"   {rang}. {r['name']}   [{r['category']}]  score {r['score']}")
+        else:
+            for rang, r in enumerate(resultats, start=1):
+                lignes.append(
+                    f"   {rang}. {r['name']}   [{r['category']}]  "
+                    f"score {r['score']}"
+                )
         lignes.append(f"{MARQUEUR} ")
         lignes.append("")
     return "\n".join(lignes) + "\n"
