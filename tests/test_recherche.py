@@ -605,6 +605,97 @@ def test_les_paires_trop_proches_sont_signalees(tmp_path, capsys, monkeypatch):
     assert any("n'a pas ete utilise" in l for l in out["lecture"])
 
 
+def test_un_doublon_de_nom_n_est_pas_une_paire_confuse(tmp_path, capsys, monkeypatch):
+    """Relevé du 2026-10-23 : `gk confusions` rendait des paires d'un skill avec
+    lui-meme, proximite 1,0 -- `dogfood`, `codebase-inspection`. Ce n'etait pas
+    un defaut du rapport : les journaux de gb annoncaient
+    \u00ab 4 user-modified (kept) \u00bb, donc une version groupee et une version
+    locale coexistent. prompt_builder deduplique par nom, GK indexait les deux.
+
+    Un doublon a desormais son propre rapport, et ne masque plus les vraies
+    paires.
+    """
+    store = Store(tmp_path / "db.db")
+    cat = Catalog(store)
+    cat.ingest([
+        {"path": "software-development/dogfood/SKILL.md", "name": "dogfood",
+         "description": "Essayer le produit soi-meme en situation reelle.",
+         "category": "software-development", "fingerprint": "1"},
+        {"path": "bundled/dogfood/SKILL.md", "name": "dogfood",
+         "description": "Essayer le produit soi-meme en situation reelle.",
+         "category": "bundled", "fingerprint": "1"},
+    ], complete=True)
+    store.close()
+    monkeypatch.setenv("GK_DATABASE", str(tmp_path / "db.db"))
+    assert cli_main(["--json", "confusions"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["doublons_de_nom"] == [{
+        "name": "dogfood",
+        "chemins": ["bundled/dogfood/SKILL.md",
+                    "software-development/dogfood/SKILL.md"],
+    }]
+    assert out["paires"] == 0, "un doublon n'est pas une paire confuse"
+    assert any("MEME nom" in l for l in out["lecture"])
+
+
+def test_les_paires_portent_leurs_chemins(tmp_path, capsys, monkeypatch):
+    store = Store(tmp_path / "ch.db")
+    peupler(store, {
+        "proche-a": ("Texte entierement commun et partage ici.", []),
+        "proche-b": ("Texte entierement commun et partage ici.", []),
+    })
+    store.close()
+    monkeypatch.setenv("GK_DATABASE", str(tmp_path / "ch.db"))
+    assert cli_main(["--json", "confusions"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["detail"][0]["chemins"] == [
+        "cat/proche-a/SKILL.md", "cat/proche-b/SKILL.md"
+    ]
+
+
+# -- la liste de ce qu'il faut ecrire -------------------------------------
+
+
+def test_les_manques_disent_quels_mots_ajouter(tmp_path, capsys, monkeypatch):
+    """67 % des echecs relevent de la redaction : le travail utile est une liste
+    de courses, pas une statistique."""
+    store = Store(tmp_path / "mq.db")
+    peupler(store, {
+        "hermes-multi-model-routing": (
+            "Choisir entre plusieurs fournisseurs.",
+            [("Déclencheurs", '- « glm pour ceci, deepseek pour cela »')],
+        ),
+        "autre-skill": ("Rien a voir.", [("Déclencheurs", '- « tout autre chose »')]),
+    })
+    store.close()
+    monkeypatch.setenv("GK_DATABASE", str(tmp_path / "mq.db"))
+    assert cli_main(["--json", "manques"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    cible = [g for g in out["detail"] if g["name"] == "hermes-multi-model-routing"]
+    assert cible, "le skill dont la citation est retiree doit apparaitre"
+    # Les mots de sa propre citation manquent au reste de son texte.
+    assert "glm" in cible[0]["mots_manquants"]
+    assert "deepseek" in cible[0]["mots_manquants"]
+    assert cible[0]["exemples"]
+    assert any("MANQUENT" in l for l in out["lecture"])
+
+
+def test_les_manques_ignorent_un_skill_qui_porte_deja_les_mots(tmp_path, capsys, monkeypatch):
+    store = Store(tmp_path / "mq2.db")
+    peupler(store, {
+        "gm-complet": (
+            "Factures fournisseurs proforma et port.",
+            [("Déclencheurs", '- « factures fournisseurs proforma »')],
+        ),
+    })
+    store.close()
+    monkeypatch.setenv("GK_DATABASE", str(tmp_path / "mq2.db"))
+    assert cli_main(["--json", "manques"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    noms = [g["name"] for g in out["detail"]]
+    assert "gm-complet" not in noms, "sa description porte deja les mots"
+
+
 def test_une_interdiction_est_signalee_sur_la_paire(tmp_path, capsys, monkeypatch):
     store = Store(tmp_path / "ci.db")
     peupler(store, {

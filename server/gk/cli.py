@@ -666,6 +666,46 @@ def _lire_banc(out: dict, gain: float) -> list[str]:
     return lignes
 
 
+def cmd_manques(args, cfg: Config) -> int:
+    """La liste de ce qu'il faut ecrire, groupee par skill.
+
+    67 % des echecs du banc relevent de la redaction (releve du 2026-10-23) :
+    48 cas ou le skill attendu ne porte AUCUN mot de la demande, 12 ou un
+    concurrent porte les siens et plus. Aucun coefficient n'y changera rien, et
+    le travail utile est une liste de courses -- pas une statistique.
+    """
+    with Store(cfg.database) as store:
+        index = Index.construire(store)
+        if index.n == 0:
+            _emit({"ok": False, "erreur": "catalogue vide, voir `gk catalogue`"}, args)
+            return 1
+        cas = index.corpus()
+        if not cas:
+            _emit({
+                "ok": False,
+                "erreur": "aucune phrase citee dans les declencheurs",
+                "suite": "voir `gk declencheurs`",
+            }, args)
+            return 1
+        manques = index.manques(cas)
+        _emit({
+            "ok": True,
+            "cas_examines": len(cas),
+            "skills_a_enrichir": len(manques),
+            "detail": manques[: max(1, args.limite)],
+            "lecture": [
+                "Pour chaque skill : les demandes qu'il devrait capter, et les "
+                "mots qui MANQUENT a son texte.",
+                "Ajouter ces mots a sa description ou a ses declencheurs est le "
+                "seul levier qui puisse monter le rappel en premiere position : "
+                "le reglage des coefficients ne touche qu'un tiers des echecs.",
+                "Un mot deja present ailleurs dans la bibliotheque rapportera "
+                "moins qu'un mot propre au skill : c'est l'IDF qui decide.",
+            ],
+        }, args)
+    return 0
+
+
 def cmd_confusions(args, cfg: Config) -> int:
     """Les paires de skills trop proches pour etre departagees.
 
@@ -680,23 +720,41 @@ def cmd_confusions(args, cfg: Config) -> int:
             return 1
         paires = index.confusions(seuil=args.seuil)
         sans_interdiction = [p for p in paires if not p["interdiction"]]
-        _emit({
-            "ok": True,
-            "skills_indexes": index.n,
-            "seuil": args.seuil,
-            "paires": len(paires),
-            "paires_sans_aucune_interdiction": len(sans_interdiction),
-            "detail": paires[: max(1, args.limite)],
-            "lecture": [
+        doublons = index.doublons_de_nom()
+        lecture = []
+        if doublons:
+            lecture.append(
+                f"{len(doublons)} skills portent le MEME nom a deux chemins "
+                "differents. Ce n'est pas une paire confuse, c'est un doublon : "
+                "Hermes livre une version groupee, la version locale est gardee, "
+                "et les deux coexistent. prompt_builder deduplique par nom donc "
+                "gb n'en voit qu'un, mais GK indexe les deux -- ils se "
+                "concurrencent et se partagent l'IDF, ce qui abaisse leur score "
+                "a tous les deux."
+            )
+        if paires:
+            lecture += [
                 "La moitie negative des declencheurs EST le mecanisme de "
                 "desambiguisation prevu par la conception.",
                 f"{len(sans_interdiction)} paires sur {len(paires)} n'ont "
                 "d'interdiction d'aucun cote : le mecanisme existe et n'a pas "
                 "ete utilise. C'est la que l'ecriture rapporte le plus.",
-            ] if paires else [
-                f"Aucune paire au-dela de {args.seuil} de proximite : la "
-                "bibliotheque se distingue bien d'elle-meme a ce seuil."
-            ],
+            ]
+        else:
+            lecture.append(
+                f"Aucune paire au-dela de {args.seuil} de proximite. Abaisser "
+                "--seuil pour voir les paires moins proches : `baoyu-comic` et "
+                "`baoyu-infographic` se confondent au banc sans atteindre 0,6."
+            )
+        _emit({
+            "ok": True,
+            "skills_indexes": index.n,
+            "seuil": args.seuil,
+            "doublons_de_nom": doublons,
+            "paires": len(paires),
+            "paires_sans_aucune_interdiction": len(sans_interdiction),
+            "detail": paires[: max(1, args.limite)],
+            "lecture": lecture,
         }, args)
     return 0
 
@@ -961,6 +1019,13 @@ def build_parser() -> argparse.ArgumentParser:
     b.add_argument("-n", "--limite", type=int, default=5, help="rang maximal compte")
     b.add_argument("--echecs", type=int, default=5, help="nombre d'echecs a montrer")
     b.set_defaults(func=cmd_banc)
+
+    mq = sub.add_parser(
+        "manques",
+        help="ce qu'il faut ECRIRE : les mots qui manquent a chaque skill",
+    )
+    mq.add_argument("-n", "--limite", type=int, default=20)
+    mq.set_defaults(func=cmd_manques)
 
     cf = sub.add_parser(
         "confusions",

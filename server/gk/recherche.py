@@ -370,6 +370,72 @@ class Index:
 
     # -- paires que rien ne separe -------------------------------------------
 
+    def doublons_de_nom(self) -> list[dict]:
+        """Les skills qui portent le MEME nom a des chemins differents.
+
+        Relevé du 2026-10-23 : `gk confusions` a rendu des paires d'un skill avec
+        lui-meme, proximite 1,0 -- `dogfood` et `codebase-inspection`. Ce
+        n'etait pas un defaut du rapport. Les journaux de gb le disaient deja :
+        « 4 user-modified (kept): codebase-inspection, dogfood, powerpoint,
+        computer-use ». Hermes livre une version groupee, la version locale est
+        gardee, et les deux coexistent dans l'arborescence.
+
+        `prompt_builder` deduplique par nom, donc gb n'en voit qu'un. GK indexe
+        les deux : ils se concurrencent et se partagent l'IDF, ce qui abaisse
+        leur score a tous les deux.
+        """
+        par_nom: dict[str, list[str]] = {}
+        for skill in self.skills:
+            if skill.name:
+                par_nom.setdefault(skill.name, []).append(skill.path)
+        return [
+            {"name": nom, "chemins": sorted(chemins)}
+            for nom, chemins in sorted(par_nom.items())
+            if len(chemins) > 1
+        ]
+
+    def manques(self, cas: list[tuple[str, str, str]]) -> list[dict]:
+        """La liste de ce qu'il faut ECRIRE, groupee par skill.
+
+        67 % des echecs du banc relevent de la redaction, donc le travail utile
+        n'est pas un reglage de coefficients : c'est une liste de descriptions a
+        enrichir. Pour chaque skill, les demandes qu'il devrait capter et les
+        **mots qui manquent a son texte** -- pas une statistique, une liste de
+        courses.
+        """
+        par_nom = {s.name: s for s in self.skills}
+        groupes: dict[str, dict] = {}
+        for demande, attendu, ligne in cas:
+            cible = par_nom.get(attendu)
+            if cible is None:
+                continue
+            jetons_demande = jetons(demande)
+            if not jetons_demande:
+                continue
+            portes = self.jetons_apparies(cible, jetons_demande, exclure_exemple=ligne)
+            manquants = [j for j in jetons_demande if j not in portes]
+            if not manquants:
+                continue
+            groupe = groupes.setdefault(
+                attendu,
+                {"name": attendu, "category": cible.category, "cas": 0,
+                 "mots_manquants": {}, "exemples": []},
+            )
+            groupe["cas"] += 1
+            for j in manquants:
+                groupe["mots_manquants"][j] = groupe["mots_manquants"].get(j, 0) + 1
+            if len(groupe["exemples"]) < 3:
+                groupe["exemples"].append(demande)
+        sortie = []
+        for groupe in groupes.values():
+            mots = sorted(
+                groupe["mots_manquants"].items(), key=lambda kv: (-kv[1], kv[0])
+            )
+            groupe["mots_manquants"] = [m for m, _ in mots[:12]]
+            sortie.append(groupe)
+        sortie.sort(key=lambda g: (-g["cas"], g["name"]))
+        return sortie
+
     def confusions(self, seuil: float = 0.6) -> list[dict]:
         """Les paires de skills dont les textes sont trop proches pour être
         départagés.
@@ -393,6 +459,11 @@ class Index:
         paires: list[dict] = []
         for i, (a, sac_a) in enumerate(sacs):
             for b, sac_b in sacs[i + 1:]:
+                # Un meme nom a deux chemins n'est pas une paire confuse, c'est
+                # un doublon : il a son propre rapport, et le melanger ici
+                # masquait les vraies paires.
+                if a.name and a.name == b.name:
+                    continue
                 commun = len(sac_a & sac_b)
                 if not commun:
                     continue
@@ -401,6 +472,7 @@ class Index:
                     continue
                 paires.append({
                     "skills": sorted((a.name, b.name)),
+                    "chemins": sorted((a.path, b.path)),
                     "proximite": round(jaccard, 3),
                     "jetons_communs": commun,
                     # Le point qui rend la ligne actionnable.

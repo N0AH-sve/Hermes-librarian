@@ -1864,6 +1864,61 @@ sans FTS5 ni BM25 : il vient des 296 phrases écrites à la main. **La valeur es
 dans la bibliothèque ; l'outil la rend utilisable.** C'est ce qu'il faut dire aux
 décideurs, et c'est vérifiable.
 
+## Le plafond est dans la bibliothèque, et il est mesuré
+
+**Objectif fixé par GM le 2026-10-23 : le bon skill en première position 9 fois
+sur 10.** La décomposition des échecs dit ce que cela demande.
+
+| Cause de l'échec | Cas | Remède |
+|---|---|---|
+| `texte_absent` — le skill attendu ne marque **aucun point** | **48** | Rédaction |
+| `texte_domine` — le gagnant porte tous ses jetons, et plus | **12** | Rédaction |
+| `ordre` — les deux marquent, le classement se trompe | **29** | Score |
+
+**67 % des échecs relèvent de la rédaction.** Donc en corrigeant *parfaitement*
+les 29 échecs de classement, le rappel en première position passerait de 0,448 à
+environ 0,56. **Les 9/10 ne sont pas atteignables par le moteur.** Ce n'est plus
+une opinion, c'est une borne calculée.
+
+Le travail utile n'est donc pas un réglage de coefficients, c'est une liste de
+courses : `gk manques` rend, pour chaque skill, les demandes qu'il devrait
+capter et **les mots qui manquent à son texte**.
+
+### Quatrième hypothèse rejetée : la normalisation par la longueur
+
+Elle **nuit** : 0,482 contre 0,531 de MRR. Et le détail corrige mon mécanisme à
+moitié : elle **aide** le générique (0,392 → 0,422) et **abîme** le métier
+(0,598 → 0,511). Le biais de longueur existait donc bien, mais le remède coûte
+plus qu'il ne rapporte — et on ne peut pas l'appliquer à une seule population
+sans rendre les scores incomparables. Laissée désactivée.
+
+Quatre hypothèses de score testées, quatre rejetées : pondération par
+population, retrait de la prose, normalisation par la longueur, et (plus tôt) la
+déduplication des marqueurs de négation. Aucune n'a déplacé le résultat de plus
+de quelques centièmes. C'est cohérent avec les 67 %.
+
+### Des skills en double, trouvés par accident
+
+`gk confusions` a rendu des paires d'un skill **avec lui-même**, proximité 1,0 :
+`dogfood` et `codebase-inspection`. Les journaux de gb l'annonçaient déjà :
+« 4 user-modified (kept): codebase-inspection, dogfood, powerpoint,
+computer-use ». Hermes livre une version groupée, la version locale est gardée,
+et **les deux coexistent dans l'arborescence**.
+
+`prompt_builder` déduplique par nom, donc gb n'en voit qu'un. **GK indexe les
+deux** : ils se concurrencent et se partagent l'IDF, ce qui abaisse le score des
+deux. Les doublons ont désormais leur propre rapport, séparé des paires
+simplement proches — qu'ils masquaient.
+
+### Ce que la moitié négative devait faire, et ne fait pas encore
+
+Remarque de GM : un skill est censé porter une description, une ligne de
+déclenchement **et une ligne d'interdiction**. C'est juste, et c'est le
+mécanisme de désambiguïsation prévu par la conception. Il est utilisé par **31
+skills sur 186**. Deux skills que rien ne sépare sont donc deux skills dont l'un
+n'a pas écrit son interdiction, et `gk confusions` dit pour chaque paire lequel
+des deux en porte une.
+
 ## Le fossé de connaissance : GK n'avait jamais vu une demande réelle
 
 **Constat de GM, le 2026-10-22, et il invalide la portée de tout ce qui précède.**
