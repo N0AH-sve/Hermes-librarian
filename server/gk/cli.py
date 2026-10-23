@@ -26,7 +26,7 @@ from pathlib import Path
 from .catalog import Catalog
 from .config import Config
 from .declencheurs import decouper, lecture, mesurer
-from .jugement import juger, preparer, relire
+from .jugement import REPRISE_JUSQU_A, juger, preparer, reprise, relire
 from .corrections import (
     BAD_RECOMMENDATION,
     BRIEF_IGNORED,
@@ -269,6 +269,10 @@ def cmd_catalogue(args, cfg: Config) -> int:
                 "SELECT COUNT(*) c FROM skills WHERE missing_since IS NULL AND description = ''"
             )
             out["sans_description"] = int(sans_desc["c"]) if sans_desc else 0
+        if getattr(args, "noms", False):
+            # Pour annoter un echantillon, il faut pouvoir retrouver un nom :
+            # personne ne tient 186 noms de tete.
+            out = {"skills": sorted(catalogue.live_names())}
         _emit(out, args)
     return 0
 
@@ -433,6 +437,9 @@ def cmd_juger(args, cfg: Config) -> int:
 
     Les deux chiffres qu'on attend depuis le debut, sur de vraies demandes et
     non sur des phrases ecrites par les auteurs des skills.
+
+    Deux fichiers concatenes se relisent ensemble -- `cat echantillon.txt
+    reprise.txt | gk juger` -- et le second corrige le premier.
     """
     texte = sys.stdin.read()
     cas = relire(texte)
@@ -447,24 +454,81 @@ def cmd_juger(args, cfg: Config) -> int:
     if not resultat.get("ok"):
         _emit(resultat, args)
         return 1
-    resultat["lecture"] = [
-        "Chiffres sur de VRAIES demandes, enfin : tout ce qui precede etait "
-        "mesure sur des phrases ecrites par les auteurs des skills.",
-        f"Rappel en premiere position : {resultat['rappel_1_reel']}. Dans les "
-        f"cinq : {resultat['rappel_5_reel']}.",
+
+    lecture = [
+        "Chiffres sur de VRAIES demandes : tout ce qui precede etait mesure "
+        "sur des phrases ecrites par les auteurs des skills.",
+        "Denominateur : les demandes qu'un skill de la bibliotheque peut "
+        "servir. Une demande que rien ne sert n'est pas un echec de recherche.",
     ]
-    if resultat["part_sans_reponse_possible"] >= 0.25:
-        resultat["lecture"].append(
-            f"{resultat['part_sans_reponse_possible']:.0%} des demandes n'ont "
-            "AUCUN skill qui convienne. Ce n'est pas un echec de recherche : "
-            "c'est un trou de la bibliotheque, ou une demande qui n'appelle "
-            "aucun skill. Les compter comme des echecs fausserait le jugement."
+    if resultat.get("version_echantillon", 1) < 2:
+        # L'ambiguite de la v1 passe AVANT les chiffres : un intervalle lu
+        # comme un point est pire qu'une absence de chiffre.
+        lecture.append("AMBIGU : " + resultat["avertissement"])
+        lecture.append(
+            f"Rappel en premiere position : entre "
+            f"{resultat['rappel_1_borne_basse']} et "
+            f"{resultat['rappel_1_borne_haute']}. La borne haute suppose que "
+            "tous les `0` sont de vrais trous de la bibliotheque."
         )
+        lecture.append(
+            "Le rappel dans les cinq n'est PAS mesure : le format n'offrait "
+            "aucune facon de dire « le bon skill existe, hors de cette "
+            "liste », donc toute reponse non nulle designe un des cinq par "
+            "construction."
+        )
+        lecture.append(
+            f"Suite : gk reprise < fichier > reprise.txt, annoter les "
+            f"{resultat['ambigus']} cas, puis "
+            "cat fichier reprise.txt | gk juger"
+        )
+    else:
+        lecture.append(
+            f"Rappel en premiere position : {resultat['rappel_1_reel']}. "
+            f"Dans les cinq : {resultat['rappel_5_reel']}. "
+            f"Sur {resultat['demandes_servables']} demandes servables."
+        )
+        if resultat.get("part_sans_reponse_possible", 0) >= 0.25:
+            lecture.append(
+                f"{resultat['part_sans_reponse_possible']:.0%} des demandes "
+                "n'ont AUCUN skill qui convienne -- un trou de la "
+                "bibliotheque, ou une demande qui n'appelle aucun skill. "
+                "C'est un resultat, pas un echec de recherche."
+            )
+        if resultat.get(f"designe_hors_des_5"):
+            lecture.append(
+                f"{resultat['designe_hors_des_5']} demandes dont le bon skill "
+                "existe mais sort des cinq premiers : ce sont les echecs de "
+                "rappel, et eux seuls."
+            )
     if resultat["non_annotes"]:
-        resultat["lecture"].append(
-            f"{resultat['non_annotes']} cas sans reponse, ignores."
-        )
+        lecture.append(f"{resultat['non_annotes']} cas sans reponse, ignores.")
+    resultat["lecture"] = lecture
     _emit(resultat, args)
+    return 0
+
+
+def cmd_reprise(args, cfg: Config) -> int:
+    """Seconde passe sur les seuls cas ambigus d'un echantillon v1.
+
+    Un echantillon v1 ne distingue pas « aucun skill ne sert cette demande » de
+    « aucun de ces cinq-la ». Seuls les cas `0` portent la difference, donc
+    seuls eux sont a reprendre -- pas l'heure entiere.
+    """
+    texte = sys.stdin.read()
+    cas = relire(texte)
+    if not cas:
+        print(
+            "aucun cas lu : l'entree ne ressemble pas a un echantillon",
+            file=sys.stderr,
+        )
+        return 1
+    with Store(cfg.database) as store:
+        index = Index.construire(store)
+        if index.n == 0:
+            print("catalogue vide, voir `gk catalogue`", file=sys.stderr)
+            return 1
+        sys.stdout.write(reprise(store, index, cas, jusqu_a=args.jusqu_a))
     return 0
 
 
@@ -1481,9 +1545,14 @@ def build_parser() -> argparse.ArgumentParser:
     e.add_argument("-o", "--output", help="fichier de sortie")
     e.set_defaults(func=cmd_export)
 
-    sub.add_parser(
+    ca = sub.add_parser(
         "catalogue", help="l'etat du catalogue recu par manifeste"
-    ).set_defaults(func=cmd_catalogue)
+    )
+    ca.add_argument(
+        "--noms", action="store_true",
+        help="ne rendre que la liste des noms, pour annoter un echantillon",
+    )
+    ca.set_defaults(func=cmd_catalogue)
 
     sk = sub.add_parser("skill", help="les quatre champs indexes d'un skill")
     sk.add_argument("nom", help="nom du skill, ou fragment de son chemin")
@@ -1508,6 +1577,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     ec.add_argument("-n", "--taille", type=int, default=50)
     ec.set_defaults(func=cmd_echantillon)
+
+    rp = sub.add_parser(
+        "reprise",
+        help="seconde passe sur les cas « aucun ne convient » d'un echantillon",
+    )
+    rp.add_argument(
+        "--jusqu-a", type=int, default=REPRISE_JUSQU_A,
+        help="profondeur du classement montre (defaut %(default)s)",
+    )
+    rp.set_defaults(func=cmd_reprise)
 
     sub.add_parser(
         "juger",

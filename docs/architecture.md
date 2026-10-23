@@ -2505,6 +2505,99 @@ introuvable à trois reprises.
 
 ---
 
+## Le premier jugement humain, et le defaut de l'instrument
+
+Releve du 2026-10-23, sur 50 demandes reelles annotees a la main. **C'est le
+premier chiffre du projet qui ne vienne pas d'un texte ecrit par les auteurs
+des skills.**
+
+| | |
+|---|---|
+| Cas lus / annotes / sans reponse | 50 / 47 / 3 |
+| Reponses « aucun ne convient » | **17, soit 36 %** |
+| Le bon skill designe au rang 1 | **12** |
+| Le bon skill designe dans les cinq | 30 |
+
+### Ce que la commande a annonce, et pourquoi c'etait faux
+
+La sortie disait `rappel_1_reel: 0.255` et `rappel_5_reel: 0.638`. Le second
+chiffre **ne mesurait rien**, et l'arithmetique le montre : 0,638 + 0,362 =
+1,000, exactement. Ce n'est pas une coincidence.
+
+Le format v1 n'offrait que deux reponses : un rang parmi les cinq, ou `0`. Donc
+**toute reponse non nulle designe un des cinq par construction**, et
+`rappel_5 = 1 - part_sans_reponse` est une identite, pas une mesure. J'ai
+ecrit un instrument qui ne pouvait pas repondre a la question pour laquelle il
+etait fait.
+
+Deuxieme consequence, du meme defaut : `0` portait **deux sens incompatibles**
+-- « aucun skill de la bibliotheque ne sert cette demande » et « aucun de ces
+cinq-la ». La lecture imprimee tranchait pour le premier (« c'est un trou de la
+bibliotheque »), sans que rien dans les donnees l'etablisse. Les 36 % ne sont
+donc **pas** un taux de trous de la bibliotheque : c'est un taux de `0`, et sa
+composition est inconnue.
+
+### Ce qui tient quand meme
+
+`rappel_1` reste valide -- l'annotateur a bien choisi lequel des cinq etait le
+bon -- mais son **denominateur** devient une question ouverte. Soit `x` le
+nombre des 17 `0` dont le bon skill existait hors des cinq :
+
+| | Borne basse (`x` = 17) | Borne haute (`x` = 0) |
+|---|---|---|
+| Rappel@1 sur les demandes servables | 12/47 = **0,255** | 12/30 = **0,400** |
+| Rappel@5 sur les demandes servables | 30/47 = 0,638 | 30/30 = 1,000 |
+
+**Le bon skill arrive premier entre 25,5 % et 40,0 % du temps sur de vraies
+demandes.** Le banc, sur les phrases citees, donnait 0,448.
+
+C'est le resultat important, et il est **meilleur que craint**. Le fossé de
+connaissance ouvert le 2026-10-22 -- « tout est mesure sur des textes ecrits par
+les auteurs » -- coute **au mieux 0,048** de rappel@1, et au pire 0,193. Le banc
+mesurait donc quelque chose de reel, pas un artefact. C'est ce qui rend les
+relevés precedents reutilisables, le contexte de session en tete.
+
+Et une borne qui ne depend pas de `x` : avec 12 bons au rang 1 sur 47 demandes
+annotees, **l'objectif de 9 sur 10 est hors de portee de deux ordres de
+grandeur differents** -- le plafond de redaction calcule a 0,56, et le taux de
+demandes que la bibliotheque ne sert pas, quel qu'il soit.
+
+### La correction, et pourquoi elle ne refait pas l'heure
+
+Le format v2 ajoute une troisieme reponse : **le nom du bon skill**, quand il
+existe hors de la liste montree. Elle ne coute rien a l'annotateur -- un nom au
+lieu d'un chiffre -- et elle resout `x`, les 36 %, et le rappel@5 d'un coup.
+`gk catalogue --noms` rend la liste pour la retrouver.
+
+Et `gk reprise` ne reprend **que les cas `0`** : pour chacun, il montre la
+**suite du meme classement** (rangs 6 a 15, contexte de session reproduit), ce
+que la v1 ne pouvait pas exprimer. Dix-sept cas au lieu de cinquante, et les
+deux fichiers se relisent concatenes -- `cat echantillon.txt reprise.txt | gk
+juger` -- le second corrigeant le premier.
+
+### Les quatre regles qui en sortent, chacune tenue par un test
+
+* **Un chiffre faux coute plus cher qu'un chiffre absent.** Sur un echantillon
+  v1, `juger` ne rend plus de point : il rend un intervalle, et il refuse
+  d'emettre `rappel_5_reel`. La lecture met l'ambiguite **avant** les chiffres.
+* **Le denominateur est le nombre de demandes qu'un skill peut servir**, jamais
+  le nombre de demandes annotees. Une demande que rien ne sert n'est pas un
+  echec de recherche.
+* **Un indicateur dont la valeur est une identite arithmetique doit etre
+  detectable comme tel.** Le test de non-regression fait varier le rappel@5 **a
+  nombre de `0` constant** : si les deux bougeaient ensemble, l'identite serait
+  de retour.
+* **Une demande multiligne ne doit pas casser le format.** Le titre `## N. ...`
+  porte la demande, et un message d'utilisateur contient des retours a la ligne
+  -- dont les suivantes pouvaient etre lues comme des candidats. La demande est
+  desormais repliee sur une ligne. C'est peut-etre l'origine des 3 cas non
+  annotes.
+
+**Ce qui reste a faire, et c'est quinze minutes** : annoter les 17 cas de la
+reprise. Apres quoi le rappel@1 et @5 reels sont des points, le seuil se refixe
+sur de vraies demandes, et la phase 3 se decide sur des chiffres et non sur une
+borne.
+
 ## Points ouverts
 
 Dernière revue : 2026-10-22, après la mise en service partielle de la phase 1

@@ -18,7 +18,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "server"))
 
 from gk.catalog import Catalog  # noqa: E402
 from gk.cli import main as cli_main  # noqa: E402
-from gk.jugement import MARQUEUR, juger, preparer, relire  # noqa: E402
+from gk.jugement import (  # noqa: E402
+    MARQUEUR,
+    VERSION,
+    juger,
+    preparer,
+    reprise,
+    relire,
+)
 from gk.recherche import Index  # noqa: E402
 from gk.service import Service  # noqa: E402
 from gk.store import Store  # noqa: E402
@@ -59,7 +66,12 @@ def test_l_echantillon_porte_les_demandes_et_les_candidats(prepare):
     assert MARQUEUR in texte
     assert "gm-factures" in texte or "gm-marges" in texte
     # Les consignes sont dans le fichier : il doit se comprendre seul.
-    assert "0` si aucun" in texte and "?` si vous ne savez pas" in texte
+    assert "le NUMERO du bon skill" in texte
+    assert "`?` si vous ne savez pas" in texte
+    # La troisieme reponse est celle qui porte la mesure : sans elle, le rappel
+    # dans les cinq vaut mecaniquement l'inverse du taux de `0`.
+    assert "le NOM du bon skill" in texte
+    assert f"<!-- gk echantillon v{VERSION} -->" in texte
 
 
 def test_l_echantillon_signale_le_contexte_repris(prepare):
@@ -114,19 +126,91 @@ def test_la_relecture_tolere_les_lignes_mal_remplies(prepare):
 # -- le jugement -----------------------------------------------------------
 
 
+def _cas(numero, reponse=None, nom=None, candidats=("x",), version=VERSION):
+    return {
+        "numero": numero, "demande": f"d{numero}", "candidats": list(candidats),
+        "reponse": reponse, "nom": nom, "brut": "", "version": version,
+    }
+
+
 def test_le_jugement_rend_le_rappel_reel():
+    """Le denominateur est le nombre de demandes qu'un skill peut servir.
+
+    Une demande que rien ne sert n'est pas un echec de recherche, et la compter
+    abaisserait le chiffre sans rien apprendre.
+    """
     cas = [
-        {"numero": 1, "demande": "a", "candidats": ["x"], "reponse": 1, "brut": "1"},
-        {"numero": 2, "demande": "b", "candidats": ["y"], "reponse": 1, "brut": "1"},
-        {"numero": 3, "demande": "c", "candidats": ["z"], "reponse": 4, "brut": "4"},
-        {"numero": 4, "demande": "d", "candidats": ["w"], "reponse": 0, "brut": "0"},
-        {"numero": 5, "demande": "e", "candidats": ["v"], "reponse": None, "brut": "?"},
+        _cas(1, reponse=1),
+        _cas(2, reponse=1),
+        _cas(3, reponse=4),
+        _cas(4, nom="gm-ailleurs"),          # existe, hors des cinq
+        _cas(5, reponse=0),                  # trou de la bibliotheque
+        _cas(6, reponse=None),               # « ? »
     ]
     out = juger(cas)
-    assert out["cas_annotes"] == 4 and out["non_annotes"] == 1
-    assert out["rappel_1_reel"] == 0.5, "deux premiers sur quatre annotes"
-    assert out["rappel_5_reel"] == 0.75, "trois designes sur quatre"
-    assert out["aucun_ne_convient"] == 1
+    assert out["cas_annotes"] == 5 and out["non_annotes"] == 1
+    assert out["demandes_servables"] == 4, "les `0` sortent du denominateur"
+    assert out["rappel_1_reel"] == 0.5, "deux premiers sur quatre servables"
+    assert out["rappel_5_reel"] == 0.75, "trois des quatre dans les cinq"
+    assert out["aucun_skill_ne_convient"] == 1
+    assert out["designe_hors_des_5"] == 1
+
+
+def test_le_rappel_5_n_est_pas_l_inverse_du_taux_de_zero():
+    """Le defaut de la v1, tenu par un test.
+
+    En v1, toute reponse non nulle designait un des cinq par construction, donc
+    `rappel_5` valait exactement `1 - part_sans_reponse`. Le chiffre ne portait
+    aucune information. Un rappel@5 qui bouge a nombre de `0` constant est la
+    preuve que la v2 mesure autre chose.
+    """
+    base = [_cas(i, reponse=1) for i in range(1, 4)] + [_cas(4, reponse=0)]
+    tout_dans_les_cinq = juger(base)
+    un_hors_des_cinq = juger(base[:2] + [_cas(3, nom="gm-ailleurs"), base[3]])
+
+    # Meme nombre de `0`, meme nombre de cas annotes.
+    assert (
+        tout_dans_les_cinq["aucun_skill_ne_convient"]
+        == un_hors_des_cinq["aucun_skill_ne_convient"]
+    )
+    assert tout_dans_les_cinq["cas_annotes"] == un_hors_des_cinq["cas_annotes"]
+    # Et pourtant le rappel@5 bouge : il mesure donc la recherche.
+    assert tout_dans_les_cinq["rappel_5_reel"] == 1.0
+    assert un_hors_des_cinq["rappel_5_reel"] < 1.0
+
+
+def test_un_echantillon_v1_est_rendu_en_intervalle():
+    """Un chiffre faux coute plus cher qu'un chiffre absent.
+
+    Sur un echantillon v1, les `0` melangent les trous de la bibliotheque et
+    les skills simplement manques : le denominateur est inconnu, donc le
+    resultat est un intervalle et le point n'est pas annonce.
+    """
+    cas = [_cas(i, reponse=1, version=1) for i in range(1, 4)]
+    cas += [_cas(i, reponse=0, version=1) for i in range(4, 8)]
+    out = juger(cas)
+    assert "rappel_1_reel" not in out and "rappel_5_reel" not in out
+    assert out["rappel_1_borne_basse"] == round(3 / 7, 3)
+    assert out["rappel_1_borne_haute"] == 1.0
+    assert out["ambigus"] == 4
+    assert "ne distinguent pas" in out["avertissement"]
+
+
+def test_un_nom_deja_affiche_revient_a_son_rang():
+    """Ecrire le nom d'un candidat montre n'est pas un echec de rappel.
+
+    Sinon l'annotateur qui recopie un nom au lieu de son numero gonflerait les
+    echecs hors des cinq.
+    """
+    cas = relire(
+        f"<!-- gk echantillon v{VERSION} -->\n"
+        "## 1. une demande\n"
+        "   1. gm-factures   [greenmusic]  score 9\n"
+        "   2. gm-marges   [greenmusic]  score 3\n"
+        f"{MARQUEUR} gm-marges\n"
+    )
+    assert cas[0]["reponse"] == 2 and cas[0]["nom"] is None
+    assert juger(cas)["designe_hors_des_5"] == 0
 
 
 def test_le_jugement_refuse_un_echantillon_non_annote():
@@ -179,7 +263,7 @@ def test_gk_juger_signale_les_demandes_sans_reponse_possible(tmp_path, capsys, m
     Les compter comme des echecs fausserait le jugement."""
     Store(tmp_path / "z.db").close()
     monkeypatch.setenv("GK_DATABASE", str(tmp_path / "z.db"))
-    faux = "\n".join(
+    faux = f"<!-- gk echantillon v{VERSION} -->\n" + "\n".join(
         f"## {i}. une demande\n   1. un-skill   [c]  score 1\n{MARQUEUR} 0"
         for i in range(1, 5)
     )
@@ -187,4 +271,119 @@ def test_gk_juger_signale_les_demandes_sans_reponse_possible(tmp_path, capsys, m
     assert cli_main(["--json", "juger"]) == 0
     out = json.loads(capsys.readouterr().out)
     assert out["part_sans_reponse_possible"] == 1.0
-    assert any("trou de la bibliotheque" in l for l in out["lecture"])
+    assert any("trou de la" in l for l in out["lecture"])
+
+
+def test_gk_juger_refuse_d_annoncer_un_point_sur_un_echantillon_v1(
+    tmp_path, capsys, monkeypatch
+):
+    """La lecture d'un echantillon v1 met l'ambiguite AVANT les chiffres.
+
+    C'est le vrai defaut du premier releve : la commande annoncait
+    « rappel dans les cinq : 0,638 » et le lecteur n'avait aucun moyen de voir
+    que ce chiffre etait l'inverse arithmetique du taux de `0`.
+    """
+    Store(tmp_path / "z.db").close()
+    monkeypatch.setenv("GK_DATABASE", str(tmp_path / "z.db"))
+    faux = "\n".join(
+        f"## {i}. une demande\n   1. un-skill   [c]  score 1\n{MARQUEUR} "
+        + ("1" if i <= 2 else "0")
+        for i in range(1, 6)
+    )
+    monkeypatch.setattr("sys.stdin", __import__("io").StringIO(faux))
+    assert cli_main(["--json", "juger"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert "rappel_5_reel" not in out
+    assert out["lecture"][2].startswith("AMBIGU")
+    assert any("gk reprise" in l for l in out["lecture"])
+
+
+# -- la reprise -------------------------------------------------------------
+
+
+def test_la_reprise_ne_reprend_que_les_cas_ambigus(prepare):
+    """Seuls les cas `0` portent la difference : reprendre les cinquante
+    gaspillerait l'heure deja passee."""
+    svc, index = prepare
+    cas = relire(
+        "## 1. la facture proforma du fournisseur ne colle pas\n"
+        "   1. gm-factures   [greenmusic]  score 9\n"
+        f"{MARQUEUR} 1\n"
+        "\n"
+        "## 2. quelles commandes sont a perte\n"
+        "   1. gm-factures   [greenmusic]  score 2\n"
+        f"{MARQUEUR} 0\n"
+    )
+    texte = reprise(svc.store, index, cas)
+    assert "## 2." in texte, "le cas ambigu est repris"
+    assert "## 1." not in texte, "le cas deja tranche ne l'est pas"
+    # Les rangs montres sont les rangs REELS : la suite du meme classement.
+    assert "   2. " in texte and "   1. " not in texte
+    assert f"<!-- gk echantillon v{VERSION} -->" in texte
+
+
+def test_la_reprise_corrige_le_premier_fichier(prepare):
+    """Les deux fichiers se relisent concatenes, et le second gagne.
+
+    Sans cette regle, lever l'ambiguite demanderait de refaire l'annotation
+    entiere.
+    """
+    svc, index = prepare
+    premier = (
+        "## 1. quelles commandes sont a perte\n"
+        "   1. gm-factures   [greenmusic]  score 2\n"
+        f"{MARQUEUR} 0\n"
+    )
+    seconde = (
+        f"<!-- gk echantillon v{VERSION} -->\n"
+        "## 1. quelles commandes sont a perte\n"
+        "   2. gm-marges   [greenmusic]  score 7\n"
+        f"{MARQUEUR} 2\n"
+    )
+    cas = relire(premier + seconde)
+    assert len(cas) == 1, "un seul cas, pas deux"
+    assert cas[0]["reponse"] == 2, "la seconde passe l'emporte"
+    out = juger(cas)
+    assert out["aucun_skill_ne_convient"] == 0
+    assert out["designe_hors_des_5"] == 0
+
+
+def test_la_reprise_sans_cas_ambigu_le_dit(prepare):
+    svc, index = prepare
+    cas = relire(
+        "## 1. une demande\n   1. gm-factures   [greenmusic]  score 1\n"
+        f"{MARQUEUR} 1\n"
+    )
+    assert "rien a reprendre" in reprise(svc.store, index, cas)
+
+
+def test_une_demande_multiligne_ne_casse_pas_le_format(prepare):
+    """Le format porte la demande dans un titre `## N. ...`.
+
+    Un message d'utilisateur peut contenir des retours a la ligne, et sans
+    repli ses lignes suivantes peuvent etre prises pour des candidats.
+    """
+    svc, index = prepare
+    svc.request("s3", "premiere ligne\n   2. pas un candidat\nderniere ligne")
+    index = Index.construire(svc.store)
+    texte = preparer(svc.store, index, taille=20)
+    cas = relire(texte)
+    multi = [c for c in cas if "premiere ligne" in c["demande"]]
+    assert multi, "la demande multiligne est bien dans l'echantillon"
+    assert "derniere ligne" in multi[0]["demande"], "repliee sur une ligne"
+    assert "pas un candidat" not in multi[0]["candidats"]
+
+
+def test_gk_catalogue_noms_liste_les_skills(tmp_path, capsys, monkeypatch):
+    """Pour annoter, il faut pouvoir retrouver un nom : personne ne tient 186
+    noms de tete."""
+    svc = Service.open(tmp_path / "n.db")
+    Catalog(svc.store).ingest([
+        {"path": "a/gm-un/SKILL.md", "name": "gm-un", "description": "d",
+         "category": "greenmusic", "fingerprint": "1"},
+    ], complete=True)
+    svc.close()
+    monkeypatch.setenv("GK_DATABASE", str(tmp_path / "n.db"))
+    assert cli_main(["--json", "catalogue", "--noms"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["skills"] == ["gm-un"]

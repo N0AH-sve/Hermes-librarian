@@ -159,14 +159,14 @@
   <header style="display:flex;flex-direction:column;gap:0.9rem">
     <p class="eyebrow">Note technique interne &middot; 23 octobre 2026</p>
     <h1>GreenKnowledge</h1>
-    <p class="lede">Un service qui désigne, parmi les 186 procédures de gb, celles qui servent la demande du moment. Les deux premières phases sont livrées et tournent sur le serveur de production. Le moteur est mesuré, son plafond est connu, et la décision d'en injecter le résultat tient à une heure de travail humain.</p>
-    <p class="statut"><span>État</span> <span>phases 1 et 2 livrées &middot; observation en production &middot; rien n'est injecté dans gb</span></p>
+    <p class="lede">Un service qui désigne, parmi les 186 procédures de gb, celles qui servent la demande du moment. Les deux premières phases sont livrées et tournent sur le serveur de production. Le moteur est mesuré, son plafond est connu, et cinquante demandes réelles viennent d'être jugées à la main — le premier chiffre du projet qui ne vienne pas d'un texte écrit par les auteurs des procédures.</p>
+    <p class="statut"><span>État</span> <span>phases 1 et 2 livrées &middot; premier jugement humain rendu &middot; rien n'est injecté dans gb</span></p>
   </header>
 
   <div class="reperes">
     <div class="repere"><span class="v">186</span><span class="k">procédures au catalogue, tenu à jour tout seul</span></div>
     <div class="repere"><span class="v">261</span><span class="k">demandes réelles observées, aucune modifiée</span></div>
-    <div class="repere"><span class="v">0,68</span><span class="k">bon skill en 1<sup>re</sup> position, sur une conversation suivie</span></div>
+    <div class="repere"><span class="v">0,26&nbsp;&ndash;&nbsp;0,40</span><span class="k">bon skill en 1<sup>re</sup> position, jugé à la main sur de vraies demandes</span></div>
     <div class="repere"><span class="v">0,56</span><span class="k">plafond calculé du moteur seul</span></div>
   </div>
 
@@ -383,17 +383,38 @@
   </section>
 
   <section>
-    <p class="eyebrow">La décision</p>
-    <h2>Une heure d'annotation débloque tout le reste</h2>
-    <p>Trois questions sont aujourd'hui bloquées sur le même manque — <strong>aucune vérité terrain sur des demandes réelles</strong> : quel seuil retenir, quel est le vrai taux de réussite, et faut-il injecter un brief. Les aveux d'erreur en donneraient, mais il y en a six.</p>
-    <p>D'où un dispositif délibérément pauvre. <code>gk echantillon</code> prépare <strong>50 demandes réelles</strong> avec les cinq procédures que GK propose pour chacune, en texte brut annotable n'importe où ; <code>gk juger</code> relit le fichier et rend le taux de réussite en première et en cinquième position, <strong>réels</strong>. Trois choix de forme, chacun pour une raison :</p>
-    <ul class="liste">
-      <li><strong>Le format est pauvre</strong> — du texte qu'on édite dans n'importe quel éditeur — parce qu'un format riche coûterait une interface, et une interface coûterait plus que l'heure qu'elle économise.</li>
-      <li><strong>L'échantillon est stratifié par longueur</strong> : une demande de trois mots et une de trente ne posent pas le même problème, et un tirage simple sur-représenterait les moyennes.</li>
-      <li><strong>La relecture est tolérante</strong> : une réponse vide, un « ? » ou une absurdité sont ignorés, pas fatals. Et une demande qu'<em>aucune</em> procédure ne sert est comptée à part — ce n'est pas un échec de recherche mais un trou de la bibliothèque, et les confondre fausserait le jugement.</li>
-    </ul>
-    <p>C'est le point où le projet se trouve exactement : l'annotation est en cours.</p>
+    <p class="eyebrow">Le verdict</p>
+    <h2>Cinquante demandes réelles, jugées à la main</h2>
+    <p>Trois questions étaient bloquées sur le même manque — <strong>aucune vérité terrain sur des demandes réelles</strong> : quel seuil retenir, quel est le vrai taux de réussite, et faut-il injecter un brief. Le dispositif a donc été délibérément pauvre : 50 demandes réelles, les cinq procédures que GK propose pour chacune, en texte brut annotable n'importe où. Une heure de travail humain, faite le 23 octobre.</p>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Jugement humain, 50 demandes réelles</th><th class="num">Valeur</th></tr></thead>
+        <tbody>
+          <tr><td>Annotées &middot; laissées de côté</td><td class="num">47 &middot; 3</td></tr>
+          <tr><td>Réponse « aucune procédure ne convient »</td><td class="num">17 &middot; 36 %</td></tr>
+          <tr><td>Bonne procédure désignée en 1<sup>re</sup> position</td><td class="num">12</td></tr>
+          <tr class="vedette"><td><strong>Taux de réussite réel en 1<sup>re</sup> position</strong></td><td class="num"><strong>0,26 &ndash; 0,40</strong></td></tr>
+          <tr><td><em>Pour comparaison : le banc sur phrases citées</em></td><td class="num"><em>0,448</em></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p><strong>C'est meilleur que craint, et c'est le vrai résultat de la journée.</strong> Le fossé de connaissance ouvert la veille — tout était mesuré sur des textes écrits par les auteurs des procédures — coûte <strong>au mieux 0,05</strong> de taux de réussite, au pire 0,19. Le banc mesurait donc quelque chose de réel, et non un artefact de son corpus. C'est ce qui rend les relevés précédents réutilisables, le contexte de session en tête.</p>
+    <p>Pourquoi un intervalle et non un chiffre : voir ci-dessous. Et une borne qui ne dépend d'aucune hypothèse — <strong>12 bonnes réponses en tête sur 47 demandes</strong> — confirme que l'objectif de neuf sur dix est hors de portée, pour deux raisons indépendantes : le plafond de rédaction à 0,56, et la part des demandes que la bibliothèque ne sert pas.</p>
   </section>
+
+  <section>
+    <p class="eyebrow">L'instrument</p>
+    <h2>Un des deux chiffres ne mesurait rien, et l'arithmétique le disait</h2>
+    <p>La commande a d'abord annoncé un taux de réussite « dans les cinq » de 0,638, à côté d'un taux de demandes sans réponse de 0,362. Ces deux nombres font exactement 1,000, et ce n'est pas une coïncidence.</p>
+    <div class="encart">
+      <h3>Le format n'offrait que deux réponses</h3>
+      <p>Un rang parmi les cinq proposés, ou « aucune ne convient ». L'annotateur n'avait donc <strong>aucun moyen de dire « la bonne procédure existe, mais elle n'est pas dans cette liste »</strong>. Toute réponse non nulle désignait l'une des cinq par construction : le chiffre « dans les cinq » était l'inverse arithmétique de l'autre, une identité et non une mesure.</p>
+      <p>Même défaut, seconde conséquence : la réponse « aucune » portait deux sens incompatibles — <em>aucune procédure de la bibliothèque ne sert cette demande</em> et <em>aucune de ces cinq-là</em>. La lecture imprimée tranchait pour le premier sans que rien ne l'établisse. Les 36 % ne sont donc pas un taux de trous de la bibliothèque : c'est un taux de « aucune », dont la composition reste inconnue.</p>
+    </div>
+    <p>Ce qui tient malgré tout, c'est la première position : l'annotateur a bien choisi laquelle des cinq était la bonne. Mais son <strong>dénominateur</strong> devient une question ouverte — d'où l'intervalle 0,26 &ndash; 0,40, selon que les 17 « aucune » sont de vrais trous ou des procédures simplement manquées.</p>
+    <p><strong>La correction coûte quinze minutes, pas une heure.</strong> Le format gagne une troisième réponse — le nom de la bonne procédure quand elle existe hors de la liste — et la reprise ne réinterroge <strong>que les 17 cas ambigus</strong>, en montrant pour chacun la suite du même classement. Les deux annotations se relisent ensemble, la seconde corrigeant la première.</p>
+    <p>Quatre règles en sortent, chacune tenue par un test plutôt que par la discipline : un chiffre faux coûte plus cher qu'un chiffre absent, donc un échantillon ambigu rend un intervalle et refuse le point ; le dénominateur est le nombre de demandes qu'une procédure peut servir, jamais le nombre de demandes annotées ; un indicateur dont la valeur est une identité arithmétique doit être détectable comme tel — le test fait varier le taux « dans les cinq » <em>à nombre de « aucune » constant</em> ; et une demande contenant des retours à la ligne ne doit pas casser le format, ce qui est probablement l'origine des 3 cas perdus.</p>
+</section>
 
   <section>
     <p class="eyebrow">Avancement</p>
@@ -417,7 +438,7 @@
         <span class="etat">en attente</span>
         <div>
           <h3>Phase 3 &middot; le brief, un tour sur deux</h3>
-          <p>Première mise en service effective, comparée au bras témoin. <strong>Bloquée volontairement</strong> : le seuil mesuré ne transfère pas aux demandes réelles, et injecter sans vérité terrain serait parier sur un chiffre mesuré ailleurs.</p>
+          <p>Première mise en service effective, comparée au bras témoin. <strong>Bloquée volontairement</strong> : le seuil mesuré ne transfère pas aux demandes réelles. La vérité terrain existe depuis le 23 octobre, en intervalle ; quinze minutes de reprise la rendent ferme, et c'est à ce moment que la phase 3 se décide.</p>
         </div>
       </div>
       <div class="phase">
@@ -439,8 +460,8 @@
         <p>0,56 contre 0,9 demandés. L'écart ne se rattrape pas en code : il se rattrape en rédaction, procédure par procédure, et cela demande du temps aux équipes. Les outils sont faits — <code>gk manques</code> et <code>gk confusions</code> disent quoi écrire et où. Le contexte de session a montré qu'un levier hors du score pouvait valoir dix fois mieux ; il peut en rester.</p>
       </div>
       <div class="risque">
-        <h3>Tout le banc est écrit par les auteurs</h3>
-        <p>259 phrases citées, mesurées avec rigueur, et toutes rédigées par ceux qui connaissaient déjà la réponse. L'écart avec les demandes réelles n'est pas mesuré et il est probablement grand. L'échantillon annoté est la seule réponse, et c'est pour cela qu'il est au centre de la semaine.</p>
+        <h3>Un tiers des demandes n'a aucune réponse dans la bibliothèque</h3>
+        <p>C'est le chiffre à comprendre avant d'injecter quoi que ce soit, et sa composition est encore inconnue : des demandes qui n'appellent légitimement aucune procédure, ou de vrais trous. Dans le second cas, aucun réglage de recherche n'y changera rien — c'est une procédure à écrire. La reprise des 17 cas tranche, et c'est le travail le plus rentable de la semaine.</p>
       </div>
       <div class="risque">
         <h3>Une mise à jour du cœur peut couper le lien en silence</h3>
