@@ -1038,3 +1038,130 @@ def test_une_demande_tronquee_est_signalee_dans_l_echantillon(tmp_path):
     texte = preparer(svc.store, index, taille=5)
     svc.close()
     assert f"TRONQUEE a {REQUEST_MAX_CHARS}" in texte
+
+
+# -- le droit de se taire --------------------------------------------------
+
+
+def _echantillon_silence(svc):
+    """Quatre sessions : les premiers tours portent le domaine, les suites non.
+
+    C'est la forme que GM decrit : « GK est bon pour le premier prompt », et il
+    devrait se taire sur « ok, go, fais ca ».
+    """
+    from gk.catalog import Catalog
+    Catalog(svc.store).ingest([
+        {"path": "a/f/SKILL.md", "name": "gm-factures",
+         "description": "Factures fournisseurs proforma et frais de port.",
+         "category": "gm", "fingerprint": "1"},
+        {"path": "a/m/SKILL.md", "name": "gm-marges",
+         "description": "Marges, prix plancher et commandes a perte.",
+         "category": "gm", "fingerprint": "1"},
+    ], complete=True)
+    texte = "ANNOTATEUR: Noah\n" f"<!-- gk echantillon v{VERSION} -->\n"
+    n = 0
+    for sess in range(1, 5):
+        sujet = "factures fournisseurs proforma" if sess % 2 else "marges et prix plancher"
+        attendu = "gm-factures" if sess % 2 else "gm-marges"
+        # Premier tour : porte le domaine.
+        # Textes uniques : deux sessions au meme texte s'apparieraient a la
+        # meme ligne de `requests`, ce qui est precisement le defaut releve par
+        # gb sur les 16 textes dupliques.
+        n += 1
+        d1 = f"probleme de {sujet} chez nous, dossier {sess}"
+        svc.request(f"s{sess}", d1, platform="discord")
+        texte += f"## {n}. {d1}\n{MARQUEUR} {attendu}\n\n"
+        # Suite : ne porte rien.
+        n += 1
+        # Courte a dessein : moins de trente caracteres, comme « ok, go,
+        # fais ca » que GM veut faire taire.
+        d2 = f"tu peux lancer ca {sess}"
+        svc.request(f"s{sess}", d2, platform="discord")
+        texte += f"## {n}. {d2}\n{MARQUEUR} {attendu}\n\n"
+    return texte
+
+
+def test_la_regle_du_silence_separe_couverture_et_justesse(tmp_path):
+    """Le compromis n'est pas arbitre : le cout d'un brief faux et celui d'un
+    silence inutile ne sont pas comparables par une formule."""
+    from gk.jugement import silence
+
+    svc = Service.open(tmp_path / "si.db")
+    texte = _echantillon_silence(svc)
+    index = Index.construire(svc.store)
+    out = silence(svc.store, index, relire(texte))
+    svc.close()
+    assert out["ok"] is True
+    noms = [r["regle"] for r in out["regles"]]
+    assert "toujours parler" in noms
+    assert any("caracteres" in n for n in noms)
+    for r in out["regles"]:
+        for m in ("moitie_a", "moitie_b"):
+            assert "couverture" in r[m] and "justesse_1" in r[m]
+
+
+def test_une_regle_de_longueur_ecarte_les_suites_courtes(tmp_path):
+    """« tu peux faire ca maintenant » ne porte aucun mot de domaine : une
+    regle de longueur doit la faire taire, et la couverture doit baisser."""
+    from gk.jugement import silence
+
+    svc = Service.open(tmp_path / "si2.db")
+    texte = _echantillon_silence(svc)
+    index = Index.construire(svc.store)
+    out = silence(svc.store, index, relire(texte))
+    svc.close()
+    par_nom = {r["regle"]: r for r in out["regles"]}
+    toujours = par_nom["toujours parler"]
+    longue = par_nom["au moins 30 caracteres"]
+    assert toujours["moitie_a"]["couverture"] == 1.0
+    assert longue["moitie_a"]["couverture"] < 1.0, "elle se tait sur certaines"
+
+
+def test_le_silence_est_decoupe_par_session(tmp_path):
+    """Les demandes d'une conversation ne sont pas independantes : couper par
+    demande laisserait un meme sujet servir dans les deux moities."""
+    from gk.jugement import silence
+
+    svc = Service.open(tmp_path / "si3.db")
+    texte = _echantillon_silence(svc)
+    index = Index.construire(svc.store)
+    out = silence(svc.store, index, relire(texte))
+    svc.close()
+    assert out["sessions"] == 4
+    toujours = next(r for r in out["regles"] if r["regle"] == "toujours parler")
+    # Deux sessions par moitie, deux demandes chacune.
+    assert toujours["moitie_a"]["cas"] == 4
+    assert toujours["moitie_b"]["cas"] == 4
+
+
+def test_gk_silence_previent_quand_le_premier_tour_est_inconnu(
+    tmp_path, capsys, monkeypatch
+):
+    """Une regle fondee sur `is_first_turn` est inapplicable en production la
+    ou le champ manque : le dire vaut mieux que rendre un beau chiffre."""
+    svc = Service.open(tmp_path / "si4.db")
+    texte = _echantillon_silence(svc)
+    svc.store.execute("UPDATE requests SET is_first_turn = NULL")
+    svc.close()
+    monkeypatch.setenv("GK_DATABASE", str(tmp_path / "si4.db"))
+    monkeypatch.setattr("sys.stdin", __import__("io").StringIO(texte))
+    assert cli_main(["--json", "silence"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["premier_tour_connu_sur"] == 0
+    assert any("is_first_turn" in l for l in out["lecture"])
+
+
+def test_gk_silence_dit_que_la_justesse_est_un_accord_si_circulaire(
+    tmp_path, capsys, monkeypatch
+):
+    """L'ecart entre conditions reste informatif -- les deux bras subissent le
+    meme biais -- mais le niveau absolu non."""
+    svc = Service.open(tmp_path / "si5.db")
+    texte = _echantillon_silence(svc).replace("ANNOTATEUR: Noah", "ANNOTATEUR: gb")
+    svc.close()
+    monkeypatch.setenv("GK_DATABASE", str(tmp_path / "si5.db"))
+    monkeypatch.setattr("sys.stdin", __import__("io").StringIO(texte))
+    assert cli_main(["--json", "silence"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert any("ACCORD" in l for l in out["lecture"])
+    assert any("ECART entre conditions reste informatif" in l for l in out["lecture"])

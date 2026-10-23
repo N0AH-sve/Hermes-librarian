@@ -840,6 +840,169 @@ def simuler_memoire(
     }
 
 
+# Les seuils de longueur essayes pour la regle du silence.
+SEUILS_CARACTERES = (0, 20, 30, 40, 50, 70, 100)
+
+
+def _metadonnees(store: Store) -> dict:
+    """Premier tour, longueur et plateforme de chaque demande, par id et texte."""
+    rows = store.query(
+        "SELECT id, text_truncated, is_first_turn, platform, session_id, ts "
+        "FROM requests WHERE text_truncated IS NOT NULL AND text_truncated <> ''"
+    )
+    meta: dict[object, dict] = {}
+    for r in rows:
+        texte = r["text_truncated"] or ""
+        m = {
+            "premier_tour": bool(r["is_first_turn"]),
+            "premier_tour_connu": r["is_first_turn"] is not None,
+            "caracteres": len(texte),
+            "jetons": len(jetons_de(texte)),
+            "session": r["session_id"] or "",
+            "ts": r["ts"],
+        }
+        meta[r["id"]] = m
+        meta.setdefault(_une_ligne(texte), m)
+    return meta
+
+
+def jetons_de(texte: str) -> list:
+    from .recherche import jetons
+    return jetons(texte)
+
+
+def regles_silence(seuils=SEUILS_CARACTERES) -> list:
+    """Les regles candidates : quand GK doit-il parler ?
+
+    **Hypothese de GM, le 2026-10-23, trouvee en annotant a la main** : « GK est
+    bon pour le premier prompt d'une conversation », et il devrait se taire sur
+    « ok, go, fais ca ».
+
+    Deux proprietes que le seuil de confiance n'avait pas. La regle ne depend
+    **pas du score**, donc elle ne peut pas surajuster dessus -- c'est ce qui
+    avait tue le seuil precedent, passe de 1,0 a 0,333 entre ses deux moities.
+    Et elle est lisible : « GK parle au premier tour, ou quand la demande fait
+    plus de quarante caracteres » s'explique a l'equipe en une phrase.
+    """
+    regles = [("toujours parler", lambda m: True)]
+    regles.append(("premier tour seulement", lambda m: m["premier_tour"]))
+    for n in seuils:
+        if n:
+            regles.append(
+                (f"au moins {n} caracteres", lambda m, n=n: m["caracteres"] >= n)
+            )
+    for n in seuils:
+        if n:
+            regles.append((
+                f"premier tour OU au moins {n} caracteres",
+                lambda m, n=n: m["premier_tour"] or m["caracteres"] >= n,
+            ))
+    regles.append(("au moins 3 jetons", lambda m: m["jetons"] >= 3))
+    return regles
+
+
+def silence(
+    store: Store, index: Index, cas: list[dict], rangs=(1, 5)
+) -> dict:
+    """Quand GK devrait se taire, mesure sur les etiquettes.
+
+    **Le compromis n'est pas arbitre ici, il est affiche.** Le cout d'un brief
+    faux et celui d'un silence inutile ne sont pas comparables par une formule :
+    c'est une decision de l'equipe. La commande rend donc la couverture et la
+    justesse de chaque regle, sur les deux moities, et laisse choisir.
+
+    Les deux moities existent pour une seule raison : une regle dont la justesse
+    saute d'une moitie a l'autre est du bruit. Le decoupage est **par session**,
+    les demandes d'une conversation n'etant pas independantes.
+    """
+    etqs = etiquettes(cas)
+    meta = _metadonnees(store)
+    situe, plats = _situer(store)
+    etqs = [
+        e for e in etqs
+        if not est_injection(e["demande"], plats.get(_clef(e), ""))
+    ]
+    if not etqs:
+        return {"ok": False, "erreur": "aucune etiquette reutilisable"}
+
+    # Le rang du bon skill pour chaque etiquette, une fois pour toutes.
+    for e in etqs:
+        m = meta.get(_clef(e)) or {}
+        session, ts = situe.get(_clef(e), ("", None))
+        contexte = (
+            contexte_de_session(store, session, avant=ts)
+            if session and ts is not None else []
+        )
+        if contexte:
+            res = index.chercher_avec_contexte(
+                e["demande"], contexte=contexte, limite=max(rangs)
+            )
+        else:
+            res = index.chercher(e["demande"], limite=max(rangs))
+        noms = [r["name"] for r in res]
+        e["rang"] = noms.index(e["attendu"]) + 1 if e["attendu"] in noms else None
+        e["meta"] = m or {
+            "premier_tour": False, "premier_tour_connu": False,
+            "caracteres": len(e["demande"]), "jetons": len(jetons_de(e["demande"])),
+            "session": session,
+        }
+
+    sessions = sorted({e["meta"].get("session", "") for e in etqs})
+    moitie = max(1, len(sessions) // 2)
+    lot_a = {s for s in sessions[:moitie]}
+    lots = {
+        "moitie_a": [e for e in etqs if e["meta"].get("session", "") in lot_a],
+        "moitie_b": [e for e in etqs if e["meta"].get("session", "") not in lot_a],
+    }
+
+    def mesurer(lot, predicat) -> dict:
+        parle = [e for e in lot if predicat(e["meta"])]
+        if not lot:
+            return {"couverture": None, "justesse_1": None, "cas": 0}
+        justes = sum(1 for e in parle if e["rang"] == 1)
+        dans_n = sum(
+            1 for e in parle
+            if e["rang"] is not None and e["rang"] <= max(rangs)
+        )
+        return {
+            "couverture": round(len(parle) / len(lot), 3),
+            "justesse_1": round(justes / len(parle), 3) if parle else None,
+            f"justesse_{max(rangs)}": (
+                round(dans_n / len(parle), 3) if parle else None
+            ),
+            "cas": len(parle),
+        }
+
+    resultats = []
+    for nom, predicat in regles_silence():
+        a = mesurer(lots["moitie_a"], predicat)
+        b = mesurer(lots["moitie_b"], predicat)
+        ecart = (
+            abs((a["justesse_1"] or 0) - (b["justesse_1"] or 0))
+            if a["justesse_1"] is not None and b["justesse_1"] is not None
+            else None
+        )
+        resultats.append({
+            "regle": nom,
+            "moitie_a": a,
+            "moitie_b": b,
+            # Une regle dont la justesse saute d'une moitie a l'autre est du
+            # bruit, quelle que soit sa valeur moyenne.
+            "ecart_entre_moities": round(ecart, 3) if ecart is not None else None,
+        })
+
+    connus = sum(1 for e in etqs if e["meta"].get("premier_tour_connu"))
+    premiers = sum(1 for e in etqs if e["meta"].get("premier_tour"))
+    return {
+        "ok": True,
+        "etiquettes": len(etqs),
+        "sessions": len(sessions),
+        "premiers_tours": premiers,
+        "premier_tour_connu_sur": connus,
+        "regles": resultats,
+    }
+
+
 _TITRE = re.compile(r"^##\s*(\d+)\.\s*(.*)$")
 _CANDIDAT = re.compile(r"^\s*(\d+)\.\s+(\S+)\s")
 _VERSION = re.compile(re.escape(_MARQUE) + r"(\d+)")

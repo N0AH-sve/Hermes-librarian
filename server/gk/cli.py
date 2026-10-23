@@ -29,6 +29,7 @@ from .declencheurs import decouper, lecture, mesurer
 from .confrontation import FENETRE_SECONDES, confronter
 from .confrontation import lecture as lecture_confrontation
 from .jugement import (
+    annotateur_de,
     REPRISE_JUSQU_A,
     est_injection,
     etiquettes,
@@ -39,6 +40,7 @@ from .jugement import (
     reetalonner,
     relire,
     reprise,
+    silence,
 )
 from .corrections import (
     BAD_RECOMMENDATION,
@@ -638,6 +640,82 @@ def cmd_reetalonner(args, cfg: Config) -> int:
         "anterieur ; les autres sont des premiers tours, ou le contexte ne joue "
         "pas."
     )
+    _emit(resultat, args)
+    return 0
+
+
+def cmd_silence(args, cfg: Config) -> int:
+    """Quand GK devrait se taire.
+
+    **Hypothese de GM, trouvee en annotant a la main** : GK est bon pour le
+    premier prompt d'une conversation, et devrait se taire sur « ok, go, fais
+    ca ».
+
+    Deux proprietes que le seuil de confiance n'avait pas : la regle ne depend
+    pas du score, donc elle ne peut pas surajuster dessus, et elle s'explique a
+    l'equipe en une phrase.
+
+    Le compromis n'est pas arbitre : le cout d'un brief faux et celui d'un
+    silence inutile ne sont pas comparables par une formule. La commande affiche
+    la couverture et la justesse de chaque regle sur les deux moities, et laisse
+    choisir.
+    """
+    texte = sys.stdin.read()
+    cas = relire(texte)
+    if not cas:
+        _emit({
+            "ok": False,
+            "erreur": "aucun cas lu : l'entree ne ressemble pas a un echantillon",
+            "suite": "gk silence < echantillon-annote.txt",
+        }, args)
+        return 1
+    with Store(cfg.database) as store:
+        index = Index.construire(store)
+        if index.n == 0:
+            _emit({"ok": False, "erreur": "catalogue vide, voir `gk catalogue`"}, args)
+            return 1
+        resultat = silence(store, index, cas)
+    if not resultat.get("ok"):
+        _emit(resultat, args)
+        return 1
+    nom, circulaire = annotateur_de(cas)
+    base = next(
+        (r for r in resultat["regles"] if r["regle"] == "toujours parler"), None
+    )
+    lecture = [
+        "Chaque regle : la part des demandes ou GK parlerait (couverture) et "
+        "la part de celles-la ou il a raison (justesse). Le compromis n'est pas "
+        "arbitre ici -- le cout d'un brief faux et celui d'un silence inutile "
+        "ne sont pas comparables par une formule.",
+        "Deux moities decoupees PAR SESSION : une regle dont la justesse saute "
+        "d'une moitie a l'autre est du bruit, quelle que soit sa valeur "
+        "moyenne. Lire `ecart_entre_moities` avant la justesse.",
+        "Cette regle ne depend PAS du score, donc elle ne peut pas surajuster "
+        "dessus : c'est ce qui avait tue le seuil de confiance, passe de 1,0 a "
+        "0,333 entre ses deux moities.",
+    ]
+    if base:
+        lecture.insert(1, (
+            f"Reference, sans aucun silence : justesse "
+            f"{base['moitie_a'].get('justesse_1')} et "
+            f"{base['moitie_b'].get('justesse_1')} sur les deux moities. Une "
+            "regle ne vaut la peine que si elle fait nettement mieux."
+        ))
+    if resultat["premier_tour_connu_sur"] < resultat["etiquettes"]:
+        lecture.append(
+            f"ATTENTION : `is_first_turn` n'est renseigne que sur "
+            f"{resultat['premier_tour_connu_sur']} des "
+            f"{resultat['etiquettes']} demandes. Les regles qui s'en servent "
+            "sont mesurees sur un sous-ensemble, et inapplicables en production "
+            "la ou il manque."
+        )
+    if circulaire:
+        lecture.append(
+            f"ANNOTATEUR « {nom or '(non signe)'} » : la justesse est un ACCORD "
+            "avec lui. L'ECART entre conditions reste informatif -- les deux "
+            "bras subissent le meme biais -- mais le niveau absolu ne l'est pas."
+        )
+    resultat["lecture"] = lecture
     _emit(resultat, args)
     return 0
 
@@ -1945,6 +2023,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="ne rendre que les etiquettes reutilisables, sans les re-mesurer",
     )
     re_.set_defaults(func=cmd_reetalonner)
+
+    si = sub.add_parser(
+        "silence",
+        help="quand GK devrait se taire : couverture et justesse de chaque regle",
+    )
+    si.set_defaults(func=cmd_silence)
 
     od = sub.add_parser(
         "ordonnance",
