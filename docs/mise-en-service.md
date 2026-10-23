@@ -41,6 +41,38 @@ docker compose -f ~/next_hermes/compose.yaml exec -u 0 hermes bash -lc \
   'chown -R 1001:1001 /opt/data/plugins/gk-bridge /opt/data/gk-bridge.jsonl'
 ```
 
+### Jamais `chown -R` sur tout `/opt/data`
+
+**Incident du 2026-10-23.** La réparation avait été donnée en chat comme
+`chown -R 1001:1001 /opt/data`, et elle a été exécutée. Conséquence : un fichier
+qui était volontairement en `root:root` mode 600 est passé à `1001:1001`, donc
+**lisible et modifiable par gb** :
+
+```
+-rw------- 1 0 0 255 /opt/data/shell-hooks-allowlist.json
+```
+
+Vu son nom, il borne les commandes shell que les hooks peuvent lancer. gb s'est
+donc retrouvé en mesure d'élargir sa propre autorisation — une frontière de
+privilège déplacée par une commande de confort.
+
+Réparation :
+
+```bash
+docker compose -f ~/next_hermes/compose.yaml exec -u 0 hermes bash -lc \
+  'chown 0:0 /opt/data/shell-hooks-allowlist.json \
+   && chmod 600 /opt/data/shell-hooks-allowlist.json'
+```
+
+**La règle.** Le `chown` de réparation ne porte que sur **les fichiers de GK** :
+`/opt/data/plugins/gk-bridge` et `/opt/data/gk-bridge.jsonl`. Un fichier
+root-only n'est pas un accident à corriger, c'est souvent une décision.
+
+Et le reste du volume est massivement en `root:root` — une bonne soixantaine de
+fichiers de données métier, écrits par les outils de gb. C'est la fragilité de
+Hermes déjà consignée, elle n'a pas à être « réparée » : ces fichiers sont en
+mode 644, donc gb les lit déjà, et seule l'écriture lui manquait.
+
 **Sur les chemins** : les commandes de GreenKnowledge se lancent depuis
 `~/greenknowledge`, celles de l'agent visent `~/next_hermes/compose.yaml` en
 chemin absolu. Les deux se mélangent dans la procédure, donc les chemins sont
