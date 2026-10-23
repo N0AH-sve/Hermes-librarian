@@ -584,18 +584,19 @@ def cmd_reetalonner(args, cfg: Config) -> int:
         resultat.pop("details", None)
     n = resultat["etiquettes_reutilisables"]
     c = resultat["courbe"]
-    st = resultat.get("courbe_sans_tolerance") or {}
+    st = resultat.get("courbe_avec_tolerance") or {}
     resultat["lecture"] = [
         "Rappel re-mesure sur les etiquettes deja annotees, avec le contexte "
         "ancre sur chaque demande et non sur la fin de sa session.",
-        f"TOLERANCE AUX FAUTES DE FRAPPE : rang 1 {st.get('1')} en mot exact "
-        f"contre {c.get('1')} avec tolerance ; rang 5 {st.get('5')} contre "
-        f"{c.get('5')}. {resultat.get('gagnes_par_la_tolerance')} demandes "
-        "retrouvees uniquement grace a elle.",
-        "Les collegues tapent « cleint », « rmeise », « versino », "
-        "« liqidation » : un index en mot exact ne les rencontre jamais, et "
-        "aucune ligne de declenchement n'y changera rien puisque personne "
-        "n'ecrira la faute dans un skill.",
+        f"TOLERANCE AUX FAUTES DE FRAPPE, mesuree puis DESACTIVEE : rang 1 "
+        f"{c.get('1')} en mot exact contre {st.get('1')} avec tolerance ; "
+        f"rang 5 {c.get('5')} contre {st.get('5')}. Elle rattrape "
+        f"{resultat.get('gagnes_par_la_tolerance')} demande(s) et en perd "
+        f"{resultat.get('perdus_par_la_tolerance')}.",
+        "Il y a 185 mauvais skills et un bon : toute occasion d'appariement "
+        "supplementaire profite plus aux concurrents qu'a la cible. Meme "
+        "mecanisme que la normalisation par la longueur, rejetee pour la meme "
+        "raison.",
         f"Rang 1 : {c.get('1')}. Rang 2 : {c.get('2')}. Rang 5 : {c.get('5')}. "
         f"Sur {n} etiquettes.",
         "Ces chiffres REMPLACENT ceux mesures avant la correction de la fuite, "

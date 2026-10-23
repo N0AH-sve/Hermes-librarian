@@ -138,8 +138,21 @@ MIN_JETON = 2
 #   * insertion ou omission  liqidation/liquidation, concerant/concernant
 #   * et le pluriel  factures/facture, commandes/commande
 #
-# Un appariement approche vaut moins qu'un appariement exact : il est penalise,
-# et le banc dit de combien.
+# **MESUREE PUIS DESACTIVEE, le 2026-10-23.** Sur les 37 etiquettes reelles, la
+# tolerance DEGRADE le resultat : rang 1 de 0,243 a 0,189, rang 5 de 0,622 a
+# 0,595. Elle rattrape une demande et en perd deux.
+#
+# Le mecanisme est le meme que celui qui a fait rejeter la normalisation par la
+# longueur : **il y a 185 mauvais skills et un bon**, donc toute occasion
+# d'appariement supplementaire profite plus aux concurrents qu'a la cible. Un
+# jeton mal tape qui ne rencontrait rien rencontre desormais un voisin chez
+# plusieurs skills, et dilue au lieu de discriminer.
+#
+# Le code est garde, desactive par defaut, avec sa mesure. La penalite pourrait
+# etre reglee plus bas, mais pas a n = 37 sur 12 sessions : c'est exactement
+# ainsi qu'on surajuste, et le bonus de memoire l'a deja montre.
+#
+# Sixieme hypothese de score rejetee par la mesure.
 PENALITE_FLOUE = 0.6
 # En dessous de cette longueur, deux mots differents se ressemblent par hasard.
 MIN_JETON_FLOU = 5
@@ -432,7 +445,7 @@ class Index:
         exclure_exemple: str | None = None,
         sans_prose: bool = False,
         normaliser_longueur: bool = False,
-        tolerer_les_fautes: bool = True,
+        tolerer_les_fautes: bool = False,
     ) -> list[dict]:
         """Classe les skills pour une demande.
 

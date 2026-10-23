@@ -1117,13 +1117,16 @@ def test_l_ordonnance_met_les_jamais_retrouves_en_tete(tmp_path):
 
 
 def test_une_faute_de_frappe_retrouve_le_bon_skill(tmp_path):
-    """Defaut trouve en lisant `gk ordonnance` le 2026-10-23.
+    """Le mecanisme marche, et il est pourtant DESACTIVE par defaut.
 
-    La commande conseillait d'ajouter aux skills les mots « cleint »,
-    « rmeise », « versino », « caucul » : ce ne sont pas des mots de metier,
-    ce sont les fautes de frappe des collegues. Un index en mot exact ne les
-    rencontre jamais, et **aucune ligne de declenchement n'y changera rien** --
-    personne n'ecrira la faute dans un skill.
+    Mesure du 2026-10-23 sur 37 etiquettes reelles : la tolerance rattrape une
+    demande et en perd deux (rang 1 de 0,243 a 0,189). Il y a 185 mauvais
+    skills et un bon, donc toute occasion d'appariement supplementaire profite
+    plus aux concurrents qu'a la cible -- meme mecanisme que la normalisation
+    par la longueur.
+
+    Le test garde la preuve que le code fait ce qu'il annonce, pour que la
+    mesure reste rejouable si un corpus plus grand change le verdict.
     """
     svc, index = _index_deux_skills(tmp_path, "t1.db")
     assert index.chercher("plancher marges", limite=3)[0]["name"] == "gm-marges"
@@ -1131,11 +1134,11 @@ def test_une_faute_de_frappe_retrouve_le_bon_skill(tmp_path):
     # La demande ne porte AUCUN mot juste : deux transpositions, et c'est tout
     # ce qu'elle a. C'est le cas reel -- « le cleint demande une rmeise » ne
     # rendait rien du tout.
-    strict = index.chercher(
-        "plnacher mrages", limite=3, tolerer_les_fautes=False
+    strict = index.chercher("plnacher mrages", limite=3)
+    tolerant = index.chercher(
+        "plnacher mrages", limite=3, tolerer_les_fautes=True
     )
-    tolerant = index.chercher("plnacher mrages", limite=3)
-    assert strict == [], strict
+    assert strict == [], "le mot exact est le defaut : il ne rend rien"
     assert tolerant and tolerant[0]["name"] == "gm-marges"
     svc.close()
 
@@ -1182,7 +1185,9 @@ def test_un_appariement_approche_vaut_moins_qu_un_exact(tmp_path):
 
     svc, index = _index_deux_skills(tmp_path, "t3.db")
     exact = index.chercher("plancher", limite=3)[0]["score"]
-    faute = index.chercher("plnacher", limite=3)[0]["score"]
+    faute = index.chercher(
+        "plnacher", limite=3, tolerer_les_fautes=True
+    )[0]["score"]
     assert faute < exact
     assert abs(faute - exact * PENALITE_FLOUE) < 0.01
     svc.close()
@@ -1192,7 +1197,8 @@ def test_la_tolerance_se_desactive_pour_etre_mesuree(tmp_path):
     """Tout mecanisme ajoute au score doit pouvoir etre retire : quatre
     hypotheses ont deja ete rejetees parce qu'un bras temoin existait."""
     svc, index = _index_deux_skills(tmp_path, "t4.db")
-    a = index.chercher("plnacher", limite=3, tolerer_les_fautes=False)
-    b = index.chercher("plnacher", limite=3, tolerer_les_fautes=True)
-    assert a == [] and b != []
+    defaut = index.chercher("plnacher", limite=3)
+    active = index.chercher("plnacher", limite=3, tolerer_les_fautes=True)
+    assert defaut == [], "desactivee par defaut, puisque mesuree negative"
+    assert active != [], "mais toujours rejouable"
     svc.close()
