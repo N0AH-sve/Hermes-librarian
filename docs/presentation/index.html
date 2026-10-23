@@ -3,7 +3,8 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <style>
   /* Note technique : colonne de lecture dense, tableaux de decision, un schema
-     d'architecture qui porte le chemin de service en accent. */
+     d'architecture qui porte le chemin branche en accent et la moitie non
+     branchee en pointilles. */
   :root {
     --bg: #fbfaf7;
     --surface: #ffffff;
@@ -15,6 +16,7 @@
     --accent-soft: #e7f0ea;
     --warn: #8a4a1f;
     --warn-soft: #f8ede3;
+    --warn2: #b8873f;
 
     --display: "Bricolage Grotesque", "Trebuchet MS", sans-serif;
     --body: "IBM Plex Sans", system-ui, -apple-system, sans-serif;
@@ -24,13 +26,13 @@
     :root:not([data-theme="light"]) {
       --bg: #111410; --surface: #1a1e18; --sunk: #232820; --fg: #eceee8;
       --muted: #9aa49c; --line: #2c322a; --accent: #74d29e; --accent-soft: #1c2c23;
-      --warn: #e2a877; --warn-soft: #2c2117; color-scheme: dark;
+      --warn: #e2a877; --warn-soft: #2c2117; --warn2: #c79a5c; color-scheme: dark;
     }
   }
   :root[data-theme="dark"] {
     --bg: #111410; --surface: #1a1e18; --sunk: #232820; --fg: #eceee8;
     --muted: #9aa49c; --line: #2c322a; --accent: #74d29e; --accent-soft: #1c2c23;
-    --warn: #e2a877; --warn-soft: #2c2117; color-scheme: dark;
+    --warn: #e2a877; --warn-soft: #2c2117; --warn2: #c79a5c; color-scheme: dark;
   }
 
   body {
@@ -59,6 +61,17 @@
     color: var(--accent); padding: 0.3rem 0.6rem; border-radius: 2px;
   }
 
+  /* -- reperes -- */
+  .reperes { display: grid; gap: 0.6rem; grid-template-columns: repeat(4, 1fr); }
+  @media (max-width: 680px) { .reperes { grid-template-columns: 1fr 1fr; } }
+  .repere {
+    border: 1px solid var(--line); border-top: 3px solid var(--accent);
+    border-radius: 3px; background: var(--surface); padding: 0.7rem 0.75rem;
+    display: flex; flex-direction: column; gap: 0.15rem; min-width: 0;
+  }
+  .repere .v { font-family: var(--display); font-size: 1.5rem; font-weight: 600; line-height: 1.1; font-variant-numeric: tabular-nums; }
+  .repere .k { font-size: 0.76rem; color: var(--muted); line-height: 1.35; }
+
   /* -- schema -- */
   figure { margin: 0; display: flex; flex-direction: column; gap: 0.6rem; }
   .scroll { overflow-x: auto; }
@@ -71,7 +84,7 @@
   svg.schema .zonenom { font-size: 10.5px; letter-spacing: 0.08em; fill: var(--muted); }
   svg.schema .lien { stroke: currentColor; stroke-opacity: 0.5; fill: none; }
   svg.schema .chaud { stroke: var(--accent); stroke-width: 1.8; fill: none; }
-  svg.schema .sortie { stroke: currentColor; stroke-opacity: 0.4; stroke-dasharray: 5 4; fill: none; }
+  svg.schema .mort { stroke: currentColor; stroke-opacity: 0.35; stroke-dasharray: 5 4; fill: none; }
   svg.schema .etiq { font-family: "IBM Plex Mono", monospace; font-size: 10.5px; fill: var(--muted); }
   svg.schema .etiqchaud { font-family: "IBM Plex Mono", monospace; font-size: 10.5px; fill: var(--accent); }
   figcaption { font-size: 0.85rem; color: var(--muted); max-width: 42rem; }
@@ -89,28 +102,52 @@
   th, td { text-align: left; vertical-align: top; padding: 0.55rem 0.7rem; border-bottom: 1px solid var(--line); }
   th { font-size: 0.72rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
   td code, p code, li code { font-family: var(--mono); font-size: 0.85em; background: var(--sunk); padding: 0.1em 0.3em; border-radius: 2px; }
-  td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  tr.vedette td { background: var(--accent-soft); }
+
+  /* -- barre des echecs -- */
+  .barre { display: flex; height: 2.1rem; border-radius: 3px; overflow: hidden; border: 1px solid var(--line); }
+  .barre span {
+    display: flex; align-items: center; justify-content: center; min-width: 0;
+    font-family: var(--mono); font-size: 0.78rem; color: #fff;
+  }
+  .barre .a { background: var(--warn); }
+  .barre .b { background: var(--warn2); }
+  .barre .c { background: var(--accent); }
+  .legende { display: flex; flex-wrap: wrap; gap: 0.3rem 1.1rem; font-size: 0.8rem; color: var(--muted); }
+  .legende span { display: inline-flex; align-items: center; gap: 0.4rem; }
+  .legende i { width: 0.65rem; height: 0.65rem; border-radius: 2px; display: inline-block; }
 
   ul.liste { margin: 0; padding-left: 1.15rem; display: flex; flex-direction: column; gap: 0.55rem; max-width: 42rem; }
   ul.liste strong { font-weight: 600; }
 
   .phases { display: flex; flex-direction: column; gap: 0.5rem; }
   .phase {
-    display: grid; grid-template-columns: 5.5rem 1fr; gap: 0.9rem; align-items: baseline;
+    display: grid; grid-template-columns: 6.5rem 1fr; gap: 0.9rem; align-items: baseline;
     padding: 0.6rem 0.75rem; border-radius: 3px; border: 1px solid var(--line);
     background: var(--surface);
   }
   .phase.fait { border-left: 3px solid var(--accent); }
+  .phase.bloc2 { border-left: 3px solid var(--warn); }
   .phase .etat { font-family: var(--mono); font-size: 0.72rem; color: var(--muted); }
   .phase.fait .etat { color: var(--accent); }
+  .phase.bloc2 .etat { color: var(--warn); }
   .phase p { font-size: 0.88rem; }
-  @media (max-width: 480px) { .phase { grid-template-columns: 1fr; gap: 0.2rem; } }
+  @media (max-width: 520px) { .phase { grid-template-columns: 1fr; gap: 0.2rem; } }
 
   .risques { display: grid; gap: 0.75rem; grid-template-columns: 1fr 1fr; }
   @media (max-width: 620px) { .risques { grid-template-columns: 1fr; } }
   .risque { border: 1px solid var(--line); border-top: 3px solid var(--warn); border-radius: 3px; padding: 0.85rem; background: var(--surface); min-width: 0; }
   .risque h3 { font-size: 0.85rem; color: var(--warn); margin-bottom: 0.3rem; }
   .risque p { font-size: 0.86rem; color: var(--muted); }
+
+  .encart {
+    border: 1px solid var(--line); border-left: 3px solid var(--warn);
+    background: var(--warn-soft); border-radius: 3px; padding: 0.9rem 1rem;
+    display: flex; flex-direction: column; gap: 0.5rem;
+  }
+  .encart h3 { color: var(--warn); }
+  .encart p { font-size: 0.9rem; max-width: 40rem; }
 
   hr { border: 0; border-top: 1px solid var(--line); margin: 0; }
   footer { color: var(--muted); font-size: 0.84rem; }
@@ -120,29 +157,36 @@
 <main>
 
   <header style="display:flex;flex-direction:column;gap:0.9rem">
-    <p class="eyebrow">Note technique interne &middot; octobre 2026</p>
+    <p class="eyebrow">Note technique interne &middot; 23 octobre 2026</p>
     <h1>GreenKnowledge</h1>
-    <p class="lede">Un service qui prépare, avant chaque tour de l'agent, la liste des procédures pertinentes parmi 537, les faits déjà vérifiés, et ce qui reste à contrôler. Conception arrêtée et confrontée au serveur réel ; la chaîne de mesure est construite, l'aide ne l'est pas encore.</p>
-    <p class="statut"><span>État</span> <span>phase 1 sur 4 livrée &middot; rien n'est encore injecté dans l'agent</span></p>
+    <p class="lede">Un service qui désigne, parmi les 186 procédures de gb, celles qui servent la demande du moment. Les deux premières phases sont livrées et tournent sur le serveur de production. Le moteur est mesuré, son plafond est connu, et la décision d'en injecter le résultat tient à une heure de travail humain.</p>
+    <p class="statut"><span>État</span> <span>phases 1 et 2 livrées &middot; observation en production &middot; rien n'est injecté dans gb</span></p>
   </header>
+
+  <div class="reperes">
+    <div class="repere"><span class="v">186</span><span class="k">procédures au catalogue, tenu à jour tout seul</span></div>
+    <div class="repere"><span class="v">261</span><span class="k">demandes réelles observées, aucune modifiée</span></div>
+    <div class="repere"><span class="v">0,68</span><span class="k">bon skill en 1<sup>re</sup> position, sur une conversation suivie</span></div>
+    <div class="repere"><span class="v">0,56</span><span class="k">plafond calculé du moteur seul</span></div>
+  </div>
 
   <hr>
 
   <section>
-    <p class="eyebrow">Le problème</p>
-    <h2>Une bibliothèque trop grande pour le contexte d'un modèle</h2>
-    <p>L'agent dispose de <strong>537 procédures</strong> rédigées par les équipes. À chaque tour, il n'en voit que les titres et une description courte : le corps complet des 537 fichiers représenterait plusieurs centaines de milliers de jetons, soit bien au-delà de ce qu'une fenêtre de contexte peut porter en même temps que la conversation.</p>
-    <p>Il choisit donc sur une information appauvrie, et se trompe. Le symptôme est un aveu en pleine conversation — « je n'avais pas la bonne procédure » — et c'est précisément ce qui le rend mesurable : une phrase repérable automatiquement, comptable, et attribuable.</p>
-    <p>L'inventaire du serveur a révélé un second facteur, que personne ne cherchait : le volume contient <strong>866 fichiers de procédure pour une bibliothèque de 537</strong>. Les mêmes 137 existent en double exemplaire, 20 traînent dans un répertoire mal orthographié, 32 dans un dossier au statut incertain. Une recherche naïve indexerait ces doublons et produirait des recommandations ambiguës — exactement le défaut à corriger.</p>
+    <p class="eyebrow">Le problème, revu à la hausse</p>
+    <h2>gb voit déjà tout, et a déjà l'ordre de charger</h2>
+    <p>La version initiale de cette note décrivait un agent aveugle à sa propre bibliothèque. La lecture du cœur de Hermes a corrigé ce point, et il faut le dire avant tout chiffre : le prompt système de gb contient <strong>la liste complète de ses 186 procédures</strong>, nom et description, reconstruite à chaque tour. Le code est explicite — rien n'est jamais caché — et le prompt ordonne en plus de charger, « en cas de doute, charge ».</p>
+    <p>La barre est donc plus haute qu'annoncé. GK n'apporte pas une information manquante : il apporte <strong>un tri</strong>. Ce qu'il doit battre n'est pas l'ignorance, c'est un modèle qui lit 186 descriptions d'un coup et en choisit une. C'est un adversaire sérieux, et l'honnêteté de la mesure en dépend : le banc d'essai compare donc GK non pas au vide, mais à <strong>nom + description seuls</strong> — exactement ce que gb a sous les yeux aujourd'hui.</p>
+    <p>Un second facteur, découvert en lisant les procédures réelles : les équipes y écrivent des <strong>phrases de déclenchement</strong> (« contrôle des factures fournisseurs », « où en sont les factures en attente ») et, plus rarement, des <strong>contre-indications</strong>. Ce sont des citations d'utilisateur, écrites par ceux qui connaissent le métier, et elles n'entrent dans aucun prompt. GK est le premier à les lire.</p>
   </section>
 
   <section>
     <p class="eyebrow">Le mécanisme</p>
-    <h2>Deux points d'accroche dans le cœur de l'agent</h2>
+    <h2>Branché sur trois points d'accroche, et la moitié qui compte reste débranchée</h2>
 
     <figure>
       <div class="scroll">
-        <svg class="schema" viewBox="0 0 900 430" role="img" aria-label="Le chemin de service relie le plugin interne à l'agent au service GreenKnowledge par la boucle locale, sans aucune sortie réseau ; seules l'extraction nocturne et la synthèse hebdomadaire sortent de la machine.">
+        <svg class="schema" viewBox="0 0 900 420" role="img" aria-label="Sur le serveur GreenMusicians, un collègue écrit à gb. Le pont, installé dans le conteneur de gb, transmet à GreenKnowledge la demande, la réponse et le skill chargé par la boucle locale. Le chemin de retour vers gb est dessiné en pointillés : rien n'est injecté aujourd'hui.">
           <defs>
             <marker id="fl" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
               <path d="M 0 1 L 9 5 L 0 9 z" fill="currentColor"/>
@@ -152,168 +196,171 @@
             </marker>
           </defs>
 
-          <!-- zone hote -->
-          <rect class="zone" x="8" y="24" width="884" height="310" rx="6"/>
-          <text class="zonenom" x="20" y="43">LE SERVEUR QUE NOUS EXPLOITONS DEJA</text>
+          <rect class="zone" x="8" y="24" width="884" height="312" rx="6"/>
+          <text class="zonenom" x="20" y="43">LE SERVEUR GREENMUSICIANS</text>
 
-          <!-- conteneur Hermes -->
-          <rect class="zone" x="150" y="58" width="300" height="258" rx="5"/>
-          <text class="zonenom" x="162" y="76">CONTENEUR DE L'AGENT</text>
+          <rect class="zone" x="146" y="58" width="320" height="260" rx="5"/>
+          <text class="zonenom" x="158" y="76">CONTENEUR DE gb</text>
 
-          <!-- conteneur GK -->
-          <rect class="zone" x="520" y="58" width="352" height="258" rx="5"/>
-          <text class="zonenom" x="532" y="76">CONTENEUR GREENKNOWLEDGE &middot; 256 Mo</text>
+          <rect class="zone" x="536" y="58" width="344" height="260" rx="5"/>
+          <text class="zonenom" x="548" y="76">CONTENEUR GREENKNOWLEDGE &middot; 256 Mo</text>
 
-          <!-- collegue -->
-          <rect class="bloc" x="18" y="160" width="106" height="52" rx="4"/>
-          <text class="nom" x="71" y="183" text-anchor="middle">Un collègue</text>
-          <text class="sous" x="71" y="199" text-anchor="middle">écrit à l'agent</text>
+          <rect class="bloc" x="16" y="158" width="110" height="54" rx="4"/>
+          <text class="nom" x="71" y="181" text-anchor="middle">Un collègue</text>
+          <text class="sous" x="71" y="198" text-anchor="middle">écrit à gb</text>
 
-          <!-- agent -->
-          <rect class="bloc" x="172" y="92" width="256" height="62" rx="4"/>
-          <text class="nom" x="300" y="116" text-anchor="middle">L'agent</text>
-          <text class="sous" x="300" y="133" text-anchor="middle">537 procédures, un modèle de langage</text>
+          <rect class="bloc" x="166" y="90" width="282" height="66" rx="4"/>
+          <text class="nom" x="307" y="115" text-anchor="middle">gb</text>
+          <text class="sous" x="307" y="133" text-anchor="middle">186 procédures, catalogue complet au prompt</text>
+          <text class="sous" x="307" y="148" text-anchor="middle">comportement strictement inchangé</text>
 
-          <!-- plugin -->
-          <rect class="bloc" x="172" y="236" width="256" height="62" rx="4"/>
-          <text class="nom" x="300" y="260" text-anchor="middle">Le pont</text>
-          <text class="sous" x="300" y="277" text-anchor="middle">50 lignes, sans état, ne lit pas la note</text>
+          <rect class="bloc" x="166" y="236" width="282" height="62" rx="4"/>
+          <text class="nom" x="307" y="260" text-anchor="middle">Le pont</text>
+          <text class="sous" x="307" y="277" text-anchor="middle">3 hooks, rend toujours une valeur nulle</text>
 
-          <!-- GK interne -->
-          <rect class="bloc" x="542" y="92" width="308" height="44" rx="4"/>
-          <text class="nom" x="560" y="119">Index plein texte</text>
-          <text class="sous" x="836" y="119" text-anchor="end">537 procédures</text>
+          <rect class="bloc" x="556" y="92" width="304" height="44" rx="4"/>
+          <text class="nom" x="572" y="119">Catalogue</text>
+          <text class="sous" x="846" y="119" text-anchor="end">186 fiches, 117 Ko</text>
 
-          <rect class="bloc" x="542" y="148" width="308" height="44" rx="4"/>
-          <text class="nom" x="560" y="175">Faits vérifiés</text>
-          <text class="sous" x="836" y="175" text-anchor="end">source + date</text>
+          <rect class="bloc" x="556" y="148" width="304" height="44" rx="4"/>
+          <text class="nom" x="572" y="175">Index et recherche</text>
+          <text class="sous" x="846" y="175" text-anchor="end">5 champs + contexte</text>
 
-          <rect class="bloc" x="542" y="204" width="308" height="44" rx="4"/>
-          <text class="nom" x="560" y="231">Compteur de corrections</text>
-          <text class="sous" x="836" y="231" text-anchor="end">la mesure</text>
+          <rect class="bloc" x="556" y="204" width="304" height="44" rx="4"/>
+          <text class="nom" x="572" y="231">Demandes et corrections</text>
+          <text class="sous" x="846" y="231" text-anchor="end">la mesure</text>
 
-          <rect class="bloc" x="542" y="260" width="308" height="38" rx="4"/>
-          <text class="sous" x="560" y="284">SQLite, un fichier, &lt; 1 Mo</text>
+          <rect class="bloc" x="556" y="260" width="304" height="38" rx="4"/>
+          <text class="sous" x="572" y="284">SQLite, un fichier, aucun port ouvert</text>
 
-          <!-- flux -->
-          <line class="lien" x1="124" y1="186" x2="168" y2="150" marker-end="url(#fl)"/>
-          <line class="chaud" x1="300" y1="154" x2="300" y2="232" marker-end="url(#flc)"/>
-          <text class="etiqchaud" x="310" y="180">pre_llm_call</text>
-          <text class="etiq" x="310" y="196">transform_llm_output</text>
+          <line class="lien" x1="126" y1="184" x2="162" y2="150" marker-end="url(#fl)"/>
 
-          <line class="chaud" x1="428" y1="252" x2="538" y2="196" marker-end="url(#flc)"/>
-          <line class="chaud" x1="538" y1="236" x2="428" y2="292" marker-end="url(#flc)"/>
-          <text class="etiqchaud" x="483" y="228" text-anchor="middle">~20 ms</text>
+          <line class="chaud" x1="307" y1="156" x2="307" y2="232" marker-end="url(#flc)"/>
+          <text class="etiqchaud" x="318" y="177">pre_llm_call</text>
+          <text class="etiqchaud" x="318" y="193">transform_llm_output</text>
+          <text class="etiqchaud" x="318" y="209">on_skill_lifecycle</text>
 
-          <!-- retour vers l'agent -->
-          <path class="chaud" d="M 172 266 L 161 266 L 161 123 L 168 123" marker-end="url(#flc)"/>
-          <text class="etiqchaud" x="138" y="75" text-anchor="end">note accolée</text>
-          <text class="etiqchaud" x="138" y="89" text-anchor="end">à la demande</text>
+          <line class="chaud" x1="448" y1="252" x2="552" y2="198" marker-end="url(#flc)"/>
+          <text class="etiqchaud" x="500" y="232" text-anchor="middle">boucle locale</text>
 
-          <!-- sorties -->
-          <rect class="bloc" x="520" y="360" width="160" height="46" rx="4"/>
-          <text class="nom" x="600" y="381" text-anchor="middle">Service de langage</text>
-          <text class="sous" x="600" y="396" text-anchor="middle">rangement nocturne</text>
+          <path class="mort" d="M 166 272 L 152 272 L 152 123 L 162 123" marker-end="url(#fl)"/>
+          <text class="etiq" x="144" y="74" text-anchor="end">le brief,</text>
+          <text class="etiq" x="144" y="88" text-anchor="end">non branché</text>
 
-          <rect class="bloc" x="712" y="360" width="160" height="46" rx="4"/>
-          <text class="nom" x="792" y="381" text-anchor="middle">Canal Discord</text>
-          <text class="sous" x="792" y="396" text-anchor="middle">synthèse hebdomadaire</text>
+          <rect class="bloc" x="556" y="362" width="304" height="44" rx="4"/>
+          <text class="nom" x="572" y="382">Poste d'un humain</text>
+          <text class="sous" x="846" y="382" text-anchor="end">gk banc, gk juger</text>
+          <text class="sous" x="572" y="398">lecture seule, hors du chemin d'une réponse</text>
 
-          <line class="sortie" x1="640" y1="298" x2="600" y2="356" marker-end="url(#fl)"/>
-          <line class="sortie" x1="760" y1="298" x2="792" y2="356" marker-end="url(#fl)"/>
-          <text class="etiq" x="690" y="350" text-anchor="middle">les deux seules sorties</text>
+          <line class="mort" x1="708" y1="298" x2="708" y2="358" marker-end="url(#fl)"/>
         </svg>
       </div>
-      <figcaption>Le chemin de service, en vert, ne quitte jamais la machine : le pont appelle GreenKnowledge par la boucle locale et reçoit la note en une vingtaine de millisecondes. Les deux flèches pointillées sont les seules sorties réseau, et aucune des deux n'est sur le chemin d'une réponse.</figcaption>
+      <figcaption>Le chemin branché, en vert, ne quitte jamais la machine. Le chemin en pointillés est celui par lequel un brief remonterait vers gb : il est délibérément vide aujourd'hui, et trois tests le verrouillent — les trois hooks rendent toujours une valeur nulle, même sur une entrée absurde et même quand GK est injoignable.</figcaption>
     </figure>
 
-    <p>Le cœur de l'agent expose des points d'accroche à des extensions. Nous en utilisons deux. <code>pre_llm_call</code> est appelé une fois par tour, avant que le modèle reçoive quoi que ce soit ; le texte qu'une extension y renvoie est accolé au message de l'utilisateur. <code>transform_llm_output</code> reçoit la réponse produite, et nous y renvoyons systématiquement une valeur nulle — nous observons sans jamais modifier.</p>
-    <p>Conséquence sur laquelle tout repose : <strong>l'agent ne peut pas omettre de consulter le service</strong>, puisque ce n'est pas lui qui le consulte. Lui demander d'appeler un outil « trouve-moi la bonne procédure » aurait échoué pour la raison même qui motive le projet — une machine qui oublie de vérifier oublie aussi de demander.</p>
+    <p>Le cœur de gb expose des points d'accroche aux extensions. Nous en utilisons trois, et ils portent chacun une moitié de l'information. <code>pre_llm_call</code> porte <strong>la demande du collègue</strong> ; <code>transform_llm_output</code> porte <strong>la réponse produite</strong> ; <code>on_skill_lifecycle</code> porte <strong>la procédure que gb a effectivement chargée</strong>.</p>
+    <p>Conséquence sur laquelle tout repose : <strong>gb ne peut pas omettre de consulter le service</strong>, puisque ce n'est pas lui qui le consulte. Lui confier un outil « trouve-moi la bonne procédure » aurait échoué pour la raison même qui motive le projet — une machine qui oublie de vérifier oublie aussi de demander.</p>
+    <p><code>pre_llm_call</code> est le seul des trois à se trouver sur le chemin critique : tout ce qui attend là fait attendre un collègue. Le pont y envoie sur un fil détaché, ne lit jamais la réponse de GK, et rend immédiatement. Le reste du travail — la mise à jour du catalogue, 186 fiches en cinq tours — se fait sur le chemin de sortie, où personne n'attend.</p>
 
-    <p>La note, telle que l'agent la reçoit :</p>
-    <div class="fiche"><b>Procédures</b>       perf-audit (14 usages, 2 corrections), deploy-history
-<b>Connu</b>            site hébergé chez OVH (vérifié le 20/09)
-<b>À vérifier</b>       un déploiement a-t-il eu lieu hier ?
-<b>Demander d'abord</b> production ou préproduction ?</div>
-    <p>Elle est courte par conception : chaque ligne occupe une place que l'agent n'a plus pour la tâche. Le pont, lui, ne la lit pas — il transporte une chaîne opaque. C'est ce qui permet de changer le format de la note sans jamais toucher à l'extension installée dans l'agent de production.</p>
+    <p>Ce que GK sait répondre aujourd'hui, en ligne de commande :</p>
+    <div class="fiche">$ gk cherche "le fournisseur nous a facturé le port, c'est normal ?"
+<b>1.</b> gm-supplier-invoice-control    <b>port</b>, <b>factur</b>, <b>fournisseur</b>
+<b>2.</b> gm-presta-catalogue            <b>port</b>
+<b>3.</b> gm-accounting-close             &mdash;
+<b>confiance</b>   marge &middot; couverture &middot; score &middot; information
+<b>diagnostic</b>  en cas d'échec : texte absent / dominé / ordre</div>
+    <p>Le format de la réponse est volontairement riche à la main et pauvre sur le fil : le pont transporte une chaîne opaque qu'il ne lit pas, ce qui permet de changer tout ce qui précède sans jamais retoucher l'extension installée dans l'agent de production. <em>Les lignes ci-dessus donnent la forme de la réponse, pas un relevé.</em></p>
   </section>
 
   <section>
-    <p class="eyebrow">Le budget</p>
-    <h2>Vingt millisecondes, et rien ne sort</h2>
+    <p class="eyebrow">Le chiffre central</p>
+    <h2>Le moteur bat le prompt actuel, de 32 %</h2>
+    <p>Banc d'essai hors production, sur <strong>259 phrases de déclenchement</strong> écrites par les équipes, en retrait systématique : la procédure à retrouver ne voit jamais la phrase qui sert à la chercher. Le bras de référence, « nom + description », est littéralement ce que gb lit aujourd'hui.</p>
     <div class="scroll">
       <table>
-        <thead><tr><th>Étape du chemin de service</th><th>Coût</th><th>Où</th></tr></thead>
+        <thead><tr><th>Bras</th><th class="num">Ensemble</th><th class="num">Métier GM</th><th class="num">Générique</th></tr></thead>
         <tbody>
-          <tr><td>Aller-retour sur la boucle locale</td><td class="num">~1 ms</td><td>machine</td></tr>
-          <tr><td>Normalisation de la demande en français</td><td class="num">~1 ms</td><td>machine</td></tr>
-          <tr><td>Recherche plein texte sur 537 procédures</td><td class="num">quelques ms</td><td>machine</td></tr>
-          <tr><td>Lecture des faits vérifiés</td><td class="num">~1 ms</td><td>machine</td></tr>
-          <tr><td>Rédaction de la note</td><td class="num">négligeable</td><td>machine</td></tr>
-          <tr><td><strong>Au-delà d'une seconde</strong></td><td class="num">abandon</td><td>la demande passe sans note</td></tr>
+          <tr class="vedette"><td><strong>Tous les champs</strong> &mdash; déclencheurs, contre-indications, prose</td><td class="num"><strong>0,531</strong></td><td class="num"><strong>0,598</strong></td><td class="num">0,392</td></tr>
+          <tr><td>Nom + description seuls &mdash; <em>la référence, ce que gb voit</em></td><td class="num">0,401</td><td class="num">0,375</td><td class="num"><strong>0,455</strong></td></tr>
         </tbody>
       </table>
     </div>
-    <p>La conception initiale prévoyait un appel à un service de langage pour rédiger la note, soit un délai de l'ordre de <strong>quatre secondes avant que l'agent commence à réfléchir</strong>. En reprenant ligne par ligne ce que la note contient, aucune ne s'est révélée en avoir besoin : les procédures sortent d'une recherche, les faits d'une lecture, et un fait de plus de trente jours passe mécaniquement en « à vérifier ». Le service de langage a donc été repoussé au travail nocturne, où quatre secondes n'intéressent personne.</p>
-    <p>Cette décision a un effet qui dépasse la latence. Le chemin de service n'ayant plus aucune dépendance externe, <strong>aucun message ne quitte la machine lorsque l'agent travaille.</strong> La seconde dépendance — un fournisseur de vecteurs sémantiques, qui aurait vu passer chaque message et l'intégralité des 537 procédures à l'indexation — a été écartée pour la version 1 par le même raisonnement : la mesure de référence du projet avait en réalité été obtenue sans elle.</p>
+    <p>Chiffre à retenir : sur les procédures métier, lire ce que les équipes ont écrit fait passer la mesure de <strong>0,375 à 0,598, soit +58 %</strong>. Ce gain n'est pas un réglage d'algorithme — c'est le travail de rédaction de l'équipe qui devient enfin lisible par une machine.</p>
+    <p>Et une inversion à ne pas cacher : sur les procédures <strong>génériques</strong> héritées de Claude, ajouter du texte <em>dégrade</em> le résultat (0,455 → 0,392). Ces fichiers sont longs, verbeux, et se citent les uns les autres ; chaque mot supplémentaire leur fait rencontrer des demandes par hasard. Quatre hypothèses ont été essayées pour corriger cela, et <strong>les quatre ont été rejetées par la mesure</strong> : pondération par population, retrait de la prose, normalisation par la longueur, déduplication des marqueurs de négation. Aucune n'a déplacé le résultat de plus de quelques centièmes.</p>
   </section>
 
   <section>
-    <p class="eyebrow">Les arbitrages</p>
-    <h2>Ce que chaque décision achète, et ce qu'elle coûte</h2>
-    <div class="scroll">
-      <table>
-        <thead><tr><th>Décision</th><th>Ce qu'elle achète</th><th>Ce qu'elle coûte</th></tr></thead>
-        <tbody>
-          <tr>
-            <td><strong>Recherche par mots-clés seule</strong>, pas de vecteurs sémantiques en v1</td>
-            <td>Aucune sortie réseau, aucun fournisseur à choisir, latence divisée par 200, la bibliothèque ne part jamais à l'extérieur</td>
-            <td>Les synonymes ne sont pas couverts : une demande formulée autrement que la procédure peut la manquer. À mesurer, et à corriger si le chiffre l'exige</td>
-          </tr>
-          <tr>
-            <td><strong>L'agent est prévenu, pas contraint</strong></td>
-            <td>Il garde le dernier mot ; une mauvaise recommandation reste rattrapable par lui</td>
-            <td>Il peut ignorer la note. C'est pourquoi la mesure distingue « mauvaise recommandation » de « note ignorée » : les deux ont des remèdes opposés</td>
-          </tr>
-          <tr>
-            <td><strong>Les procédures sont envoyées par l'agent</strong>, le service ne les lit pas sur le disque</td>
-            <td>Aucun accès disque partagé, aucune lecture d'un fichier en cours d'écriture, et un envoi manqué ne désynchronise rien</td>
-            <td>Une dépendance de plus à surveiller : si l'envoi cesse, l'index vieillit en silence. D'où une alarme sur l'absence d'envoi</td>
-          </tr>
-          <tr>
-            <td><strong>Un fait n'est servi qu'après validation humaine</strong></td>
-            <td>Le service ne peut pas affirmer une inférence comme un fait établi ; et c'est aussi ce qui empêche un contenu de conversation d'atteindre le prompt de l'agent sous forme de fait</td>
-            <td>Une relecture hebdomadaire à tenir. Si personne ne vient, le service n'a simplement aucun fait à servir — il se tait plutôt que de supposer</td>
-          </tr>
-          <tr>
-            <td><strong>La mesure est livrée avant l'aide</strong></td>
-            <td>Un point de comparaison, et toute la plomberie validée sur une charge qui ne peut rien casser</td>
-            <td>Plusieurs semaines sans bénéfice visible. C'est l'ordre choisi, pas un retard</td>
-          </tr>
-        </tbody>
-      </table>
+    <p class="eyebrow">Le plafond</p>
+    <h2>Les 9 sur 10 ne sont pas atteignables par le moteur</h2>
+    <p>Objectif fixé : <em>le bon skill en première position neuf fois sur dix</em>. La question se tranche en décomposant les échecs plutôt qu'en espérant. Sur les 89 échecs du banc :</p>
+
+    <div class="barre" role="img" aria-label="Sur 89 échecs : 48 où le texte attendu est absent, 12 où il est dominé, 29 où le classement se trompe.">
+      <span class="a" style="flex:48">48</span>
+      <span class="b" style="flex:12">12</span>
+      <span class="c" style="flex:29">29</span>
     </div>
+    <div class="legende">
+      <span><i style="background:var(--warn)"></i> texte absent &mdash; la procédure ne marque aucun point</span>
+      <span><i style="background:var(--warn2)"></i> texte dominé</span>
+      <span><i style="background:var(--accent)"></i> erreur de classement</span>
+    </div>
+
+    <p><strong>67 % des échecs relèvent de la rédaction, 33 % du classement.</strong> Donc même en corrigeant <em>parfaitement</em> les 29 erreurs de classement, le bon skill arriverait premier dans <strong>0,56</strong> des cas, pas 0,9. Ce n'est plus une opinion, c'est une borne calculée.</p>
+    <p>La conséquence est opérationnelle et plutôt bonne : le travail utile n'est pas un réglage de coefficients, c'est <strong>une liste de courses</strong>. La commande <code>gk manques</code> rend, pour chaque procédure, les demandes qu'elle devrait capter et les mots qui manquent à son texte. Et la commande <code>gk confusions</code> rend les paires que rien ne sépare, en désignant laquelle des deux n'a pas écrit sa contre-indication — <strong>31 procédures sur 186 en portent une</strong>, c'est le mécanisme de désambiguïsation prévu, et il est inutilisé aux cinq sixièmes.</p>
   </section>
 
   <section>
-    <p class="eyebrow">La mesure</p>
-    <h2>Pourquoi un avant-après n'aurait rien prouvé</h2>
-    <p>L'indicateur est le nombre d'aveux pour cent messages. La tentation était de mesurer trois semaines sans le service, puis quatre avec. Sur sept semaines, la bibliothèque de procédures évolue, la nature du travail change, le modèle de l'agent peut être mis à jour par une version du cœur, et la façon même de formuler les demandes se déplace quand on sait qu'un service aide. Une baisse de moitié n'aurait désigné aucune cause.</p>
-    <p>La note est donc fournie <strong>un tour sur deux, tiré au hasard</strong>, et les deux moitiés sont comparées sur la même période. Bibliothèque, charge de travail, modèle et jeu de détection sont identiques par construction. Le coût est réel — la moitié du bénéfice pendant l'essai — et il achète une comparaison à laquelle on peut se fier, plus vite, puisque les deux moitiés se remplissent en parallèle.</p>
-
-    <h3 style="margin-top:0.5rem">Deux instruments, et un angle mort</h3>
+    <p class="eyebrow">Le meilleur résultat</p>
+    <h2>Le contexte de la conversation vaut dix fois le réglage du score</h2>
+    <p>Les trois tours précédents d'une conversation comptent pour 0,3 d'un mot de la demande : ils orientent, ils ne décident pas. Mesuré sur 88 sessions construites depuis les phrases citées — une citation sert de tour précédent, une autre de demande :</p>
     <div class="scroll">
       <table>
-        <thead><tr><th>Instrument</th><th>Ce qu'il établit</th><th>Facteurs parasites</th></tr></thead>
+        <thead><tr><th>Condition</th><th class="num">Cas</th><th class="num">1<sup>re</sup> position, sans</th><th class="num">1<sup>re</sup> position, avec</th></tr></thead>
         <tbody>
-          <tr><td>Banc d'essai hors production : corps complet contre titres seuls</td><td>Le service choisit-il mieux que l'agent seul — les titres seuls étant exactement ce qu'il voit aujourd'hui</td><td><strong>Aucun</strong></td></tr>
-          <tr><td>Essai moitié-moitié en production</td><td>Le service change-t-il le comportement de l'agent</td><td>Peu</td></tr>
-          <tr><td>Avant-après</td><td>Rien de solide à lui seul</td><td>Nombreux</td></tr>
+          <tr class="vedette"><td><strong>La conversation reste sur le sujet</strong></td><td class="num">44</td><td class="num">0,409</td><td class="num"><strong>0,682</strong></td></tr>
+          <tr><td>La conversation change de sujet</td><td class="num">44</td><td class="num">0,409</td><td class="num">0,386</td></tr>
         </tbody>
       </table>
     </div>
-    <p>L'angle mort est à nommer : le comptage automatique repose sur l'agent qui <em>avoue</em>. Un agent devenu simplement moins enclin à reconnaître ses erreurs ressemblerait trait pour trait à un progrès. C'est pourquoi des notations humaines, rares mais fiables, servent de point de calibration : les deux séries sont confrontées, et une divergence franche signifie que le détecteur est faux, pas que l'agent s'améliore.</p>
-    <p>Chaque aveu détecté est par ailleurs une donnée d'évaluation complète — la demande, et la procédure que l'agent lui-même désigne comme la bonne. Le corpus du banc d'essai se constitue donc en marchant, sans saisie manuelle.</p>
+    <p>Soit <strong>+0,246 quand elle suit, −0,029 quand elle bascule</strong>. Le seuil de rentabilité se calcule : il faudrait que <strong>89 % des tours changent de sujet</strong> pour que le contexte nuise. Le taux de suite mesuré sur les sessions réelles est de <strong>0,29</strong>, soit presque trois fois la marge nécessaire. <strong>Activé.</strong></p>
+    <p>C'est, et de loin, le meilleur résultat du projet : là où quatre hypothèses de score n'avaient rien déplacé, le contexte fait passer la première position de 0,41 à 0,68. Cela confirme le découpage du problème en quatre temps — intention et contexte, domaines, recherche, cohérence : la recherche était près de son plafond, et c'est <strong>l'intention</strong> qui portait la marge.</p>
+    <p>Deux réserves tenues au clair : les sessions sont <strong>fabriquées</strong>, donc le chiffre indique un sens et pas une amplitude ; et les tours précédents sont lus d'enregistrements déjà faits, rien de nouveau n'est collecté pour cela.</p>
+  </section>
+
+  <section>
+    <p class="eyebrow">Savoir se taire</p>
+    <h2>Le seuil est bon sur le banc, et il ne transfère pas</h2>
+    <p>Un service qui parle à tort est pire qu'un service muet. Un seuil de confiance a donc été mesuré, avec une moitié du corpus pour l'ajuster et une moitié pour le vérifier — précaution qui a payé immédiatement : le signal « score absolu » donnait 1,0 de précision sur les cas d'ajustement et <strong>0,333 sur les cas de vérification</strong>. C'est du surajustement attrapé en flagrant délit, et c'est la raison d'être de la moitié de vérification.</p>
+    <p>Le signal qui tient est la <strong>couverture</strong> — quelle part des mots de la demande la procédure gagnante porte. Sur les sessions suivies, avec un seuil à 0,60 : <strong>GK parlerait sur 86 % des demandes en ayant raison 90 % du temps</strong>. Lu naïvement, l'objectif est atteint.</p>
+    <div class="encart">
+      <h3>Et puis le seuil a été appliqué aux demandes réelles</h3>
+      <p>Une phrase de déclenchement écrite par un auteur fait <strong>3 mots</strong>. Une demande réellement tapée par un collègue en fait <strong>12</strong>, pour une médiane de 112 caractères. En porter 60 % est facile dans le premier cas, impossible dans le second : la couverture médiane réelle est de <strong>0,19</strong>, et <strong>7,7 % seulement des demandes réelles franchiraient le seuil</strong>.</p>
+      <p>Un seuil mesuré sur des phrases courtes et appliqué à des demandes quatre fois plus longues ne veut pas dire la même chose. Cela se vérifie sans aucune annotation — la question posée est la transférabilité, pas la précision — et la réponse est non.</p>
+    </div>
+    <p>C'est le constat le plus important de la semaine, parce qu'il nomme exactement ce qui bloque : <strong>tout ce qui a été mesuré jusqu'ici l'a été sur des textes écrits par les auteurs des procédures.</strong> Le banc répond à « retrouve-t-on une procédure à partir d'une formulation que son auteur a imaginée ? », pas à « à partir de ce qu'un collègue tape vraiment ». Les auteurs écrivent « contrôle des factures fournisseurs » ; un collègue tape « pourquoi on a payé 40 balles de port chez Adagio ».</p>
+  </section>
+
+  <section>
+    <p class="eyebrow">La production</p>
+    <h2>Ce qui tourne, et ce que ça a appris</h2>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Mesure relevée en production</th><th class="num">Valeur</th></tr></thead>
+        <tbody>
+          <tr><td>Procédures au catalogue, tenu à jour sans intervention</td><td class="num">186</td></tr>
+          <tr><td>Procédures portant des phrases de déclenchement</td><td class="num">145 &middot; 78 %</td></tr>
+          <tr><td>Procédures portant une contre-indication</td><td class="num">31 &middot; 17 %</td></tr>
+          <tr><td>Poids total du catalogue &middot; durée d'une mise à jour complète</td><td class="num">117 Ko &middot; 0,19 s</td></tr>
+          <tr><td>Messages observés &middot; demandes réelles enregistrées</td><td class="num">459 &middot; 261</td></tr>
+          <tr><td>Aveux d'erreur détectés &middot; pour cent messages</td><td class="num">6 &middot; 1,31</td></tr>
+          <tr><td>Sessions n'ayant chargé aucune procédure</td><td class="num">21 / 63</td></tr>
+          <tr><td>Tests automatisés</td><td class="num">261</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>Les <strong>78 %</strong> sont une bonne nouvelle récente : ils étaient à 36 % il y a deux jours. Les équipes ont ajouté les sections de déclenchement entre-temps, et c'est ce qui a produit le +58 % sur le métier. Le levier le plus rentable du projet n'est pas dans le code.</p>
+    <p>Les <strong>21 sessions sur 63 sans aucune procédure chargée</strong> sont l'inconnue la plus intéressante. On ne sait pas encore les lire : ce sont peut-être 21 conversations qui n'appelaient aucune procédure, ou 21 occasions manquées. Les distinguer demande de regarder les demandes, ce qui est précisément l'objet du point suivant.</p>
+    <p>Et un rappel qui n'est pas une formalité : <strong>rien n'a été injecté dans gb à aucun moment.</strong> Son comportement est strictement celui qu'il avait avant GK. Tout ce qui précède a été obtenu en observant.</p>
   </section>
 
   <section>
@@ -323,17 +370,29 @@
       <table>
         <thead><tr><th>Donnée</th><th>Durée</th><th>Contient du texte</th><th>Reconstructible</th></tr></thead>
         <tbody>
-          <tr><td>Index des procédures</td><td>tant qu'elles existent</td><td>non, jamais le corps</td><td>oui, gratuitement</td></tr>
+          <tr><td>Catalogue des procédures : nom, description, déclencheurs</td><td>tant qu'elles existent</td><td>oui, écrit par leurs auteurs</td><td>oui, gratuitement</td></tr>
           <tr><td>Compteur d'une correction : date, classement, procédures</td><td>sans limite</td><td><strong>non</strong></td><td>non</td></tr>
-          <tr><td>Donnée d'évaluation : la demande tronquée</td><td>tant que la procédure citée existe</td><td>oui</td><td>non</td></tr>
-          <tr><td>Extrait de l'aveu, 200 caractères</td><td><strong>90 jours</strong></td><td>oui</td><td>non</td></tr>
-          <tr><td>Journal des notes émises</td><td><strong>7 jours</strong></td><td>oui</td><td>non</td></tr>
-          <tr><td>Conversations complètes</td><td>—</td><td colspan="2"><strong>jamais conservées</strong></td></tr>
+          <tr><td>Demande d'un collègue, tronquée à 1 000 caractères</td><td><strong>90 jours</strong></td><td>oui</td><td>non</td></tr>
+          <tr><td>Extrait d'un aveu d'erreur</td><td><strong>90 jours</strong></td><td>oui</td><td>non</td></tr>
+          <tr><td>Conversations complètes, réponses de gb</td><td>&mdash;</td><td colspan="2"><strong>jamais conservées</strong></td></tr>
         </tbody>
       </table>
     </div>
-    <p>Le découpage n'est pas cosmétique : il permet d'effacer le texte sans perdre la mesure. Le compteur, qui est tout ce dont la comparaison a besoin, ne contient aucun mot d'un collègue, et peut donc être gardé indéfiniment sans rien exposer. Une commande permet par ailleurs d'effacer à la demande tout ce qui vient d'une conversation donnée.</p>
-    <p>Quatre tables sur l'ensemble ne se reconstruisent pas ; tout le reste dérive d'un envoi de l'agent ou se jette. La sauvegarde du service tient donc dans quelques dizaines de kilo-octets.</p>
+    <p>Le découpage n'est pas cosmétique : il permet d'effacer le texte sans perdre la mesure. Le compteur, qui est tout ce dont la comparaison a besoin, ne contient aucun mot d'un collègue et peut donc être gardé indéfiniment sans rien exposer. Les demandes ne sont jamais affichées par les commandes d'exploitation sans qu'on les réclame explicitement, et <code>gk forget</code> efface à la demande tout ce qui vient d'une conversation donnée, d'une date, ou l'ensemble des demandes.</p>
+    <p>Enregistrer du texte d'utilisateur est une ligne franchie consciemment, et elle a été franchie pour une raison précise : sans elle, GK mesurait sa pertinence sur des textes qu'il avait lui-même indexés. C'est le défaut que la section précédente décrit.</p>
+  </section>
+
+  <section>
+    <p class="eyebrow">La décision</p>
+    <h2>Une heure d'annotation débloque tout le reste</h2>
+    <p>Trois questions sont aujourd'hui bloquées sur le même manque — <strong>aucune vérité terrain sur des demandes réelles</strong> : quel seuil retenir, quel est le vrai taux de réussite, et faut-il injecter un brief. Les aveux d'erreur en donneraient, mais il y en a six.</p>
+    <p>D'où un dispositif délibérément pauvre. <code>gk echantillon</code> prépare <strong>50 demandes réelles</strong> avec les cinq procédures que GK propose pour chacune, en texte brut annotable n'importe où ; <code>gk juger</code> relit le fichier et rend le taux de réussite en première et en cinquième position, <strong>réels</strong>. Trois choix de forme, chacun pour une raison :</p>
+    <ul class="liste">
+      <li><strong>Le format est pauvre</strong> — du texte qu'on édite dans n'importe quel éditeur — parce qu'un format riche coûterait une interface, et une interface coûterait plus que l'heure qu'elle économise.</li>
+      <li><strong>L'échantillon est stratifié par longueur</strong> : une demande de trois mots et une de trente ne posent pas le même problème, et un tirage simple sur-représenterait les moyennes.</li>
+      <li><strong>La relecture est tolérante</strong> : une réponse vide, un « ? » ou une absurdité sont ignorés, pas fatals. Et une demande qu'<em>aucune</em> procédure ne sert est comptée à part — ce n'est pas un échec de recherche mais un trou de la bibliothèque, et les confondre fausserait le jugement.</li>
+    </ul>
+    <p>C'est le point où le projet se trouve exactement : l'annotation est en cours.</p>
   </section>
 
   <section>
@@ -344,28 +403,28 @@
         <span class="etat">livrée</span>
         <div>
           <h3>Phase 1 &middot; la chaîne de mesure, seule</h3>
-          <p>Détection des aveux, classement, rétentions, outillage d'exploitation, conteneur. Aucune note injectée : l'agent est strictement inchangé. 33 tests automatisés.</p>
+          <p>Détection des aveux d'erreur, classement, rétentions, outillage d'exploitation, conteneur. Étendue en cours de route à l'observation des demandes réelles, en lecture seule.</p>
         </div>
       </div>
-      <div class="phase">
-        <span class="etat">à venir</span>
+      <div class="phase fait">
+        <span class="etat">livrée</span>
         <div>
-          <h3>Phase 2 &middot; l'index et le banc d'essai</h3>
-          <p>Indexation des 537 procédures, traitement du français, et la mesure hors production qui décide si la recherche par mots-clés suffit. Toujours rien d'injecté.</p>
+          <h3>Phase 2 &middot; le catalogue, l'index et le banc</h3>
+          <p>Catalogue auto-entretenu des 186 procédures, recherche sur cinq champs avec contexte de session, banc d'essai, seuil de confiance, et les commandes de diagnostic qui rendent la liste de courses. Toujours rien d'injecté.</p>
         </div>
       </div>
-      <div class="phase">
-        <span class="etat">à venir</span>
+      <div class="phase bloc2">
+        <span class="etat">en attente</span>
         <div>
-          <h3>Phase 3 &middot; la note, un tour sur deux</h3>
-          <p>Première mise en service effective, comparée à la référence accumulée depuis la phase 1.</p>
+          <h3>Phase 3 &middot; le brief, un tour sur deux</h3>
+          <p>Première mise en service effective, comparée au bras témoin. <strong>Bloquée volontairement</strong> : le seuil mesuré ne transfère pas aux demandes réelles, et injecter sans vérité terrain serait parier sur un chiffre mesuré ailleurs.</p>
         </div>
       </div>
       <div class="phase">
         <span class="etat">à venir</span>
         <div>
           <h3>Phase 4 &middot; les faits vérifiés</h3>
-          <p>Mémoire des faits sourcés, file de validation, synthèse hebdomadaire. En dernier, parce que c'est la partie la moins liée à l'indicateur principal.</p>
+          <p>Mémoire des faits sourcés, file de validation humaine, synthèse hebdomadaire. En dernier, parce que c'est la partie la moins liée à l'indicateur principal.</p>
         </div>
       </div>
     </div>
@@ -376,20 +435,20 @@
     <h2>Les risques, tels qu'ils se présentent</h2>
     <div class="risques">
       <div class="risque">
-        <h3>La recherche par mots-clés peut ne pas suffire</h3>
-        <p>La mesure de référence du projet portait sur 23 procédures fictives, pas sur 537 réelles comportant des quasi-doublons. Le banc d'essai de la phase 2 tranche, avant toute mise en service. Si l'écart est dérisoire, la question des vecteurs sémantiques est rouverte avec un chiffre en main.</p>
+        <h3>Le plafond du moteur est sous l'objectif</h3>
+        <p>0,56 contre 0,9 demandés. L'écart ne se rattrape pas en code : il se rattrape en rédaction, procédure par procédure, et cela demande du temps aux équipes. Les outils sont faits — <code>gk manques</code> et <code>gk confusions</code> disent quoi écrire et où. Le contexte de session a montré qu'un levier hors du score pouvait valoir dix fois mieux ; il peut en rester.</p>
+      </div>
+      <div class="risque">
+        <h3>Tout le banc est écrit par les auteurs</h3>
+        <p>259 phrases citées, mesurées avec rigueur, et toutes rédigées par ceux qui connaissaient déjà la réponse. L'écart avec les demandes réelles n'est pas mesuré et il est probablement grand. L'échantillon annoté est la seule réponse, et c'est pour cela qu'il est au centre de la semaine.</p>
       </div>
       <div class="risque">
         <h3>Une mise à jour du cœur peut couper le lien en silence</h3>
-        <p>Les points d'accroche appartiennent à un projet tiers en développement rapide. Une extension désactivée ou un point renommé ne produit aucune erreur : l'agent répond normalement, sans note. D'où une alarme sur l'absence d'appel, une vérification intégrée à la procédure de mise à jour, et une extension volontairement réduite à cinquante lignes pour être réécrite en une heure.</p>
+        <p>Les points d'accroche appartiennent à un projet tiers en développement rapide. Une extension désactivée ou un point renommé ne produit aucune erreur : gb répond normalement, sans rien envoyer. D'où une alarme sur l'absence d'appel, une vérification intégrée à la procédure de mise à jour, et un pont volontairement réduit à l'essentiel. Un incident de ce type a déjà coûté une matinée de service à l'équipe ; sa cause — un fichier créé sous la mauvaise identité — est consignée et la procédure corrigée.</p>
       </div>
       <div class="risque">
-        <h3>Aucun chiffre de résultat n'existe aujourd'hui</h3>
-        <p>Le projet a construit l'instrument de mesure avant l'outil, délibérément. La contrepartie est qu'à la question « combien cela fait-il gagner », la seule réponse honnête aujourd'hui est : nous serons en mesure de le dire, et de le prouver, à l'issue de la phase 3.</p>
-      </div>
-      <div class="risque">
-        <h3>La relecture hebdomadaire reposera sur une personne</h3>
-        <p>La validation des faits demande quelques minutes par semaine, et ce genre d'engagement s'érode. Le système est conçu pour que l'abandon soit sans danger : sans validation, aucun fait n'est servi. Il perd une fonction, il ne produit pas d'erreur.</p>
+        <h3>Le filet de sécurité n'est pas gratuit à retirer</h3>
+        <p>Le catalogue au prompt système est ce qui rend GK inoffensif : s'il se trompe, se tait ou tombe, gb voit toujours la liste complète. Le retirer ferait de GK le seul chemin par lequel gb apprend qu'une procédure existe, et une panne de GK deviendrait une panne de gb. Le gain est mince — un bloc stable est mis en cache. Arbitrage légitime, à prendre après la mesure, pas avant.</p>
       </div>
     </div>
   </section>
@@ -397,7 +456,7 @@
   <hr>
 
   <footer>
-    <p>Le service tourne dans son propre conteneur, sur le serveur déjà exploité, avec une limite de 256 Mo et aucun port ouvert au-delà de la boucle locale. L'intégralité des décisions d'architecture, y compris celles qui ont été reprises après confrontation au serveur réel, est consignée dans un document de référence versionné avec le code.</p>
+    <p>Le service tourne dans son propre conteneur sur le serveur déjà exploité, avec une limite de 256 Mo, aucun port ouvert au-delà de la boucle locale, et aucune dépendance externe sur le chemin d'une réponse. L'intégralité des décisions d'architecture — y compris les quatre hypothèses rejetées par la mesure et les affirmations corrigées après confrontation au serveur réel — est consignée dans un document de référence versionné avec le code, qui fait foi en cas de divergence.</p>
   </footer>
 
 </main>
