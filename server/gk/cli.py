@@ -31,8 +31,10 @@ from .confrontation import lecture as lecture_confrontation
 from .jugement import (
     REPRISE_JUSQU_A,
     est_injection,
+    etiquettes,
     juger,
     preparer,
+    reetalonner,
     relire,
     reprise,
 )
@@ -538,6 +540,69 @@ def cmd_reprise(args, cfg: Config) -> int:
             print("catalogue vide, voir `gk catalogue`", file=sys.stderr)
             return 1
         sys.stdout.write(reprise(store, index, cas, jusqu_a=args.jusqu_a))
+    return 0
+
+
+def cmd_reetalonner(args, cfg: Config) -> int:
+    """Re-mesurer le rappel sur les etiquettes deja annotees.
+
+    Sert a recuperer une heure d'annotation apres la correction de la fuite de
+    contexte, au lieu de la refaire. Les etiquettes sont des jugements sur la
+    **demande** -- « pour cette demande, le bon skill est X » -- donc elles
+    restent vraies quand le classement change.
+
+    Les reponses `0` ne sont pas reutilisables et sont comptees a part : elles
+    disaient « aucun des cinq que GK proposait alors », pas « aucun skill ne
+    sert cette demande ».
+    """
+    texte = sys.stdin.read()
+    cas = relire(texte)
+    if not cas:
+        _emit({
+            "ok": False,
+            "erreur": "aucun cas lu : l'entree ne ressemble pas a un echantillon",
+            "suite": "gk reetalonner < echantillon-annote.txt",
+        }, args)
+        return 1
+    with Store(cfg.database) as store:
+        index = Index.construire(store)
+        if index.n == 0:
+            _emit({"ok": False, "erreur": "catalogue vide, voir `gk catalogue`"}, args)
+            return 1
+        if getattr(args, "corpus", False):
+            # Le corpus seul, pour le garder hors de l'echantillon.
+            _emit({"ok": True, "etiquettes": etiquettes(cas)}, args)
+            return 0
+        resultat = reetalonner(store, index, cas)
+    if not resultat.get("ok"):
+        _emit(resultat, args)
+        return 1
+    if not args.details:
+        resultat.pop("details", None)
+    n = resultat["etiquettes_reutilisables"]
+    c = resultat["courbe"]
+    resultat["lecture"] = [
+        "Rappel re-mesure sur les etiquettes deja annotees, avec le contexte "
+        "ancre sur chaque demande et non sur la fin de sa session.",
+        f"Rang 1 : {c.get('1')}. Rang 2 : {c.get('2')}. Rang 5 : {c.get('5')}. "
+        f"Sur {n} etiquettes.",
+        "Ces chiffres REMPLACENT ceux mesures avant la correction de la fuite, "
+        "qui lisaient les tours suivants de la conversation.",
+        f"{resultat['reponses_0_non_reutilisables']} reponses `0` ecartees : "
+        "elles disaient « aucun des cinq proposes alors », ce qui ne se "
+        "transpose pas a un autre classement. Elles ne sont PAS comptees comme "
+        "des demandes sans reponse.",
+    ]
+    if resultat.get("injections_ecartees"):
+        resultat["lecture"].append(
+            f"{resultat['injections_ecartees']} injections du systeme ecartees."
+        )
+    resultat["lecture"].append(
+        f"{resultat['demandes_avec_contexte']} demandes sur {n} ont un contexte "
+        "anterieur ; les autres sont des premiers tours, ou le contexte ne joue "
+        "pas."
+    )
+    _emit(resultat, args)
     return 0
 
 
@@ -1649,6 +1714,20 @@ def build_parser() -> argparse.ArgumentParser:
         help="profondeur du classement montre (defaut %(default)s)",
     )
     rp.set_defaults(func=cmd_reprise)
+
+    re_ = sub.add_parser(
+        "reetalonner",
+        help="re-mesurer le rappel sur les etiquettes deja annotees",
+    )
+    re_.add_argument(
+        "--details", action="store_true",
+        help="rendre le rang obtenu pour chaque etiquette",
+    )
+    re_.add_argument(
+        "--corpus", action="store_true",
+        help="ne rendre que les etiquettes reutilisables, sans les re-mesurer",
+    )
+    re_.set_defaults(func=cmd_reetalonner)
 
     cf = sub.add_parser(
         "confronter",

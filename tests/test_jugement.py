@@ -462,3 +462,112 @@ def test_gk_demandes_compte_les_injections(tmp_path, capsys, monkeypatch):
     assert out["injections_systeme"] == 1
     assert out["demandes_de_collegues"] == 1
     assert out["exemples_injections"] == ["Skill invoked: quelque-chose"]
+
+
+# -- le reetalonnage --------------------------------------------------------
+
+
+def test_une_etiquette_survit_a_un_changement_de_classement(prepare):
+    """Une reponse qui designe un skill est un jugement sur la DEMANDE :
+    « pour cette demande, le bon skill est X. » Elle reste vraie si le
+    classement change, donc elle est reutilisable.
+
+    C'est ce qui permet de recuperer une heure d'annotation apres la correction
+    de la fuite de contexte, au lieu de la refaire.
+    """
+    from gk.jugement import etiquettes
+
+    cas = relire(
+        f"<!-- gk echantillon v{VERSION} -->\n"
+        "## 1. la facture proforma du fournisseur ne colle pas\n"
+        "   1. gm-marges   [greenmusic]  score 3\n"
+        "   2. gm-factures   [greenmusic]  score 2\n"
+        f"{MARQUEUR} 2\n"
+    )
+    etqs = etiquettes(cas)
+    assert etqs == [{
+        "numero": 1,
+        "demande": "la facture proforma du fournisseur ne colle pas",
+        "attendu": "gm-factures",
+    }]
+
+
+def test_une_reponse_zero_n_est_pas_une_etiquette(prepare):
+    """`0` disait « aucun des cinq que GK proposait ALORS », pas « aucun skill
+    ne sert cette demande ». Avec un autre classement les cinq ne sont plus les
+    memes, donc l'information est perdue -- et la convertir en « aucune
+    reponse » serait inventer une etiquette."""
+    from gk.jugement import etiquettes
+
+    cas = relire(
+        f"<!-- gk echantillon v{VERSION} -->\n"
+        "## 1. une demande\n   1. gm-marges   [greenmusic]  score 3\n"
+        f"{MARQUEUR} 0\n"
+    )
+    assert etiquettes(cas) == []
+
+
+def test_une_injection_n_est_pas_une_etiquette(prepare):
+    from gk.jugement import etiquettes
+
+    cas = relire(
+        f"<!-- gk echantillon v{VERSION} -->\n"
+        "## 1. Skill invoked: gm-factures\n"
+        "   1. gm-factures   [greenmusic]  score 9\n"
+        f"{MARQUEUR} 1\n"
+    )
+    assert etiquettes(cas) == []
+
+
+def test_le_reetalonnage_rend_la_courbe_et_compte_ce_qu_il_ecarte(prepare):
+    svc, index = prepare
+    cas = relire(
+        f"<!-- gk echantillon v{VERSION} -->\n"
+        "## 1. la facture proforma du fournisseur ne colle pas\n"
+        "   1. gm-factures   [greenmusic]  score 9\n"
+        f"{MARQUEUR} 1\n"
+        "\n"
+        "## 2. quelles commandes sont a perte\n"
+        "   1. gm-marges   [greenmusic]  score 7\n"
+        f"{MARQUEUR} 1\n"
+        "\n"
+        "## 3. une demande sans rapport avec quoi que ce soit\n"
+        "   1. gm-factures   [greenmusic]  score 1\n"
+        f"{MARQUEUR} 0\n"
+    )
+    from gk.jugement import reetalonner
+
+    out = reetalonner(svc.store, index, cas)
+    assert out["ok"] is True
+    assert out["etiquettes_reutilisables"] == 2
+    assert out["reponses_0_non_reutilisables"] == 1
+    assert out["courbe"]["5"] == 1.0, "les deux bons skills sont retrouves"
+    assert out["courbe"]["1"] == 1.0
+
+
+def test_gk_reetalonner_dit_que_ses_chiffres_remplacent_les_anciens(
+    tmp_path, capsys, monkeypatch
+):
+    """Un chiffre corrige qui ne dit pas qu'il en remplace un autre laisse les
+    deux circuler."""
+    svc = Service.open(tmp_path / "r.db")
+    Catalog(svc.store).ingest([
+        {"path": "a/gm-f/SKILL.md", "name": "gm-f",
+         "description": "Factures fournisseurs proforma.", "category": "c",
+         "fingerprint": "1"},
+    ], complete=True)
+    svc.request("s1", "la facture proforma du fournisseur")
+    svc.close()
+    monkeypatch.setenv("GK_DATABASE", str(tmp_path / "r.db"))
+    faux = (
+        f"<!-- gk echantillon v{VERSION} -->\n"
+        "## 1. la facture proforma du fournisseur\n"
+        "   1. gm-f   [c]  score 9\n"
+        f"{MARQUEUR} 1\n"
+    )
+    monkeypatch.setattr("sys.stdin", __import__("io").StringIO(faux))
+    assert cli_main(["--json", "reetalonner"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["courbe"]["1"] == 1.0
+    assert any("REMPLACENT" in l for l in out["lecture"])
+    assert any("ne sont PAS comptees" in l for l in out["lecture"])

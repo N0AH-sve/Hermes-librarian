@@ -266,6 +266,116 @@ def reprise(
     return "\n".join(lignes) + "\n"
 
 
+def etiquettes(cas: list[dict]) -> list[dict]:
+    """Les paires (demande, bon skill) reutilisables d'un echantillon annote.
+
+    **Ce qui survit a une regeneration de l'echantillon, et ce qui n'y survit
+    pas.** Une reponse qui designe un skill est un jugement sur la **demande** :
+    « pour cette demande, le bon skill est X. » Elle reste vraie si le
+    classement change, donc elle est reutilisable indefiniment.
+
+    Une reponse `0` ne dit pas « aucun skill ne sert cette demande » : elle dit
+    « aucun des cinq **que GK proposait alors** ». Avec un autre classement, les
+    cinq ne sont plus les memes, donc l'information est perdue. Ces cas sont
+    ecartes et comptes, jamais convertis en « aucune reponse ».
+
+    C'est ce qui permet de recuperer une heure d'annotation apres la correction
+    de la fuite de contexte, au lieu de la refaire.
+    """
+    from .confrontation import attendu_de
+
+    out: list[dict] = []
+    for c in cas:
+        attendu = attendu_de(c)
+        demande = _une_ligne(c.get("demande") or "")
+        if not attendu or not demande or est_injection(demande):
+            continue
+        out.append({"numero": c["numero"], "demande": demande, "attendu": attendu})
+    return out
+
+
+def reetalonner(
+    store: Store, index: Index, cas: list[dict], rangs=(1, 2, 3, 5)
+) -> dict:
+    """Le rappel reel, re-mesure sur les etiquettes avec le contexte corrige.
+
+    Aucune nouvelle annotation : les etiquettes de l'echantillon sont rejouees
+    contre un classement refait, ancre sur la demande et non sur la fin de la
+    session.
+    """
+    etqs = etiquettes(cas)
+    annotes = [c for c in cas if c.get("reponse") is not None or c.get("nom")]
+    zeros = sum(1 for c in annotes if c.get("reponse") == 0)
+    injections = sum(
+        1 for c in cas if est_injection(_une_ligne(c.get("demande") or ""))
+    )
+    if not etqs:
+        return {
+            "ok": False,
+            "erreur": "aucune etiquette reutilisable dans cet echantillon",
+            "cas_lus": len(cas),
+            "reponses_0_non_reutilisables": zeros,
+        }
+
+    # On retrouve session et horodatage pour rejouer le contexte a l'identique.
+    rows = store.query(
+        "SELECT session_id, text_truncated, ts FROM requests "
+        "WHERE text_truncated IS NOT NULL AND text_truncated <> '' "
+        "ORDER BY ts DESC LIMIT 2000"
+    )
+    situe: dict[str, tuple[str, float]] = {}
+    for r in rows:
+        situe.setdefault(
+            _une_ligne(r["text_truncated"]), (r["session_id"] or "", r["ts"])
+        )
+
+    courbe = {k: 0 for k in rangs}
+    distribution: dict[str, int] = {}
+    hors = 0
+    avec_contexte = 0
+    details: list[dict] = []
+    for e in etqs:
+        session, ts = situe.get(e["demande"], ("", None))
+        contexte = (
+            contexte_de_session(store, session, avant=ts)
+            if session and ts is not None else []
+        )
+        if contexte:
+            avec_contexte += 1
+            resultats = index.chercher_avec_contexte(
+                e["demande"], contexte=contexte, limite=max(rangs)
+            )
+        else:
+            resultats = index.chercher(e["demande"], limite=max(rangs))
+        noms = [r["name"] for r in resultats]
+        rang = noms.index(e["attendu"]) + 1 if e["attendu"] in noms else None
+        if rang is None:
+            hors += 1
+        else:
+            distribution[str(rang)] = distribution.get(str(rang), 0) + 1
+            for k in rangs:
+                if rang <= k:
+                    courbe[k] += 1
+        details.append({
+            "numero": e["numero"], "attendu": e["attendu"], "rang": rang,
+            "contexte_tours": len(contexte),
+        })
+
+    n = len(etqs)
+    return {
+        "ok": True,
+        "cas_lus": len(cas),
+        "etiquettes_reutilisables": n,
+        "reponses_0_non_reutilisables": zeros,
+        "injections_ecartees": injections,
+        "demandes_avec_contexte": avec_contexte,
+        "courbe": {str(k): round(courbe[k] / n, 3) for k in rangs},
+        "distribution_des_rangs": distribution,
+        f"hors_des_{max(rangs)}": hors,
+        "details": details,
+    }
+
+
 _TITRE = re.compile(r"^##\s*(\d+)\.\s*(.*)$")
 _CANDIDAT = re.compile(r"^\s*(\d+)\.\s+(\S+)\s")
 _VERSION = re.compile(re.escape(_MARQUE) + r"(\d+)")
