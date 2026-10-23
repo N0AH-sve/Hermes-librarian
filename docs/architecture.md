@@ -3201,6 +3201,85 @@ desormais les etiquettes nommees hors des cinq et annonce
 `biais_de_selection: LEVE` au lieu de repeter un avertissement perime -- sinon
 on sous-estimerait une mesure devenue valide.
 
+## Le verdict : gb a le bon skill 4 fois sur 5, GK le designe 1 fois sur 4
+
+Releve du 2026-10-23, echantillon **v2**, 37 demandes servables, biais de
+selection **leve** (14 etiquettes designent un skill que GK ne proposait pas).
+**C'est la mesure que le projet cherchait depuis le debut, et elle tranche.**
+
+| | GK | gb |
+|---|---|---|
+| **Mesure la plus juste par demande** | **0,243** (9/37) | **0,811** (30/37) |
+| Session entiere | — | 0,838 |
+| Premier choix du tour | 0,243 | 0,189 |
+
+**Ecart de 0,595.** La barre avait ete fixee **avant** la mesure : « un ecart de
+quelques points ne signifie rien a n = 37 ; un ecart de vingt, si. » Il y en a
+cinquante-neuf. **Par mon propre critere annonce d'avance, c'est concluant.**
+
+### Le mecanisme, et pourquoi ce n'est pas une triche
+
+`gb_avait_deja_le_bon_avant` vaut **26 sur 37**. La structure l'explique : 37
+demandes pour **12 sessions distinctes** et 21 skills attendus, soit moins de
+deux skills par conversation. **Le bon skill est quasi constant a l'interieur
+d'une session.** gb charge large au premier tour et garde ; il a donc raison sur
+tous les tours suivants.
+
+Ce n'est pas un artefact de mesure, c'est **une strategie qui marche** : le bon
+skill est reellement dans le contexte de l'agent 81 % du temps. Son prix est
+9,1 skills charges par session.
+
+**Et sur un choix a froid, GK est marginalement devant** : 0,243 contre 0,189 au
+rang 1. Mais gb ne fait un choix neuf que 17 fois sur 37, parce que les vingt
+autres fois il n'en a pas besoin. Comparer GK a ces 0,189 serait reprendre
+l'erreur de denominateur deja faite deux fois : on ne reproche pas a gb de ne
+pas rechoisir ce qu'il a deja.
+
+### La decision
+
+**Un brief qui nomme un skill par tour remplacerait une strategie qui reussit
+81 % du temps par une qui reussit 24 % du temps.** C'est une regression
+majeure, et la mesure est desormais **defavorable a GK par construction
+corrigee** : c'est l'echappatoire de la v2 qui a retire le biais qui le
+soutenait.
+
+**La phase 3 telle que concue est morte.** Pas « non faute de preuve » comme le
+2026-10-23 au matin, ni « non par prudence » : non parce que la mesure franche
+dit l'inverse, avec un ecart quarante fois superieur au seuil annonce d'avance.
+
+### Ou se situe exactement le blocage, et il est actionnable
+
+**38 % des demandes servables ont leur bon skill hors des cinq premiers de GK.**
+GK ne peut pas choisir ce qu'il ne retrouve pas. Ce n'est ni un probleme de
+coefficients -- quatre hypotheses de score ont ete rejetees par la mesure -- ni
+un probleme de classement : c'est un probleme de **rappel**, donc de texte.
+
+La distribution le confirme, et explique le zero au rang 5 des deux
+echantillons : avec cinq champs notes **en presence**, le score est grossier. Un
+skill qui correspond vraiment atterrit dans les quatre premiers ; au-dela il n'y
+a que des correspondances accidentelles. Le bon skill est soit haut, soit tres
+loin. (La troncature a ete verifiee : `resultats[:5]` est correct, ce n'est pas
+un defaut de code.)
+
+**Le levier est connu et sa valeur est mesuree.** En ecrivant leurs lignes de
+declenchement, les equipes ont fait passer le MRR metier de 0,375 a 0,598, soit
+**+58 %**, et la couverture des declencheurs de 36 % a 78 % en deux jours.
+`gk manques` rend, pour chaque skill, les demandes qu'il devrait capter et **les
+mots qui manquent a son texte**. C'est la seule voie mesuree vers l'objectif de
+GM -- que GK choisisse le skill.
+
+### Ce que la chaine de mesure a coute et rapporte
+
+Le projet a ete construit mesure d'abord : detecteur, compteurs et rentions
+avant toute recommandation. **Cette chaine vient de tuer la fonctionnalite
+qu'elle devait servir**, en une journee, avant toute mise en service -- et apres
+avoir corrige quatre defauts de l'instrument (rappel@5 tautologique, fuite de
+contexte, 23 % d'evenements qui n'etaient pas des usages, motifs de filtre
+devines). C'est l'ordre choisi qui le permet, pas un retard.
+
+Ce qui reste et qui sert deja : le catalogue auto-entretenu, `gk manques`,
+`gk confusions`, et les chiffres qui disent ou la bibliotheque a des trous.
+
 ## Points ouverts
 
 Dernière revue : 2026-10-22, après la mise en service partielle de la phase 1
