@@ -257,7 +257,16 @@ C'est la **seule** voie par laquelle le pont rend autre chose que `None`.
 collègue — et `on_skill_lifecycle` restent inchangés, et des tests le
 verrouillent.
 
-Dans le `config.yaml` de l'agent, sur l'entrée du plugin :
+**Par un script, pas à la main.** Le `config.yaml` fait plusieurs centaines de
+lignes, il est en production, et une faute d'indentation ne se voit qu'au
+redémarrage — c'est-à-dire quand les collègues ne peuvent plus travailler.
+
+```bash
+docker compose -f ~/next_hermes/compose.yaml exec -u 1001 -T hermes \
+    python3 - < ~/greenknowledge/deploy/activer-consultation.py
+```
+
+Il insère ceci, et rien d'autre :
 
 ```yaml
 plugins:
@@ -267,6 +276,21 @@ plugins:
       mcp_allowlist: ["gk"]
       env:
         GK_CONSULTATION: "1"
+```
+
+Mêmes garanties que `brancher-gk.py` : sauvegarde horodatée, idempotent,
+écriture **en place** donc le propriétaire est préservé, validation après
+écriture et **restauration automatique** si le YAML ne se relit pas ou si
+`mcp_allowlist` a bougé. Il **refuse** plutôt que d'abîmer : pas d'entrée
+`gk-bridge`, ou un `env:` écrit en ligne, et il s'arrête sans rien écrire. Un
+`env:` déjà présent est **complété**, pas dupliqué — un second `env:` ferait
+perdre silencieusement l'une des deux clés. 17 tests.
+
+Pour désactiver :
+
+```bash
+docker compose -f ~/next_hermes/compose.yaml exec -u 1001 -T hermes \
+    python3 - --desactiver < ~/greenknowledge/deploy/activer-consultation.py
 ```
 
 Si Hermes ne propage pas `env` par entrée de plugin, poser la variable sur le
