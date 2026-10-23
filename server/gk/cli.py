@@ -33,6 +33,7 @@ from .jugement import (
     est_injection,
     etiquettes,
     motifs_repetes,
+    simuler_memoire,
     juger,
     preparer,
     reetalonner,
@@ -604,6 +605,61 @@ def cmd_reetalonner(args, cfg: Config) -> int:
         "anterieur ; les autres sont des premiers tours, ou le contexte ne joue "
         "pas."
     )
+    _emit(resultat, args)
+    return 0
+
+
+def cmd_memoire(args, cfg: Config) -> int:
+    """GK avec la memoire de session que gb a deja.
+
+    gb a le bon skill en contexte 81 % du temps parce qu'il charge large au
+    premier tour et **garde**. GK recalculait tout a chaque demande. Ce n'est
+    donc pas la meme tache : cette commande donne a GK l'affordance de gb et
+    mesure ce qu'elle rapporte.
+
+    Decoupage par SESSION et non par demande, parce que les demandes d'une meme
+    conversation partagent presque toujours le meme bon skill.
+    """
+    texte = sys.stdin.read()
+    cas = relire(texte)
+    if not cas:
+        _emit({
+            "ok": False,
+            "erreur": "aucun cas lu : l'entree ne ressemble pas a un echantillon",
+            "suite": "gk memoire < echantillon-annote.txt",
+        }, args)
+        return 1
+    with Store(cfg.database) as store:
+        index = Index.construire(store)
+        if index.n == 0:
+            _emit({"ok": False, "erreur": "catalogue vide, voir `gk catalogue`"}, args)
+            return 1
+        resultat = simuler_memoire(store, index, cas, top=args.top)
+    if not resultat.get("ok"):
+        _emit(resultat, args)
+        return 1
+    sans = resultat["verification_sans_memoire"]
+    avec = resultat["verification_avec_memoire"]
+    resultat["lecture"] = [
+        "GK avec la memoire de session que gb a deja : un skill classe haut "
+        "plus tot dans la conversation reste candidat, meme si le texte de la "
+        "demande du tour ne lui donne aucun point.",
+        f"Bonus ajuste sur la premiere moitie des SESSIONS, verifie sur "
+        f"l'autre. Retenu : {resultat['bonus_retenu']}.",
+        f"Verification, rang 1 : {sans.get('1')} sans memoire contre "
+        f"{avec.get('1')} avec. Rang 5 : {sans.get('5')} contre {avec.get('5')}. "
+        f"Sur {resultat['cas_de_verification']} demandes et "
+        f"{resultat['sessions_de_verification']} sessions.",
+        f"{resultat['rattrapes_par_la_memoire']} demandes dont le bon skill "
+        "etait hors des cinq sans memoire et dedans avec : c'est la seule "
+        "chose qui puisse entamer les 38 % d'echecs de rappel sans reecrire un "
+        "seul skill.",
+        "La cible est gb a 0,811. Un rang 1 qui ne l'approche pas signifie que "
+        "la memoire ne suffit pas, et que le reste est de la redaction.",
+        "Le decoupage est par SESSION : deux demandes d'une meme conversation "
+        "ne sont pas deux observations, elles partagent presque toujours le "
+        "meme bon skill.",
+    ]
     _emit(resultat, args)
     return 0
 
@@ -1745,6 +1801,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="ne rendre que les etiquettes reutilisables, sans les re-mesurer",
     )
     re_.set_defaults(func=cmd_reetalonner)
+
+    mm = sub.add_parser(
+        "memoire",
+        help="GK avec la memoire de session que gb a deja",
+    )
+    mm.add_argument(
+        "--top", type=int, default=3,
+        help="combien de skills GK garde en memoire par tour (defaut %(default)s)",
+    )
+    mm.set_defaults(func=cmd_memoire)
 
     cf = sub.add_parser(
         "confronter",

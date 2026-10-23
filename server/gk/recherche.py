@@ -89,6 +89,26 @@ STOPWORDS = frozenset(
 # 0,029 / (0,246 + 0,029) = **11 %** de tours restant sur le sujet. Il faudrait
 # que 89 % des tours changent de sujet pour que le contexte nuise.
 POIDS_CONTEXTE = 0.3
+# Le bonus accorde a un skill que GK a lui-meme classe haut plus tot dans la
+# meme session.
+#
+# **C'est le mecanisme de gb, implemente honnetement.** gb charge large au
+# premier tour et GARDE : son bon skill est en contexte 81 % du temps parce
+# qu'il ne rechoisit pas. GK recalculait tout a chaque demande, avec un contexte
+# de jetons pondere a 0,3 -- une orientation, pas une memoire.
+#
+# Difference decisive avec le contexte de jetons : le bonus s'applique **meme a
+# un skill dont le texte ne marque aucun point sur cette demande**. C'est
+# necessaire, puisque 38 % des bons skills sont hors des cinq precisement parce
+# qu'ils ne marquent rien -- un bonus multiplicatif ne les ferait jamais
+# remonter.
+#
+# Ce signal n'etait pas mesurable avant le 2026-10-23 : l'etiquette disponible
+# etait « le skill que gb a charge », donc mesurer une memoire de skills charges
+# aurait ete circulaire. Les etiquettes humaines de la v2 levent cela.
+BONUS_MEMOIRE = 2.0
+# Combien de skills GK garde en memoire par tour.
+MEMOIRE_TOP = 3
 
 # Combien de tours precedents sont repris, et sur quelle duree. Court a dessein :
 # une conversation de deux heures n'oriente plus la question presente.
@@ -352,6 +372,57 @@ class Index:
                     "detail": detail,
                 })
         resultats.sort(key=lambda r: (-r["score"], r["name"]))
+        return resultats[: max(1, min(limite, MAX_RESULTATS))]
+
+    def chercher_avec_memoire(
+        self,
+        demande: str,
+        memoire: set[str] | None = None,
+        bonus: float = BONUS_MEMOIRE,
+        limite: int = 10,
+        contexte: list[str] | None = None,
+        **kwargs,
+    ) -> list[dict]:
+        """Classe en gardant les skills deja retenus dans la session.
+
+        Un skill en memoire recoit `bonus` **en plus** de son score de texte, et
+        **meme si ce score est nul** : c'est toute la difference avec le
+        contexte de jetons, et c'est ce qui peut rattraper les 38 % de bons
+        skills qui ne marquent aucun point sur la demande du tour.
+
+        Le bonus est additif et uniforme, donc il ne touche pas a la
+        comparabilite des scores -- contrairement a la ponderation par
+        population, rejetee pour cette raison.
+        """
+        memoire = memoire or set()
+        limite_effective = max(limite, len(memoire) + limite)
+        if contexte:
+            base = self.chercher_avec_contexte(
+                demande, contexte=contexte, limite=limite_effective, **kwargs
+            )
+        else:
+            base = self.chercher(demande, limite=limite_effective, **kwargs)
+
+        par_nom = {r["name"]: dict(r) for r in base}
+        for nom in memoire:
+            if nom in par_nom:
+                par_nom[nom]["score"] = round(par_nom[nom]["score"] + bonus, 3)
+                par_nom[nom]["memoire"] = True
+                continue
+            # Le skill ne marque rien sur cette demande : la memoire seule le
+            # maintient candidat. C'est le cas que le contexte de jetons ne
+            # pouvait pas couvrir.
+            skill = next((s for s in self.skills if s.name == nom), None)
+            if skill is None:
+                continue
+            par_nom[nom] = {
+                "name": skill.name, "path": skill.path,
+                "category": skill.category, "score": round(bonus, 3),
+                "detail": {}, "memoire": True,
+            }
+        resultats = sorted(
+            par_nom.values(), key=lambda r: (-r["score"], r["name"])
+        )
         return resultats[: max(1, min(limite, MAX_RESULTATS))]
 
     def _exemples_sans(self, skill: Skill, ligne: str) -> set[str]:

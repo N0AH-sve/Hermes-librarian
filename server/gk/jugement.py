@@ -368,17 +368,7 @@ def reetalonner(
         }
 
     # On retrouve session et horodatage pour rejouer le contexte a l'identique.
-    rows = store.query(
-        "SELECT session_id, text_truncated, ts, platform FROM requests "
-        "WHERE text_truncated IS NOT NULL AND text_truncated <> '' "
-        "ORDER BY ts DESC LIMIT 2000"
-    )
-    situe: dict[str, tuple[str, float]] = {}
-    plateformes: dict[str, str] = {}
-    for r in rows:
-        plat = _une_ligne(r["text_truncated"])
-        situe.setdefault(plat, (r["session_id"] or "", r["ts"]))
-        plateformes.setdefault(plat, r["platform"] or "")
+    situe, plateformes = _situer(store)
 
     # Une etiquette portant sur une tache planifiee n'est pas une etiquette :
     # la plateforme n'est connue qu'ici, pas dans le fichier annote.
@@ -444,6 +434,164 @@ def reetalonner(
         "distribution_des_rangs": distribution,
         f"hors_des_{max(rangs)}": hors,
         "details": details,
+    }
+
+
+BONUS_CANDIDATS = (0.0, 0.5, 1.0, 2.0, 3.0, 5.0, 8.0)
+
+
+def _situer(store: Store) -> tuple[dict, dict]:
+    """Session, horodatage et plateforme de chaque demande enregistree."""
+    rows = store.query(
+        "SELECT session_id, text_truncated, ts, platform FROM requests "
+        "WHERE text_truncated IS NOT NULL AND text_truncated <> '' "
+        "ORDER BY ts DESC LIMIT 2000"
+    )
+    situe: dict[str, tuple[str, float]] = {}
+    plats: dict[str, str] = {}
+    for r in rows:
+        plat = _une_ligne(r["text_truncated"])
+        situe.setdefault(plat, (r["session_id"] or "", r["ts"]))
+        plats.setdefault(plat, r["platform"] or "")
+    return situe, plats
+
+
+def _rejouer(
+    store, index, etqs: list[dict], situe: dict, bonus: float,
+    top: int, rangs: tuple[int, ...],
+) -> dict:
+    """Rejoue chaque session dans l'ordre, en gardant la memoire de GK.
+
+    L'ordre compte : une memoire se construit, donc une demande ne peut etre
+    jugee qu'apres celles qui la precedent dans sa conversation.
+    """
+    par_session: dict[str, list[dict]] = {}
+    for e in etqs:
+        session, ts = situe.get(e["demande"], ("", None))
+        if ts is None:
+            continue
+        par_session.setdefault(session, []).append(dict(e, ts=ts, session=session))
+    for v in par_session.values():
+        v.sort(key=lambda e: e["ts"])
+
+    courbe = {k: 0 for k in rangs}
+    n = 0
+    rattrapes = 0
+    for session, demandes in par_session.items():
+        memoire: set[str] = set()
+        for e in demandes:
+            contexte = contexte_de_session(store, session, avant=e["ts"])
+            sans = index.chercher(e["demande"], limite=max(rangs))
+            if bonus > 0:
+                avec = index.chercher_avec_memoire(
+                    e["demande"], memoire=memoire, bonus=bonus,
+                    limite=max(rangs), contexte=contexte or None,
+                )
+            elif contexte:
+                avec = index.chercher_avec_contexte(
+                    e["demande"], contexte=contexte, limite=max(rangs)
+                )
+            else:
+                avec = sans
+            noms = [r["name"] for r in avec]
+            rang = noms.index(e["attendu"]) + 1 if e["attendu"] in noms else None
+            noms_sans = [r["name"] for r in sans[: max(rangs)]]
+            if rang is not None and e["attendu"] not in noms_sans:
+                rattrapes += 1
+            n += 1
+            if rang is not None:
+                for k in rangs:
+                    if rang <= k:
+                        courbe[k] += 1
+            # La memoire se remplit APRES le jugement : sinon le bon skill du
+            # tour courant s'y trouverait deja, et la mesure serait circulaire.
+            memoire |= {r["name"] for r in avec[:top]}
+    return {
+        "n": n,
+        "courbe": {str(k): round(courbe[k] / n, 3) if n else None for k in rangs},
+        "rattrapes_par_la_memoire": rattrapes,
+        "sessions": len(par_session),
+    }
+
+
+def simuler_memoire(
+    store: Store,
+    index: Index,
+    cas: list[dict],
+    top: int = 3,
+    rangs: tuple[int, ...] = (1, 2, 3, 5),
+) -> dict:
+    """GK avec la memoire de session que gb a deja, mesure honnetement.
+
+    **Pourquoi ce signal, et pourquoi maintenant.** gb a le bon skill en
+    contexte 81 % du temps parce qu'il charge large au premier tour et **garde**.
+    GK recalculait tout a chaque demande. Le mecanisme de gb, implemente dans
+    GK, est donc le candidat le plus serieux -- et il n'etait pas mesurable
+    avant : l'etiquette disponible etait « le skill que gb a charge », donc
+    mesurer une memoire de skills charges aurait ete circulaire. Les etiquettes
+    humaines de la v2 levent cela.
+
+    **Le decoupage se fait par SESSION, pas par demande.** Les demandes d'une
+    meme conversation partagent presque toujours le meme bon skill -- 21 skills
+    pour 12 sessions au releve -- donc deux demandes d'une session ne sont pas
+    deux observations. Ajuster sur une moitie des demandes et verifier sur
+    l'autre laisserait la memoire d'une session servir dans les deux.
+
+    Le bonus est un parametre, donc il s'ajuste sur une moitie et se verifie sur
+    l'autre. La derniere fois qu'un seuil a ete ajuste sans cette precaution, il
+    passait de 1,0 a 0,333 entre les deux moities.
+    """
+    etqs = etiquettes(cas)
+    situe, plats = _situer(store)
+    etqs = [e for e in etqs if not est_injection(e["demande"], plats.get(e["demande"], ""))]
+    if not etqs:
+        return {"ok": False, "erreur": "aucune etiquette reutilisable"}
+
+    sessions = sorted({situe.get(e["demande"], ("", 0))[0] for e in etqs})
+    if len(sessions) < 4:
+        return {
+            "ok": False,
+            "erreur": (
+                f"{len(sessions)} sessions seulement : impossible de couper en "
+                "deux moities qui veuillent dire quelque chose"
+            ),
+            "etiquettes": len(etqs),
+        }
+    moitie = len(sessions) // 2
+    ajust, verif = set(sessions[:moitie]), set(sessions[moitie:])
+    lot = {
+        "ajustement": [e for e in etqs if situe.get(e["demande"], ("", 0))[0] in ajust],
+        "verification": [e for e in etqs if situe.get(e["demande"], ("", 0))[0] in verif],
+    }
+
+    # Ajustement : le bonus qui maximise le rang 1 sur la premiere moitie.
+    essais = []
+    for b in BONUS_CANDIDATS:
+        r = _rejouer(store, index, lot["ajustement"], situe, b, top, rangs)
+        essais.append({"bonus": b, **r})
+    retenu = max(
+        essais, key=lambda r: (r["courbe"].get("1") or 0, r["courbe"].get("5") or 0)
+    )
+
+    sans_memoire = _rejouer(store, index, lot["verification"], situe, 0.0, top, rangs)
+    avec_memoire = _rejouer(
+        store, index, lot["verification"], situe, retenu["bonus"], top, rangs
+    )
+    return {
+        "ok": True,
+        "etiquettes": len(etqs),
+        "sessions": len(sessions),
+        "top_garde_par_tour": top,
+        "bonus_retenu": retenu["bonus"],
+        "essais_sur_l_ajustement": [
+            {"bonus": e["bonus"], "rang_1": e["courbe"].get("1"),
+             "rang_5": e["courbe"].get("5")} for e in essais
+        ],
+        "verification_sans_memoire": sans_memoire["courbe"],
+        "verification_avec_memoire": avec_memoire["courbe"],
+        "cas_de_verification": sans_memoire["n"],
+        "sessions_de_verification": sans_memoire["sessions"],
+        "rattrapes_par_la_memoire": avec_memoire["rattrapes_par_la_memoire"],
     }
 
 

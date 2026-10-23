@@ -669,3 +669,90 @@ def test_une_etiquette_sur_une_tache_planifiee_est_ecartee(tmp_path):
     svc.close()
     assert out["etiquettes_reutilisables"] == 1
     assert out["etiquettes_ecartees_plateforme"] == 1
+
+
+def test_la_simulation_de_memoire_coupe_par_session(tmp_path):
+    """Deux demandes d'une meme conversation ne sont pas deux observations : au
+    releve, 21 skills attendus pour 12 sessions. Ajuster sur une moitie des
+    DEMANDES laisserait la memoire d'une session servir dans les deux moities.
+    """
+    from gk.jugement import simuler_memoire
+
+    svc = Service.open(tmp_path / "s.db")
+    Catalog(svc.store).ingest([
+        {"path": f"a/s{i}/SKILL.md", "name": f"gm-s{i}",
+         "description": f"sujet numero {i} du metier", "category": "c",
+         "fingerprint": "1"} for i in range(1, 6)
+    ], complete=True)
+    texte = f"<!-- gk echantillon v{VERSION} -->\n"
+    n = 0
+    for sess in range(1, 6):
+        for tour in range(2):
+            n += 1
+            d = f"demande {n} sur le sujet numero {sess} du metier"
+            svc.request(f"sess{sess}", d, platform="discord")
+            texte += (
+                f"## {n}. {d}\n"
+                f"   1. gm-s{sess}   [c]  score 9\n"
+                f"{MARQUEUR} 1\n\n"
+            )
+    index = Index.construire(svc.store)
+    out = simuler_memoire(svc.store, index, relire(texte))
+    svc.close()
+    assert out["ok"] is True, out
+    assert out["sessions"] == 5
+    assert out["sessions_de_verification"] >= 2
+    assert out["bonus_retenu"] in (0.0, 0.5, 1.0, 2.0, 3.0, 5.0, 8.0)
+    assert "verification_sans_memoire" in out and "verification_avec_memoire" in out
+
+
+def test_la_simulation_refuse_de_couper_trop_peu_de_sessions(tmp_path):
+    """Couper deux sessions en deux moities ne veut rien dire, et le dire vaut
+    mieux que rendre un chiffre."""
+    from gk.jugement import simuler_memoire
+
+    svc = Service.open(tmp_path / "s2.db")
+    Catalog(svc.store).ingest([
+        {"path": "a/x/SKILL.md", "name": "gm-x", "description": "un sujet",
+         "category": "c", "fingerprint": "1"},
+    ], complete=True)
+    svc.request("sess1", "une demande sur un sujet", platform="discord")
+    index = Index.construire(svc.store)
+    texte = (
+        f"<!-- gk echantillon v{VERSION} -->\n"
+        "## 1. une demande sur un sujet\n   1. gm-x   [c]  score 9\n"
+        f"{MARQUEUR} 1\n"
+    )
+    out = simuler_memoire(svc.store, index, relire(texte))
+    svc.close()
+    assert out["ok"] is False and "sessions seulement" in out["erreur"]
+
+
+def test_la_memoire_se_remplit_apres_le_jugement(tmp_path):
+    """Sinon le bon skill du tour courant y serait deja, et la mesure serait
+    circulaire -- elle rendrait un rang 1 parfait sans rien mesurer."""
+    from gk.jugement import _rejouer, _situer
+
+    svc = Service.open(tmp_path / "s3.db")
+    Catalog(svc.store).ingest([
+        {"path": "a/a/SKILL.md", "name": "gm-a",
+         "description": "le tout premier sujet", "category": "c",
+         "fingerprint": "1"},
+        {"path": "a/b/SKILL.md", "name": "gm-b",
+         "description": "un sujet totalement different", "category": "c",
+         "fingerprint": "1"},
+    ], complete=True)
+    svc.request("s1", "une formulation qui ne dit rien de precis", platform="discord")
+    index = Index.construire(svc.store)
+    situe, _ = _situer(svc.store)
+    etqs = [{
+        "numero": 1,
+        "demande": "une formulation qui ne dit rien de precis",
+        "attendu": "gm-a",
+    }]
+    out = _rejouer(svc.store, index, etqs, situe, bonus=8.0, top=3, rangs=(1, 5))
+    svc.close()
+    # Un seul tour : la memoire est vide quand il est juge, donc le bonus ne
+    # peut pas l'avoir aide.
+    assert out["n"] == 1
+    assert out["rattrapes_par_la_memoire"] == 0

@@ -932,3 +932,99 @@ def test_le_seuil_dit_quand_la_couverture_est_derisoire(tmp_path, capsys, monkey
     # Avec 25 skills indistinguables, soit aucun seuil ne marche, soit la
     # couverture est derisoire : les deux lectures sont acceptables.
     assert ("Aucun signal" in texte) or ("derisoire" in texte) or ("Defendable" in texte)
+
+
+# -- la memoire de session --------------------------------------------------
+
+
+def test_la_memoire_maintient_un_skill_qui_ne_marque_aucun_point(tmp_path):
+    """Toute la difference avec le contexte de jetons, et la raison d'etre du
+    mecanisme.
+
+    38 % des bons skills sont hors des cinq precisement parce qu'ils ne marquent
+    RIEN sur la demande du tour. Un bonus multiplicatif, ou un contexte pondere,
+    ne les ferait jamais remonter : il faut que la memoire seule suffise a les
+    maintenir candidats. C'est ce que gb obtient en gardant ce qu'il a charge.
+    """
+    from gk.catalog import Catalog
+    from gk.recherche import Index
+    from gk.service import Service
+
+    svc = Service.open(tmp_path / "m.db")
+    Catalog(svc.store).ingest([
+        {"path": "a/factures/SKILL.md", "name": "gm-factures",
+         "description": "Factures fournisseurs et port.", "category": "c",
+         "fingerprint": "1"},
+        {"path": "a/marges/SKILL.md", "name": "gm-marges",
+         "description": "Marges et prix plancher.", "category": "c",
+         "fingerprint": "1"},
+    ], complete=True)
+    index = Index.construire(svc.store)
+
+    # Une demande qui ne parle ni de factures ni de marges.
+    sans = index.chercher("et pour le reste, on fait comment", limite=5)
+    assert "gm-factures" not in [r["name"] for r in sans]
+
+    avec = index.chercher_avec_memoire(
+        "et pour le reste, on fait comment",
+        memoire={"gm-factures"}, bonus=2.0, limite=5,
+    )
+    noms = [r["name"] for r in avec]
+    assert noms[0] == "gm-factures", noms
+    assert avec[0]["memoire"] is True
+    svc.close()
+
+
+def test_la_memoire_ne_renverse_pas_une_demande_qui_porte_son_domaine(tmp_path):
+    """Elle maintient, elle ne decide pas : une demande qui nomme clairement son
+    sujet doit garder la main, sinon la memoire enfermerait la conversation dans
+    son premier tour."""
+    from gk.catalog import Catalog
+    from gk.recherche import Index
+    from gk.service import Service
+
+    svc = Service.open(tmp_path / "m2.db")
+    Catalog(svc.store).ingest([
+        {"path": "a/factures/SKILL.md", "name": "gm-factures",
+         "description": "Factures fournisseurs proforma et port.",
+         "category": "c", "fingerprint": "1"},
+        {"path": "a/marges/SKILL.md", "name": "gm-marges",
+         "description": "Marges, prix plancher et commandes a perte.",
+         "category": "c", "fingerprint": "1"},
+    ], complete=True)
+    index = Index.construire(svc.store)
+    avec = index.chercher_avec_memoire(
+        "les marges et le prix plancher des commandes a perte",
+        memoire={"gm-factures"}, bonus=2.0, limite=5,
+    )
+    assert avec[0]["name"] == "gm-marges", [r["name"] for r in avec]
+    svc.close()
+
+
+def test_le_bonus_de_memoire_est_uniforme(tmp_path):
+    """Un bonus applique a tous de la meme facon ne touche pas a la
+    comparabilite des scores -- contrairement a la ponderation par population,
+    rejetee pour cette raison."""
+    from gk.catalog import Catalog
+    from gk.recherche import Index
+    from gk.service import Service
+
+    svc = Service.open(tmp_path / "m3.db")
+    Catalog(svc.store).ingest([
+        {"path": "a/un/SKILL.md", "name": "un", "description": "factures port",
+         "category": "c", "fingerprint": "1"},
+        {"path": "a/deux/SKILL.md", "name": "deux", "description": "factures",
+         "category": "c", "fingerprint": "1"},
+    ], complete=True)
+    index = Index.construire(svc.store)
+    base = {r["name"]: r["score"] for r in index.chercher("factures", limite=5)}
+    avec = {
+        r["name"]: r["score"] for r in index.chercher_avec_memoire(
+            "factures", memoire={"un", "deux"}, bonus=2.0, limite=5
+        )
+    }
+    # Arrondi : les scores sont deja arrondis a trois decimales, donc la
+    # soustraction de deux flottants ne tombe pas pile sur 2,0.
+    assert round(avec["un"] - base["un"], 6) == 2.0
+    assert round(avec["deux"] - base["deux"], 6) == 2.0
+    svc.close()
