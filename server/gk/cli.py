@@ -708,6 +708,10 @@ def cmd_consultations(args, cfg: Config) -> int:
                 sans_retour += 1
             out.append({
                 "consultation": row["id"],
+                # Une consultation lancee en ligne de commande n'a pas de
+                # session : c'est un essai, pas une demande de collegue.
+                # L'etiqueter mettrait un doublon d'essai dans le corpus.
+                "origine": "essai_cli" if not (row["session_id"] or "") else "agent",
                 "demande": " ".join((row["note"] or "").split())[:120],
                 "propose_en_1": row["skill_name"],
                 "retour": (
@@ -719,6 +723,7 @@ def cmd_consultations(args, cfg: Config) -> int:
             "ok": True,
             "consultations": out,
             "sans_retour": sans_retour,
+            "essais_cli": sum(1 for c in out if c["origine"] == "essai_cli"),
             "lecture": [
                 "Chaque consultation sans retour est une etiquette humaine "
                 "perdue : c'est le retour, pas la consultation, qui produit la "
@@ -727,6 +732,9 @@ def cmd_consultations(args, cfg: Config) -> int:
                 "`0` veut dire qu'aucun skill de la bibliotheque ne sert la "
                 "demande -- et ce n'est pas un echec de recherche, c'est un "
                 "trou de la bibliotheque.",
+                "Les consultations marquees `essai_cli` viennent de la ligne de "
+                "commande : ne les etiquette pas, ce sont des essais et "
+                "`gk etiquettes` les ecarte.",
             ],
         }, args)
     return 0
@@ -787,7 +795,11 @@ def cmd_etiquettes(args, cfg: Config) -> int:
             "SELECT r.id, r.skill_name, r.outcome, r.session_id, c.note "
             "FROM reports r LEFT JOIN reports c ON c.id = r.brief_id "
             "WHERE r.source = 'human' AND r.outcome IN "
-            "('bon_skill', 'aucun_ne_convient') ORDER BY r.ts"
+            "('bon_skill', 'aucun_ne_convient') "
+            # Un essai lance en ligne de commande n'a pas de session : ce n'est
+            # pas une demande de collegue, et il n'a rien a faire dans un
+            # corpus d'etiquettes.
+            "AND COALESCE(c.session_id, '') <> '' ORDER BY r.ts"
         )
         if not lignes:
             _emit({

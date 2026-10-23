@@ -126,10 +126,16 @@ def test_les_retours_s_exportent_au_format_de_l_echantillon(
          "description": "Factures fournisseurs proforma.", "category": "gm",
          "fingerprint": "1"},
     ], complete=True)
-    c1 = s.consulter("probleme de factures fournisseurs proforma")
-    s.retour(c1["consultation_id"], "1", propositions=["gm-factures"])
-    c2 = s.consulter("une demande que rien ne sert vraiment")
-    s.retour(c2["consultation_id"], "0", propositions=["gm-factures"])
+    # Avec une session : ce sont des demandes de collegues, pas des essais en
+    # ligne de commande, que l'export ecarte.
+    c1 = s.consulter("probleme de factures fournisseurs proforma",
+                     session_id="20261023_a")
+    s.retour(c1["consultation_id"], "1", session_id="20261023_a",
+             propositions=["gm-factures"])
+    c2 = s.consulter("une demande que rien ne sert vraiment",
+                     session_id="20261023_b")
+    s.retour(c2["consultation_id"], "0", session_id="20261023_b",
+             propositions=["gm-factures"])
     s.close()
 
     monkeypatch.setenv("GK_DATABASE", str(tmp_path / "x.db"))
@@ -224,3 +230,39 @@ def test_sans_consultation_la_commande_renvoie_vers_discord(
     assert cli_main(["--json", "consultations"]) == 1
     out = json.loads(capsys.readouterr().out)
     assert "!gk" in out["suite"]
+
+
+def test_un_essai_en_ligne_de_commande_est_distingue(tmp_path, capsys, monkeypatch):
+    """Une consultation lancee en ligne de commande n'a pas de session : c'est
+    un essai, pas une demande de collegue.
+
+    Les deux etaient indistinguables, donc etiqueter la liste entiere mettait
+    des doublons d'essai dans le corpus.
+    """
+    s = Service.open(tmp_path / "o.db")
+    Catalog(s.store).ingest([
+        {"path": "a/f/SKILL.md", "name": "gm-factures",
+         "description": "Factures fournisseurs proforma.", "category": "gm",
+         "fingerprint": "1"},
+    ], complete=True)
+    essai = s.consulter("probleme de factures fournisseurs proforma")
+    vraie = s.consulter(
+        "probleme de factures fournisseurs proforma", session_id="20261023_x"
+    )
+    s.retour(essai["consultation_id"], "1", propositions=["gm-factures"])
+    s.retour(vraie["consultation_id"], "1", session_id="20261023_x",
+             propositions=["gm-factures"])
+    s.close()
+
+    monkeypatch.setenv("GK_DATABASE", str(tmp_path / "o.db"))
+    assert cli_main(["--json", "consultations"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    par_id = {c["consultation"]: c for c in out["consultations"]}
+    assert par_id[essai["consultation_id"]]["origine"] == "essai_cli"
+    assert par_id[vraie["consultation_id"]]["origine"] == "agent"
+    assert out["essais_cli"] == 1
+
+    # Et l'export n'en garde qu'une : celle du collegue.
+    assert cli_main(["etiquettes", "--annotateur", "Noah"]) == 0
+    texte = capsys.readouterr().out
+    assert texte.count("REPONSE:") == 1, texte
