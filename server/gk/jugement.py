@@ -477,8 +477,10 @@ def _rejouer(
     courbe = {k: 0 for k in rangs}
     n = 0
     rattrapes = 0
+    cumul = 0
     for session, demandes in par_session.items():
         memoire: set[str] = set()
+        vus_session: set[str] = set()
         for e in demandes:
             contexte = contexte_de_session(store, session, avant=e["ts"])
             sans = index.chercher(e["demande"], limite=max(rangs))
@@ -495,10 +497,30 @@ def _rejouer(
                 avec = sans
             noms = [r["name"] for r in avec]
             rang = noms.index(e["attendu"]) + 1 if e["attendu"] in noms else None
-            noms_sans = [r["name"] for r in sans[: max(rangs)]]
-            if rang is not None and e["attendu"] not in noms_sans:
+            # Le rattrapage se compte contre le MEME bras sans la memoire,
+            # contexte compris. Le comparer a une recherche sans contexte
+            # crediterait la memoire du travail du contexte -- defaut de la
+            # premiere version, qui annoncait 4 rattrapages alors que le
+            # rappel@5 etait identique des deux cotes.
+            if contexte:
+                temoin = index.chercher_avec_contexte(
+                    e["demande"], contexte=contexte, limite=max(rangs)
+                )
+            else:
+                temoin = sans
+            noms_temoin = [r["name"] for r in temoin[: max(rangs)]]
+            if rang is not None and e["attendu"] not in noms_temoin:
                 rattrapes += 1
             n += 1
+            # Le cumul de la session : le bon skill a-t-il JAMAIS paru dans les
+            # `top` premiers de GK au cours de cette conversation ?
+            #
+            # C'est le seul equivalent honnete du 0,811 de gb, qui vaut « le bon
+            # skill est quelque part dans les neuf charges pendant la session ».
+            # Les deux creditent une trouvaille faite a n'importe quel tour.
+            vus_session |= {r["name"] for r in avec[:top]}
+            if e["attendu"] in vus_session:
+                cumul += 1
             if rang is not None:
                 for k in rangs:
                     if rang <= k:
@@ -510,6 +532,7 @@ def _rejouer(
         "n": n,
         "courbe": {str(k): round(courbe[k] / n, 3) if n else None for k in rangs},
         "rattrapes_par_la_memoire": rattrapes,
+        "cumul_de_session": round(cumul / n, 3) if n else None,
         "sessions": len(par_session),
     }
 
@@ -589,6 +612,11 @@ def simuler_memoire(
         ],
         "verification_sans_memoire": sans_memoire["courbe"],
         "verification_avec_memoire": avec_memoire["courbe"],
+        # LA comparaison equivalente au 0,811 de gb : le bon skill a-t-il
+        # jamais paru dans les `top` premiers de GK au cours de la session ?
+        "cumul_sans_memoire": sans_memoire["cumul_de_session"],
+        "cumul_avec_memoire": avec_memoire["cumul_de_session"],
+        "cible_gb": 0.811,
         "cas_de_verification": sans_memoire["n"],
         "sessions_de_verification": sans_memoire["sessions"],
         "rattrapes_par_la_memoire": avec_memoire["rattrapes_par_la_memoire"],

@@ -756,3 +756,81 @@ def test_la_memoire_se_remplit_apres_le_jugement(tmp_path):
     # peut pas l'avoir aide.
     assert out["n"] == 1
     assert out["rattrapes_par_la_memoire"] == 0
+
+
+def test_le_rattrapage_ne_credite_pas_la_memoire_du_travail_du_contexte(tmp_path):
+    """Defaut de la premiere version : le compteur comparait le bras « avec
+    memoire » a une recherche SANS contexte, alors que le bras temoin a deja le
+    contexte.
+
+    Il annoncait 4 rattrapages la ou le rappel@5 etait identique des deux cotes
+    -- une contradiction qui disait que le chiffre mesurait autre chose que son
+    nom.
+    """
+    from gk.jugement import _rejouer, _situer
+
+    svc = Service.open(tmp_path / "rc.db")
+    Catalog(svc.store).ingest([
+        {"path": "a/a/SKILL.md", "name": "gm-a",
+         "description": "les marges et le prix plancher", "category": "c",
+         "fingerprint": "1"},
+        {"path": "a/b/SKILL.md", "name": "gm-b",
+         "description": "expedition et transporteurs", "category": "c",
+         "fingerprint": "1"},
+    ], complete=True)
+    # Deux tours : le premier nomme les marges, le second est vague.
+    svc.request("s1", "les marges et le prix plancher", platform="discord")
+    svc.request("s1", "et pour le reste on fait comment", platform="discord")
+    index = Index.construire(svc.store)
+    situe, _ = _situer(svc.store)
+    etqs = [
+        {"numero": 1, "demande": "les marges et le prix plancher",
+         "attendu": "gm-a"},
+        {"numero": 2, "demande": "et pour le reste on fait comment",
+         "attendu": "gm-a"},
+    ]
+    # Sans bonus, le contexte seul peut deja rattraper le second tour.
+    sans = _rejouer(svc.store, index, etqs, situe, 0.0, 3, (1, 5))
+    avec = _rejouer(svc.store, index, etqs, situe, 8.0, 3, (1, 5))
+    svc.close()
+    # Le rattrapage de la memoire ne peut pas depasser ce que la memoire ajoute.
+    assert avec["rattrapes_par_la_memoire"] <= avec["n"]
+    # Et il ne compte pas ce que le contexte faisait deja.
+    assert sans["rattrapes_par_la_memoire"] == 0
+
+
+def test_le_cumul_de_session_est_l_equivalent_du_chiffre_de_gb(tmp_path):
+    """Le 0,811 de gb vaut « le bon skill est quelque part dans les neuf
+    charges pendant la session ». Le comparer a un rang 1 de GK etait l'erreur
+    de denominateur deja faite trois fois.
+
+    Le cumul est l'equivalent honnete : le bon skill a-t-il JAMAIS paru dans les
+    `top` premiers de GK au cours de la conversation ?
+    """
+    from gk.jugement import _rejouer, _situer
+
+    svc = Service.open(tmp_path / "cu.db")
+    Catalog(svc.store).ingest([
+        {"path": "a/a/SKILL.md", "name": "gm-a",
+         "description": "les marges et le prix plancher", "category": "c",
+         "fingerprint": "1"},
+        {"path": "a/b/SKILL.md", "name": "gm-b",
+         "description": "expedition et transporteurs", "category": "c",
+         "fingerprint": "1"},
+    ], complete=True)
+    svc.request("s1", "les marges et le prix plancher", platform="discord")
+    svc.request("s1", "une formulation totalement vague", platform="discord")
+    index = Index.construire(svc.store)
+    situe, _ = _situer(svc.store)
+    etqs = [
+        {"numero": 1, "demande": "les marges et le prix plancher",
+         "attendu": "gm-a"},
+        {"numero": 2, "demande": "une formulation totalement vague",
+         "attendu": "gm-a"},
+    ]
+    out = _rejouer(svc.store, index, etqs, situe, 0.0, 3, (1, 5))
+    svc.close()
+    # Trouve au premier tour, donc cumule sur les deux.
+    assert out["cumul_de_session"] == 1.0
+    # Alors que le rang 1 par demande ne vaut pas forcement 1.
+    assert out["courbe"]["1"] <= 1.0

@@ -650,12 +650,16 @@ def cmd_memoire(args, cfg: Config) -> int:
         f"{avec.get('1')} avec. Rang 5 : {sans.get('5')} contre {avec.get('5')}. "
         f"Sur {resultat['cas_de_verification']} demandes et "
         f"{resultat['sessions_de_verification']} sessions.",
-        f"{resultat['rattrapes_par_la_memoire']} demandes dont le bon skill "
-        "etait hors des cinq sans memoire et dedans avec : c'est la seule "
-        "chose qui puisse entamer les 38 % d'echecs de rappel sans reecrire un "
-        "seul skill.",
-        "La cible est gb a 0,811. Un rang 1 qui ne l'approche pas signifie que "
-        "la memoire ne suffit pas, et que le reste est de la redaction.",
+        f"{resultat['rattrapes_par_la_memoire']} demandes rattrapees par la "
+        "memoire SEULE : compte contre le meme bras avec contexte et sans "
+        "memoire, pour ne pas crediter la memoire du travail du contexte.",
+        f"CUMUL DE SESSION, la seule comparaison equivalente au 0,811 de gb : "
+        f"{resultat['cumul_sans_memoire']} sans memoire contre "
+        f"{resultat['cumul_avec_memoire']} avec. Le 0,811 de gb vaut « le bon "
+        "skill est quelque part dans les neuf charges pendant la session » ; "
+        f"ici c'est « jamais paru dans les {resultat['top_garde_par_tour']} "
+        "premiers de GK au cours de la session ». Les deux creditent une "
+        "trouvaille faite a n'importe quel tour.",
         "Le decoupage est par SESSION : deux demandes d'une meme conversation "
         "ne sont pas deux observations, elles partagent presque toujours le "
         "meme bon skill.",
