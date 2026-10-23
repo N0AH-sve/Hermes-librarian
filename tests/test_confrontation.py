@@ -204,3 +204,60 @@ def test_gk_confronter_rend_les_deux_chiffres(tmp_path, capsys, monkeypatch):
     assert "details" not in out, "le cas par cas demande --details"
     assert any("AVANTAGE gb" in l for l in out["lecture"])
     assert any("CORRELATION" in l for l in out["lecture"])
+
+
+def test_un_skill_designe_hors_catalogue_est_ecarte(svc):
+    """La resolution d'un rang en nom passe par les candidats relus du fichier.
+
+    Sur un echantillon v1, une ligne du texte de l'utilisateur peut ressembler
+    a un candidat et decaler la liste. Le chiffre serait alors faux sans rien
+    signaler, juste avant de porter une decision.
+    """
+    from gk.catalog import Catalog
+    Catalog(svc.store).ingest([
+        {"path": "a/gm-bon/SKILL.md", "name": "gm-bon", "description": "d",
+         "category": "greenmusic", "fingerprint": "1"},
+    ], complete=True)
+    svc.request("s1", "une demande connue")
+    svc.request("s2", "une seconde demande connue")
+    row = svc.store.one("SELECT ts FROM requests ORDER BY ts LIMIT 1")
+    _charge(svc.store, "s1", "gm-bon", row["ts"] + 5)
+
+    cas = relire(
+        f"<!-- gk echantillon v{VERSION} -->\n"
+        "## 1. une demande connue\n   1. gm-bon   [greenmusic]  score 5\n"
+        f"{MARQUEUR} 1\n"
+        "\n"
+        "## 2. une seconde demande connue\n"
+        "   1. pas-un-skill   [?]  score 1\n"
+        f"{MARQUEUR} 1\n"
+    )
+    out = confronter(svc.store, cas)
+    assert out["ok"] is True
+    assert out["designes_hors_catalogue"] == 1
+    assert out["comparables"] == 1, "seul le cas valide est compte"
+    assert any("derape" in l for l in __import__(
+        "gk.confrontation", fromlist=["lecture"]).lecture(out))
+
+
+def test_une_relecture_massivement_deraillee_refuse_de_conclure(svc):
+    """Un quart de cas invalides n'est plus un accident : c'est un format mal
+    relu, et conclure dessus serait pire que ne rien rendre."""
+    from gk.catalog import Catalog
+    Catalog(svc.store).ingest([
+        {"path": "a/gm-bon/SKILL.md", "name": "gm-bon", "description": "d",
+         "category": "greenmusic", "fingerprint": "1"},
+    ], complete=True)
+    for i in range(1, 5):
+        svc.request("s1", f"demande numero {i}")
+    texte = f"<!-- gk echantillon v{VERSION} -->\n"
+    for i in range(1, 5):
+        texte += (
+            f"## {i}. demande numero {i}\n"
+            f"   1. inconnu-{i}   [?]  score 1\n"
+            f"{MARQUEUR} 1\n\n"
+        )
+    out = confronter(svc.store, relire(texte))
+    assert out["ok"] is False
+    assert "derape" in out["erreur"]
+    assert out["exemples"]

@@ -116,6 +116,41 @@ def confronter(
             "suite": "annoter l'echantillon, puis gk confronter < fichier",
         }
 
+    # Garde-fou : le skill designe doit exister au catalogue.
+    #
+    # La resolution d'un rang en nom passe par la liste des candidats relue
+    # dans le fichier. Sur un echantillon produit avant le repli des demandes
+    # multilignes, une ligne du texte de l'utilisateur peut ressembler a un
+    # candidat (« 2. ... ») et decaler toute la liste. Le chiffre serait alors
+    # faux sans rien signaler, juste avant de porter une decision.
+    connus = {
+        r["name"] for r in store.query(
+            "SELECT name FROM skills WHERE missing_since IS NULL"
+        )
+    }
+    inconnus = [
+        {"numero": c["numero"], "designe": attendu_de(c)}
+        for c in juges if connus and attendu_de(c) not in connus
+    ]
+    # Refus seulement si c'est un derapage de format, pas un accident isole :
+    # au moins trois cas ET plus d'un quart. Sur deux cas juges, un seul
+    # inconnu n'autorise aucune conclusion sur le format.
+    if len(inconnus) >= 3 and len(inconnus) * 4 > len(juges):
+        return {
+            "ok": False,
+            "erreur": (
+                f"{len(inconnus)} cas sur {len(juges)} designent un skill "
+                "absent du catalogue : la relecture des candidats a derape, "
+                "probablement sur une demande multiligne d'un echantillon v1"
+            ),
+            "exemples": inconnus[:5],
+            "suite": (
+                "verifier le fichier a ces numeros, ou regenerer un echantillon "
+                "avec `gk echantillon` (v2, demandes repliees sur une ligne)"
+            ),
+        }
+    juges = [c for c in juges if not connus or attendu_de(c) in connus]
+
     paires = _apparier(store, [c.get("demande") or "" for c in juges])
 
     comparables = 0
@@ -194,6 +229,7 @@ def confronter(
     out = {
         "ok": True,
         "cas_juges": len(juges),
+        "designes_hors_catalogue": len(inconnus),
         "comparables": comparables,
         "non_apparies": non_apparies,
         "apparies_par_prefixe": par_prefixe,
@@ -232,6 +268,12 @@ def lecture(r: dict) -> list[str]:
         lignes.append(
             f"{r['non_apparies']} demandes de l'echantillon introuvables en "
             "base : exclues des deux cotes, donc sans biais."
+        )
+    if r.get("designes_hors_catalogue"):
+        lignes.append(
+            f"{r['designes_hors_catalogue']} cas ecartes : le skill designe "
+            "n'existe pas au catalogue, donc la relecture des candidats a "
+            "derape sur ces lignes."
         )
     if r["apparies_par_prefixe"]:
         lignes.append(
