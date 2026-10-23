@@ -3057,6 +3057,75 @@ reponse** -- la premiere verite terrain du projet sur de vraies demandes. Avec
 moitie d'ajustement et moitie de verification, la precaution qui avait deja
 attrape un surajustement de 1,0 a 0,333.
 
+## Le reetalonnage : ce que la fuite gonflait vraiment
+
+Releve du 2026-10-23, apres correction de la fuite de contexte. Les 30
+etiquettes de l'echantillon rejouees contre un classement refait, ancre sur
+chaque demande.
+
+| Rang | Avant (avec fuite) | Apres | Ecart |
+|---|---|---|---|
+| 1 | 0,400 | **0,433** | **+0,033** |
+| 2 | 0,700 | 0,600 | −0,100 |
+| 3 | 0,833 | 0,700 | −0,133 |
+| 5 | **1,000** | **0,900** | −0,100 |
+
+**La fuite ne gonflait pas le rang 1.** Elle gonflait les rangs intermediaires
+et le rappel@5. C'est contre-intuitif et ca s'explique : les tours futurs
+tiraient le bon skill **dans la liste** sans le hisser en tete. Le rang 1 gagne
+meme un cas en s'en passant.
+
+A retenir pour la suite : une fuite de contexte ne se detecte pas en regardant
+l'indicateur principal. Celui-la n'avait pas bouge.
+
+### Le rappel@5 devient une vraie mesure
+
+Avant, il valait 1,000 **par construction** : l'annotateur ne pouvait designer
+qu'un des cinq montres. Rejoue contre un classement neuf, **3 etiquettes sur 30
+tombent hors des cinq** : 0,900 est le premier rappel@5 du projet qui soit un
+resultat et non une tautologie.
+
+**Avec une reserve qui ne disparait pas** : les 30 etiquettes ont ete tirees des
+cinq propositions de l'ancien classement. Mesurer le nouveau classement sur
+elles est donc autant une mesure de **stabilite** que de rappel, et le biais de
+selection reste oriente en faveur de GK.
+
+### La distribution dit ou le classement se perd
+
+| Rang | 1 | 2 | 3 | 4 | 5 | hors |
+|---|---|---|---|---|---|---|
+| Cas | **13** | 5 | 3 | **6** | 0 | 3 |
+
+**Une bosse au rang 4**, plus haute qu'aux rangs 2 et 3. Un classement sain
+decroit ; celui-la ne decroit pas au milieu. Six etiquettes placees quatriemes
+ne sont pas « presque trouvees », elles sont mal ordonnees -- et le rang 1 parmi
+les 27 retrouves ne vaut que **0,481**.
+
+C'est coherent avec les 67 % d'echecs de redaction : le texte fait entrer un
+skill dans la liste, il ne le hisse pas.
+
+### L'etat consolide de la comparaison
+
+| | GK | gb |
+|---|---|---|
+| Rang 1, mesure la plus juste | **0,433** (13/30) | **0,300** (9/30) |
+
+Quatre cas d'ecart, **McNemar p entre 0,45 et 0,52**, 13 sessions distinctes.
+Toujours pas demontre -- mais **la direction a survecu a la correction**, ce qui
+n'etait pas acquis.
+
+### Un chiffre qui demande verification
+
+`injections_ecartees: 0`, alors que gb en comptait **53 sur 196**. Deux lectures
+possibles : l'echantillon est anterieur a ces injections, ou **les motifs que
+j'ai ecrits ne correspondent pas aux bannieres reelles**. La seconde est la plus
+probable, puisque je les ai devines depuis un rapport et non depuis les donnees.
+
+`gk demandes --injections 10` tranche : s'il ne rend rien sur les 261 demandes,
+le filtre ne filtre rien et les 36 % restent pollues. **A verifier avant de
+refixer le seuil**, puisque le seuil se calibre precisement sur la part des
+demandes sans reponse.
+
 ## Points ouverts
 
 Dernière revue : 2026-10-22, après la mise en service partielle de la phase 1
