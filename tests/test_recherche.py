@@ -710,3 +710,119 @@ def test_une_interdiction_est_signalee_sur_la_paire(tmp_path, capsys, monkeypatc
     out = json.loads(capsys.readouterr().out)
     assert out["detail"][0]["interdiction"] == ["a-skill"]
     assert out["paires_sans_aucune_interdiction"] == 0
+
+
+# -- le filtrage de la liste de courses -----------------------------------
+
+
+def test_les_mots_vides_deguises_sont_ecartes_de_la_liste(tmp_path):
+    """Releve du 2026-10-23 : la premiere version conseillait d'ajouter « veux »,
+    « ne », « pas », « fais », « moi » et des nombres comme « 532 ». La liste de
+    mots vides avait ete gardee courte a dessein -- vrai pour le SCORE, faux
+    pour une liste de courses, puisqu'un mot absent de toute la bibliotheque a
+    l'IDF maximal et parait donc maximalement precieux."""
+    store = Store(tmp_path / "fl.db")
+    # Cinq skills dont les citations partagent « veux » et un nombre : le mot
+    # manque donc a plusieurs skills, ce qui le trahit.
+    peupler(store, {
+        f"gm-s{i}": (
+            f"Domaine propre{i}.",
+            [("Déclencheurs", f'- « je veux 532 le zorglub{i} »\n- « propre{i} seul »')],
+        )
+        for i in range(5)
+    })
+    index = Index.construire(store)
+    try:
+        groupes = index.manques(index.corpus())
+        tous_les_mots = {m for g in groupes for m in g["mots_manquants"]}
+        assert "veux" not in tous_les_mots, "manque a 5 skills : mot vide deguise"
+        assert "532" not in tous_les_mots, "un nombre ne se redige pas"
+        assert not any(len(m) < 3 for m in tous_les_mots), "ni un fragment"
+    finally:
+        store.close()
+
+
+# -- le contexte de session -----------------------------------------------
+
+
+def test_le_contexte_oriente_sans_decider(tmp_path):
+    """« etape 1 validee, go » est introuvable seule et resoluble si le tour
+    precedent parlait de l'index. Mais les jetons du contexte comptent moins que
+    ceux de la demande : au poids plein, la conversation ecraserait la
+    question."""
+    store = Store(tmp_path / "ctx.db")
+    peupler(store, {
+        "gm-index": ("Construire l'index des skills et references.", []),
+        "gm-factures": ("Factures fournisseurs proforma.", []),
+    })
+    index = Index.construire(store)
+    try:
+        # Seule, une demande sans domaine ne designe rien.
+        assert index.chercher("zorglub inconnu") == []
+        # Avec un contexte, le skill du contexte remonte.
+        avec = index.chercher_avec_contexte(
+            "zorglub inconnu", contexte=["construis l'index des references"]
+        )
+        assert avec and avec[0]["name"] == "gm-index"
+        assert "contexte" in avec[0]["detail"]
+        # Mais une demande qui porte son propre domaine garde la main.
+        garde = index.chercher_avec_contexte(
+            "proforma fournisseur", contexte=["construis l'index des references"]
+        )
+        assert garde[0]["name"] == "gm-factures", "la demande decide, pas le contexte"
+    finally:
+        store.close()
+
+
+def test_un_contexte_vide_ou_nul_ne_change_rien(tmp_path):
+    store = Store(tmp_path / "cv.db")
+    peupler(store, BIBLIOTHEQUE)
+    index = Index.construire(store)
+    try:
+        attendu = index.chercher("proforma")
+        assert index.chercher_avec_contexte("proforma", contexte=None) == attendu
+        assert index.chercher_avec_contexte("proforma", contexte=[]) == attendu
+        assert index.chercher_avec_contexte(
+            "proforma", contexte=["autre chose"], poids_contexte=0.0
+        ) == attendu
+    finally:
+        store.close()
+
+
+def test_le_corpus_de_sessions_porte_les_deux_conditions(tmp_path):
+    """La bascule compte autant que la suite : un mecanisme qui aide quand la
+    conversation reste sur le sujet, en cassant quand elle change, n'est pas un
+    gain mais un pari sur la stabilite des conversations."""
+    store = Store(tmp_path / "cs.db")
+    peupler(store, {
+        "gm-a": ("Un skill.", [("Déclencheurs", '- « premiere phrase alpha »\n- « seconde phrase beta »')]),
+        "gm-b": ("Un autre.", [("Déclencheurs", '- « troisieme phrase gamma »\n- « quatrieme phrase delta »')]),
+    })
+    index = Index.construire(store)
+    try:
+        cas = index.corpus_avec_contexte()
+        conditions = {c["condition"] for c in cas}
+        assert conditions == {"suite", "bascule"}
+        for c in cas:
+            assert c["contexte"] and c["contexte"][0] != c["demande"], "non circulaire"
+        suites = [c for c in cas if c["condition"] == "suite"]
+        assert all(c["contexte"][0] != c["demande"] for c in suites)
+    finally:
+        store.close()
+
+
+def test_le_banc_contexte_rend_les_deux_conditions(tmp_path, capsys, monkeypatch):
+    store = Store(tmp_path / "bctx.db")
+    peupler(store, {
+        "gm-a": ("Un skill.", [("Déclencheurs", '- « premiere phrase alpha »\n- « seconde phrase beta »')]),
+        "gm-b": ("Un autre.", [("Déclencheurs", '- « troisieme phrase gamma »\n- « quatrieme phrase delta »')]),
+    })
+    store.close()
+    monkeypatch.setenv("GK_DATABASE", str(tmp_path / "bctx.db"))
+    assert cli_main(["--json", "banc-contexte"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert "suite" in out and "bascule" in out
+    for bloc in (out["suite"], out["bascule"]):
+        assert "mrr_sans_contexte" in bloc and "mrr_avec_contexte" in bloc
+    # La lecture dit sa reserve avant tout chiffre.
+    assert "fabriquee n'est pas une vraie" in out["lecture"][0]

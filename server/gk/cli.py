@@ -34,7 +34,7 @@ from .corrections import (
     tidy,
 )
 from .patterns import Detector, fold
-from .recherche import POIDS, Index
+from .recherche import POIDS, POIDS_CONTEXTE, Index
 from .service import Service
 from .store import Store, now
 
@@ -383,6 +383,110 @@ def cmd_cherche(args, cfg: Config) -> int:
             ),
         }, args)
     return 0
+
+
+def cmd_banc_contexte(args, cfg: Config) -> int:
+    """Mesure l'apport du contexte de session, sur des sessions synthetiques.
+
+    Le corpus curate est fait de phrases isolees, donc le contexte ne pouvait
+    pas etre mesure. On en fabrique une conversation : pour un skill portant au
+    moins deux citations, l'une sert de tour precedent et l'autre de demande.
+
+    Deux conditions, et la seconde compte autant : `suite`, ou le tour precedent
+    porte sur le meme skill et le contexte devrait aider ; `bascule`, ou il
+    porte sur un autre et le contexte devrait nuire. Un mecanisme qui aide la
+    suite en cassant la bascule n'est pas un gain, c'est un pari sur la
+    stabilite des conversations.
+    """
+    with Store(cfg.database) as store:
+        index = Index.construire(store)
+        cas = index.corpus_avec_contexte()
+        if not cas:
+            _emit({
+                "ok": False,
+                "erreur": "aucun skill ne porte deux citations : pas de session "
+                          "synthetique possible",
+                "suite": "voir `gk declencheurs`",
+            }, args)
+            return 1
+        rangs: dict[str, dict[str, list]] = {}
+        for cas_un in cas:
+            for bras in ("sans", "avec"):
+                if bras == "sans":
+                    sortie = index.chercher(
+                        cas_un["demande"], limite=args.limite,
+                        exclure_exemple=cas_un["ligne"],
+                    )
+                else:
+                    sortie = index.chercher_avec_contexte(
+                        cas_un["demande"], contexte=cas_un["contexte"],
+                        poids_contexte=args.poids, limite=args.limite,
+                        exclure_exemple=cas_un["ligne"],
+                    )
+                noms = [r["name"] for r in sortie]
+                rang = (
+                    noms.index(cas_un["attendu"]) + 1
+                    if cas_un["attendu"] in noms else None
+                )
+                rangs.setdefault(cas_un["condition"], {}).setdefault(bras, []).append(rang)
+        out: dict = {
+            "ok": True, "cas": len(cas), "skills_indexes": index.n,
+            "poids_contexte": args.poids, "rang_maximal_compte": args.limite,
+        }
+        for condition, bras in sorted(rangs.items()):
+            out[condition] = {
+                "cas": len(bras["sans"]),
+                "mrr_sans_contexte": _mrr(bras["sans"]),
+                "mrr_avec_contexte": _mrr(bras["avec"]),
+                "rappel_1_sans": _taux(bras["sans"], 1),
+                "rappel_1_avec": _taux(bras["avec"], 1),
+            }
+        out["lecture"] = _lire_contexte(out)
+        _emit(out, args)
+    return 0
+
+
+def _lire_contexte(out: dict) -> list[str]:
+    lignes = [
+        "Sessions synthetiques : une citation sert de tour precedent, une autre "
+        "de demande. Non circulaire, mais une conversation fabriquee n'est pas "
+        "une vraie -- le chiffre indique un sens, pas une amplitude."
+    ]
+    suite, bascule = out.get("suite"), out.get("bascule")
+    if suite:
+        gain = round(suite["mrr_avec_contexte"] - suite["mrr_sans_contexte"], 3)
+        lignes.append(
+            f"Suite (meme skill) : {gain:+} de MRR avec le contexte "
+            f"({suite['mrr_sans_contexte']} -> {suite['mrr_avec_contexte']})."
+        )
+    if bascule:
+        perte = round(bascule["mrr_avec_contexte"] - bascule["mrr_sans_contexte"], 3)
+        lignes.append(
+            f"Bascule (autre skill) : {perte:+} de MRR "
+            f"({bascule['mrr_sans_contexte']} -> {bascule['mrr_avec_contexte']})."
+        )
+    if suite and bascule:
+        gain = suite["mrr_avec_contexte"] - suite["mrr_sans_contexte"]
+        perte = bascule["mrr_sans_contexte"] - bascule["mrr_avec_contexte"]
+        if gain <= 0.01:
+            lignes.append(
+                "=> Le contexte n'apporte rien, meme quand la conversation reste "
+                "sur le sujet. Inutile de l'activer."
+            )
+        elif perte > gain:
+            lignes.append(
+                f"=> Le contexte coute plus sur la bascule ({perte:.3f}) qu'il "
+                f"ne rapporte sur la suite ({gain:.3f}). Il ne vaut la peine que "
+                "si les conversations changent rarement de sujet -- a mesurer "
+                "sur les demandes reelles avant d'activer."
+            )
+        else:
+            lignes.append(
+                f"=> Le contexte rapporte plus ({gain:.3f}) qu'il ne coute "
+                f"({perte:.3f}). Reste a verifier le taux de bascule reel : "
+                "c'est lui qui decide du solde."
+            )
+    return lignes
 
 
 def cmd_banc(args, cfg: Config) -> int:
@@ -1011,6 +1115,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="nom et description seulement : le bras temoin du banc",
     )
     c.set_defaults(func=cmd_cherche)
+
+    bc = sub.add_parser(
+        "banc-contexte",
+        help="mesurer l'apport du contexte de session, sur des sessions synthetiques",
+    )
+    bc.add_argument("-n", "--limite", type=int, default=5)
+    bc.add_argument(
+        "--poids", type=float, default=POIDS_CONTEXTE,
+        help="poids des jetons du tour precedent",
+    )
+    bc.set_defaults(func=cmd_banc_contexte)
 
     b = sub.add_parser(
         "banc",

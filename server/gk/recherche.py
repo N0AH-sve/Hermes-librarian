@@ -80,6 +80,10 @@ STOPWORDS = frozenset(
     """.split()
 )
 
+# Poids des jetons venus des tours precedents. Ils orientent, ils ne decident
+# pas : au poids plein, la conversation ecraserait la question.
+POIDS_CONTEXTE = 0.3
+
 MIN_JETON = 2        # « PA », « IV », « PRE » sont des termes metier
 MAX_RESULTATS = 50
 
@@ -405,6 +409,27 @@ class Index:
         """
         par_nom = {s.name: s for s in self.skills}
         groupes: dict[str, dict] = {}
+        # Un mot qui manque a BEAUCOUP de skills differents n'est pas un mot de
+        # domaine, c'est un mot vide que la liste des mots vides n'a pas attrape.
+        #
+        # Releve du 2026-10-23 : la premiere version de ce rapport conseillait
+        # d'ajouter « veux », « ne », « pas », « fais », « moi » et des
+        # nombres comme « 532 ». La liste de mots vides avait ete gardee courte
+        # a dessein -- « l'IDF fait le reste » -- ce qui est vrai pour le SCORE
+        # et faux pour une liste de courses, puisqu'un mot absent de toute la
+        # bibliotheque a l'IDF maximal et parait donc maximalement precieux.
+        manquants_par_mot: dict[str, set[str]] = {}
+        for demande, attendu, ligne in cas:
+            cible = par_nom.get(attendu)
+            if cible is None:
+                continue
+            portes = self.jetons_apparies(cible, jetons(demande), exclure_exemple=ligne)
+            for j in jetons(demande):
+                if j not in portes:
+                    manquants_par_mot.setdefault(j, set()).add(attendu)
+        trop_repandus = {
+            mot for mot, skills in manquants_par_mot.items() if len(skills) >= 4
+        }
         for demande, attendu, ligne in cas:
             cible = par_nom.get(attendu)
             if cible is None:
@@ -413,7 +438,13 @@ class Index:
             if not jetons_demande:
                 continue
             portes = self.jetons_apparies(cible, jetons_demande, exclure_exemple=ligne)
-            manquants = [j for j in jetons_demande if j not in portes]
+            manquants = [
+                j for j in jetons_demande
+                if j not in portes
+                and j not in trop_repandus       # mot vide deguise
+                and not j.isdigit()              # un nombre ne se redige pas
+                and len(j) >= 3                  # ni un fragment
+            ]
             if not manquants:
                 continue
             groupe = groupes.setdefault(
@@ -435,6 +466,104 @@ class Index:
             sortie.append(groupe)
         sortie.sort(key=lambda g: (-g["cas"], g["name"]))
         return sortie
+
+    # -- le contexte de session ----------------------------------------------
+
+    def chercher_avec_contexte(
+        self,
+        demande: str,
+        contexte: list[str] | None = None,
+        poids_contexte: float = POIDS_CONTEXTE,
+        **kwargs,
+    ) -> list[dict]:
+        """Classe les skills en tenant compte des demandes precedentes.
+
+        C'est l'etape 1 de la liste de GM -- comprendre l'intention et le
+        contexte -- et la seule facon d'attaquer les demandes qui ne portent
+        aucun mot de domaine. « etape 1 validee, go » est introuvable seule et
+        parfaitement resoluble si le tour precedent parlait de l'index.
+
+        Les jetons du contexte comptent moins que ceux de la demande : ils
+        orientent, ils ne decident pas. Un contexte au poids plein ferait que
+        la conversation ecrase la question.
+        """
+        # `limite` est retiree des kwargs : les deux recherches internes se
+        # font large, et c'est le melange qui coupe.
+        limite = int(kwargs.pop("limite", 10))
+        jetons_demande = set(jetons(demande))
+        jetons_contexte = set()
+        for precedente in contexte or []:
+            jetons_contexte |= set(jetons(precedente))
+        jetons_contexte -= jetons_demande
+        if not jetons_contexte or poids_contexte <= 0:
+            return self.chercher(demande, limite=limite, **kwargs)
+        # Le contexte est ajoute a la demande, et sa contribution est reduite en
+        # repondant deux fois : une fois sur la demande, une fois sur le
+        # contexte, puis on melange les scores.
+        principaux = {r["name"]: r for r in self.chercher(demande, limite=MAX_RESULTATS, **kwargs)}
+        appoints = {
+            r["name"]: r for r in self.chercher(
+                " ".join(sorted(jetons_contexte)), limite=MAX_RESULTATS, **kwargs
+            )
+        }
+        melange: dict[str, dict] = {}
+        for nom in set(principaux) | set(appoints):
+            base = principaux.get(nom)
+            appoint = appoints.get(nom)
+            score = (base["score"] if base else 0.0) + poids_contexte * (
+                appoint["score"] if appoint else 0.0
+            )
+            if score <= 0:
+                continue
+            modele = base or appoint
+            detail = dict((base or {}).get("detail") or {})
+            if appoint:
+                detail["contexte"] = round(poids_contexte * appoint["score"], 3)
+            melange[nom] = {**modele, "score": round(score, 3), "detail": detail}
+        resultats = sorted(melange.values(), key=lambda r: (-r["score"], r["name"]))
+        return resultats[: max(1, min(limite, MAX_RESULTATS))]
+
+    def corpus_avec_contexte(self) -> list[dict]:
+        """Un corpus de sessions **synthetiques**, pour mesurer le contexte.
+
+        Le corpus curate est fait de phrases isolees : il n'y a pas de
+        conversation autour d'elles, donc le contexte ne pouvait pas etre
+        mesure. On en fabrique une : pour un skill portant au moins deux
+        citations, l'une sert de tour precedent et l'autre de demande.
+
+        Deux conditions, et la seconde importe autant que la premiere :
+
+        * **suite** -- le tour precedent porte sur le MEME skill. Le contexte
+          devrait aider ;
+        * **bascule** -- le tour precedent porte sur un AUTRE skill. Le contexte
+          devrait nuire, et il faut savoir combien.
+
+        Non circulaire, puisque la phrase servant de contexte est differente de
+        celle qu'on cherche, et que celle-ci est retiree de l'index comme
+        ailleurs.
+        """
+        par_skill: dict[str, list[tuple[str, str]]] = {}
+        for demande, attendu, ligne in self.corpus():
+            par_skill.setdefault(attendu, []).append((demande, ligne))
+        noms = sorted(par_skill)
+        cas: list[dict] = []
+        for i, nom in enumerate(noms):
+            phrases = par_skill[nom]
+            if len(phrases) < 2:
+                continue
+            (precedente, _), (demande, ligne) = phrases[0], phrases[1]
+            cas.append({
+                "condition": "suite", "demande": demande, "attendu": nom,
+                "ligne": ligne, "contexte": [precedente],
+            })
+            # La bascule : le contexte vient du skill suivant dans l'ordre.
+            autre = noms[(i + 1) % len(noms)]
+            if autre != nom and par_skill.get(autre):
+                cas.append({
+                    "condition": "bascule", "demande": demande, "attendu": nom,
+                    "ligne": ligne, "contexte": [par_skill[autre][0][0]],
+                })
+        return cas
 
     def confusions(self, seuil: float = 0.6) -> list[dict]:
         """Les paires de skills dont les textes sont trop proches pour être
