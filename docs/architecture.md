@@ -2562,6 +2562,51 @@ annotees, **l'objectif de 9 sur 10 est hors de portee de deux ordres de
 grandeur differents** -- le plafond de redaction calcule a 0,56, et le taux de
 demandes que la bibliotheque ne sert pas, quel qu'il soit.
 
+### Le taux de citation, lui, ne depend d'aucune hypothese
+
+Question de GM : « il arrive en top 1 entre 26 % et 40 %, mais il est cite a
+hauteur de combien ? » La reponse se compte au lieu de s'inferer, donc elle est
+ferme.
+
+| | Valeur | Statut |
+|---|---|---|
+| Le bon skill **cite dans les cinq** | 30 / 47 = **0,638** | **certain**, c'est un comptage |
+| Et **premier** quand il est cite | 12 / 30 = **0,400** | **certain** |
+| Produit des deux | 0,255 | = la borne basse du rappel@1 |
+
+Deux lectures, et il faut les separer. **Comme mesure de recherche**, 0,638 est
+une borne basse : son denominateur inclut les 17 demandes sans reponse connue,
+donc le vrai rappel@5 est entre 0,638 et 1,000. **Comme taux de citation**,
+0,638 est exact et c'est le chiffre qui compte pour un brief -- **un brief ne
+sait pas si une demande a une reponse**, il affronte les 47.
+
+Et le second chiffre est le plus parlant du releve : **quand le bon skill est
+cite, il n'est premier que deux fois sur cinq.** Les trois autres fois il est
+enterre aux rangs 2 a 5. C'est coherent avec les 67 % d'echecs de redaction : le
+texte suffit souvent a faire entrer un skill dans la liste, rarement a le faire
+gagner.
+
+`juger` rend desormais `distribution_des_rangs`, parce qu'un bon skill au rang 2
+et un au rang 5 ne se corrigent pas pareil -- le premier par des coefficients,
+le second a peine.
+
+### Correction : le brief a cinq entrees ne depend pas de `x` non plus
+
+L'affirmation precedente -- « seul un brief a cinq entrees depend de `x` » --
+etait trop genereuse. Le risque d'un tel brief est son taux de **mauvaise
+direction** : proposer cinq skills dont aucun ne convient. C'est exactement les
+17 cas, soit **36 % des demandes reelles, et ce chiffre est certain**. `x`
+n'explique que la *cause* (trou de la bibliotheque ou echec de rappel), donc il
+oriente le remede, pas la decision d'y aller.
+
+**Donc aucune des deux formes de brief ne demande la reprise**, et un risque
+supplementaire apparait a le dire ainsi : une partie des 17 sont des demandes
+qui n'appellent legitimement aucun skill. Un brief qui en propose cinq y est
+**pire que le silence** -- il invite gb a charger la ou il a raison de
+s'abstenir. Or gb s'abstient dans 21 sessions sur 63. **L'effet principal d'un
+brief pourrait etre de detruire des abstentions correctes**, ce qu'aucune mesure
+du projet ne surveille aujourd'hui.
+
 ### La correction, et pourquoi elle ne refait pas l'heure
 
 Le format v2 ajoute une troisieme reponse : **le nom du bon skill**, quand il

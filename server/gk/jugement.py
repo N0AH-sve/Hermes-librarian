@@ -317,6 +317,13 @@ def juger(cas: list[dict], dans_les_n: int = 5) -> dict:
     hors_cinq += sum(1 for c in annotes if c.get("nom"))
     aucun = sum(1 for c in annotes if c.get("reponse") == 0)
 
+    # Le rang auquel le bon skill se trouve QUAND il est cite : c'est lui qui
+    # separe un probleme de classement d'un probleme de recherche. Le bon skill
+    # au rang 2 se corrige par des coefficients ; au rang 5, a peine.
+    distribution = {}
+    for r in sorted(set(rangs)):
+        distribution[str(r)] = sum(1 for x in rangs if x == r)
+
     out = {
         "ok": True,
         "cas_lus": len(cas),
@@ -327,6 +334,14 @@ def juger(cas: list[dict], dans_les_n: int = 5) -> dict:
         "designe_au_rang_1": premier,
         f"designe_hors_des_{dans_les_n}": hors_cinq,
         "aucun_skill_ne_convient": aucun,
+        "distribution_des_rangs": distribution,
+        # Le taux de CITATION sur toutes les demandes annotees. Celui-la ne
+        # depend d'aucune hypothese, et c'est le denominateur que voit un brief :
+        # un brief ne sait pas si une demande a une reponse.
+        f"cite_dans_les_{dans_les_n}_sur_tout": round(dans_cinq / total, 3),
+        "part_premier_quand_cite": (
+            round(premier / dans_cinq, 3) if dans_cinq else None
+        ),
     }
 
     servables = dans_cinq + hors_cinq

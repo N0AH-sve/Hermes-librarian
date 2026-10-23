@@ -387,3 +387,29 @@ def test_gk_catalogue_noms_liste_les_skills(tmp_path, capsys, monkeypatch):
     assert cli_main(["--json", "catalogue", "--noms"]) == 0
     out = json.loads(capsys.readouterr().out)
     assert out["skills"] == ["gm-un"]
+
+
+def test_le_rang_du_bon_skill_est_rendu_quand_il_est_cite():
+    """Le rang separe un probleme de classement d'un probleme de recherche.
+
+    Le bon skill au rang 2 se corrige par des coefficients ; au rang 5, a
+    peine. Un rappel@5 global ne distingue pas les deux.
+    """
+    cas = [_cas(1, reponse=1), _cas(2, reponse=1), _cas(3, reponse=2),
+           _cas(4, reponse=5), _cas(5, reponse=0)]
+    out = juger(cas)
+    assert out["distribution_des_rangs"] == {"1": 2, "2": 1, "5": 1}
+    # Le taux de citation sur TOUT : le denominateur que voit un brief, qui ne
+    # sait pas si une demande a une reponse.
+    assert out["cite_dans_les_5_sur_tout"] == 0.8
+    assert out["part_premier_quand_cite"] == 0.5
+
+
+def test_le_taux_de_citation_ne_depend_d_aucune_hypothese():
+    """Contrairement au rappel, il se compte et ne s'infere pas : il est donc
+    rendu meme sur un echantillon v1 ambigu."""
+    cas = [_cas(i, reponse=1, version=1) for i in range(1, 4)]
+    cas += [_cas(i, reponse=0, version=1) for i in range(4, 8)]
+    out = juger(cas)
+    assert out["cite_dans_les_5_sur_tout"] == round(3 / 7, 3)
+    assert out["part_premier_quand_cite"] == 1.0
