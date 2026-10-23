@@ -44,6 +44,8 @@ from __future__ import annotations
 from .store import Store
 
 FENETRE_SECONDES = 120.0
+# Les rangs ou les deux courbes sont comparees.
+RANGS = (1, 2, 3, 5)
 
 
 def _une_ligne(texte: str) -> str:
@@ -155,6 +157,9 @@ def confronter(
 
     comparables = 0
     par_prefixe = 0
+    gk_courbe = {k: 0 for k in RANGS}
+    gb_courbe = {k: 0 for k in RANGS}
+    gb_a_choisi = 0
     gk_juste = 0
     gb_juste_fenetre = 0
     gb_juste_session = 0
@@ -188,6 +193,41 @@ def confronter(
                 (session, paire["ts"], paire["ts"] + fenetre),
             )
         ]
+        # La SEQUENCE de choix de gb pour cette demande : ses chargements entre
+        # cette demande et la suivante de la meme session, dans l'ordre.
+        #
+        # C'est la seule attribution qui compare des CHOIX. « Le bon skill est
+        # parmi les neuf charges dans la session » mesure un ratissage, pas une
+        # decision : gb ne choisit pas un skill, il en charge neuf. Pour savoir
+        # lequel des deux choisit mieux, il faut le premier de chacun.
+        suivante = store.one(
+            "SELECT MIN(ts) t FROM requests WHERE session_id = ? AND ts > ?",
+            (session, paire["ts"]),
+        )
+        borne = (suivante["t"] if suivante and suivante["t"] else None)
+        if borne:
+            sequence = [
+                r["skill_name"] for r in store.query(
+                    "SELECT skill_name FROM skill_uses WHERE session_id = ? "
+                    "AND ts >= ? AND ts < ? ORDER BY ts",
+                    (session, paire["ts"], borne),
+                )
+            ]
+        else:
+            sequence = [
+                r["skill_name"] for r in store.query(
+                    "SELECT skill_name FROM skill_uses WHERE session_id = ? "
+                    "AND ts >= ? ORDER BY ts",
+                    (session, paire["ts"]),
+                )
+            ]
+        # Un meme skill recharge ne compte qu'une fois : c'est un rang, pas un
+        # volume.
+        vus: list[str] = []
+        for nom in sequence:
+            if nom not in vus:
+                vus.append(nom)
+        sequence = vus
         charges_session = {
             r["skill_name"] for r in store.query(
                 "SELECT DISTINCT skill_name FROM skill_uses WHERE session_id = ?",
@@ -203,12 +243,27 @@ def confronter(
         gk_juste += int(gk_ok)
         gb_juste_fenetre += int(gb_ok_fenetre)
         gb_juste_session += int(gb_ok_session)
+
+        # Les deux courbes de rang, sur exactement les memes demandes.
+        gk_rang = c.get("reponse") if (c.get("reponse") or 0) >= 1 else None
+        gb_rang = (sequence.index(attendu) + 1) if attendu in sequence else None
+        for k in RANGS:
+            if gk_rang is not None and gk_rang <= k:
+                gk_courbe[k] += 1
+            if gb_rang is not None and gb_rang <= k:
+                gb_courbe[k] += 1
+        if sequence:
+            gb_a_choisi += 1
+
         details.append({
             "numero": c["numero"],
             "attendu": attendu,
             "gk_rang_1": gk_premier,
+            "gk_rang_du_bon": gk_rang,
             "gk_juste": gk_ok,
-            "gb_a_charge": sorted(charges_session) or None,
+            "gb_a_choisi_dans_l_ordre": sequence or None,
+            "gb_rang_du_bon": gb_rang,
+            "gb_a_charge_dans_la_session": len(charges_session),
             "gb_juste": gb_ok_session,
         })
 
@@ -226,6 +281,9 @@ def confronter(
     def part(n: int) -> float:
         return round(n / comparables, 3)
 
+    def path_zero(n: int, d: int) -> float:
+        return round(n / d, 3) if d else 0.0
+
     out = {
         "ok": True,
         "cas_juges": len(juges),
@@ -238,7 +296,13 @@ def confronter(
         "gb_rappel_fenetre": part(gb_juste_fenetre),
         "gb_rappel_session": part(gb_juste_session),
         "gb_sans_aucun_chargement": gb_sans_chargement,
-        "ecart_gk_moins_gb": round(part(gk_juste) - part(gb_juste_session), 3),
+        "ecart_gk_moins_gb": round(part(gk_juste) - path_zero(gb_juste_session, comparables), 3),
+        # LA comparaison de choix : le rang du bon skill chez l'un et chez
+        # l'autre, sur les memes demandes. gb charge neuf skills, donc le
+        # comparer a un rang unique de GK etait une erreur de denominateur.
+        "courbe_gk": {str(k): round(gk_courbe[k] / comparables, 3) for k in RANGS},
+        "courbe_gb": {str(k): round(gb_courbe[k] / comparables, 3) for k in RANGS},
+        "gb_a_choisi_quelque_chose": gb_a_choisi,
         "details": details,
     }
     return out
@@ -279,6 +343,26 @@ def lecture(r: dict) -> list[str]:
         lignes.append(
             f"{r['apparies_par_prefixe']} appariees par prefixe (demande "
             "multiligne d'un echantillon ancien), donc moins surement."
+        )
+    cg, cb = r.get("courbe_gk") or {}, r.get("courbe_gb") or {}
+    if cg and cb:
+        lignes.insert(2, (
+            "LA comparaison de choix, au meme rang et sur les memes demandes : "
+            f"rang 1, GK {cg.get('1')} contre gb {cb.get('1')} ; "
+            f"rang 2, GK {cg.get('2')} contre gb {cb.get('2')} ; "
+            f"rang 3, GK {cg.get('3')} contre gb {cb.get('3')}."
+        ))
+        lignes.insert(3, (
+            "La courbe de gb est l'ordre de ses chargements entre cette demande "
+            "et la suivante. C'est son premier choix, pas le lot de neuf qu'il "
+            "charge dans la session : comparer un rang unique de GK a ce lot "
+            "etait une erreur de denominateur."
+        ))
+    if r.get("gb_a_choisi_quelque_chose") is not None:
+        lignes.append(
+            f"gb n'a rien charge apres {n - r['gb_a_choisi_quelque_chose']} de "
+            f"ces {n} demandes : sa courbe y vaut zero par definition, pas par "
+            "erreur."
         )
     lignes.append(
         "L'appariement demande/chargement reste une CORRELATION : les deux "

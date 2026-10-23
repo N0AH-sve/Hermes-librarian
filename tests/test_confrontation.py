@@ -261,3 +261,102 @@ def test_une_relecture_massivement_deraillee_refuse_de_conclure(svc):
     assert out["ok"] is False
     assert "derape" in out["erreur"]
     assert out["exemples"]
+
+
+def test_les_deux_courbes_de_rang_sont_comparees_au_meme_rang(svc):
+    """gb charge neuf skills par session : comparer le rang 1 de GK a ce lot
+    etait une erreur de denominateur.
+
+    La courbe de gb est l'ordre de ses chargements entre cette demande et la
+    suivante -- son premier choix, pas son ratissage.
+    """
+    from gk.catalog import Catalog
+    Catalog(svc.store).ingest([
+        {"path": f"a/s{i}/SKILL.md", "name": f"s{i}", "description": "d",
+         "category": "c", "fingerprint": "1"} for i in range(1, 5)
+    ], complete=True)
+    svc.request("s1", "la demande qui nous interesse")
+    svc.request("s1", "une demande posterieure")
+    t1 = svc.store.one(
+        "SELECT ts FROM requests WHERE text_truncated = ?",
+        ("la demande qui nous interesse",),
+    )["ts"]
+    # Les deux demandes doivent etre espacees comme dans une vraie
+    # conversation : la fenetre d'un tour est bornee par la demande suivante.
+    svc.store.execute(
+        "UPDATE requests SET ts = ? WHERE text_truncated = ?",
+        (t1 + 600, "une demande posterieure"),
+    )
+    # gb charge s3 puis s2 : le bon skill (s2) est son SECOND choix.
+    _charge(svc.store, "s1", "s3", t1 + 1)
+    _charge(svc.store, "s1", "s2", t1 + 2)
+
+    cas = relire(
+        f"<!-- gk echantillon v{VERSION} -->\n"
+        "## 1. la demande qui nous interesse\n"
+        "   1. s1   [c]  score 9\n"
+        "   2. s2   [c]  score 7\n"
+        f"{MARQUEUR} 2\n"
+    )
+    out = confronter(svc.store, cas)
+    # Le bon skill est au rang 2 pour les deux.
+    assert out["courbe_gk"]["1"] == 0.0 and out["courbe_gk"]["2"] == 1.0
+    assert out["courbe_gb"]["1"] == 0.0 and out["courbe_gb"]["2"] == 1.0
+    assert out["details"][0]["gk_rang_du_bon"] == 2
+    assert out["details"][0]["gb_rang_du_bon"] == 2
+
+
+def test_la_sequence_de_gb_s_arrete_a_la_demande_suivante(svc):
+    """Un chargement posterieur a la demande suivante repond a celle-la, pas a
+    celle-ci : l'y compter attribuerait a gb un choix qu'il n'a pas fait."""
+    from gk.catalog import Catalog
+    Catalog(svc.store).ingest([
+        {"path": "a/bon/SKILL.md", "name": "bon", "description": "d",
+         "category": "c", "fingerprint": "1"},
+    ], complete=True)
+    svc.request("s1", "la premiere demande")
+    svc.request("s1", "la demande suivante")
+    t1 = svc.store.one(
+        "SELECT ts FROM requests WHERE text_truncated = ?",
+        ("la premiere demande",),
+    )["ts"]
+    svc.store.execute(
+        "UPDATE requests SET ts = ? WHERE text_truncated = ?",
+        (t1 + 600, "la demande suivante"),
+    )
+    # Le chargement a lieu APRES la demande suivante.
+    _charge(svc.store, "s1", "bon", t1 + 601)
+
+    cas = relire(
+        f"<!-- gk echantillon v{VERSION} -->\n"
+        "## 1. la premiere demande\n   1. bon   [c]  score 9\n"
+        f"{MARQUEUR} 1\n"
+    )
+    out = confronter(svc.store, cas)
+    assert out["courbe_gb"]["1"] == 0.0, "le chargement n'est pas attribue ici"
+    assert out["gb_rappel_session"] == 1.0, "mais la session le voit toujours"
+
+
+def test_un_skill_recharge_ne_compte_qu_une_fois_dans_la_sequence(svc):
+    """C'est un rang, pas un volume : un rechargement ne doit pas repousser le
+    bon skill d'un cran."""
+    from gk.catalog import Catalog
+    Catalog(svc.store).ingest([
+        {"path": "a/x/SKILL.md", "name": "x", "description": "d",
+         "category": "c", "fingerprint": "1"},
+        {"path": "a/bon/SKILL.md", "name": "bon", "description": "d",
+         "category": "c", "fingerprint": "1"},
+    ], complete=True)
+    svc.request("s1", "une demande")
+    t1 = svc.store.one("SELECT ts FROM requests LIMIT 1")["ts"]
+    _charge(svc.store, "s1", "x", t1 + 1)
+    _charge(svc.store, "s1", "x", t1 + 2)
+    _charge(svc.store, "s1", "bon", t1 + 3)
+
+    cas = relire(
+        f"<!-- gk echantillon v{VERSION} -->\n"
+        "## 1. une demande\n   1. x   [c]  score 9\n   2. bon   [c]  score 7\n"
+        f"{MARQUEUR} 2\n"
+    )
+    out = confronter(svc.store, cas)
+    assert out["details"][0]["gb_rang_du_bon"] == 2, "et non 3"
