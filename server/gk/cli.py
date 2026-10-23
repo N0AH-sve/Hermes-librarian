@@ -644,6 +644,139 @@ def cmd_reetalonner(args, cfg: Config) -> int:
     return 0
 
 
+def cmd_consulter(args, cfg: Config) -> int:
+    """Une consultation demandee par un humain : ce que `/gk` rendrait.
+
+    Le refus de l'etape 2 -- ne pas donner a l'agent un outil qu'il appellerait
+    -- portait sur l'AGENT, et ne s'applique pas ici : un humain qui tape `/gk`
+    n'oublie rien, il a decide. Le droit de se taire est donc resolu en etant
+    delegue a la personne.
+    """
+    svc = Service.open(cfg.database, cfg.patterns)
+    try:
+        out = svc.consulter(args.demande, session_id=args.session or "",
+                            limite=args.limite)
+    finally:
+        svc.close()
+    if not out.get("ok"):
+        _emit(out, args)
+        return 1
+    out["lecture"] = [
+        "Ce que `/gk` rendrait a un collegue. Rien n'est injecte : la "
+        "consultation est demandee, pas imposee.",
+        "Chaque retour sur une consultation est une ETIQUETTE HUMAINE, produite "
+        "au fil du travail. C'est la verite terrain que le projet n'arrive pas "
+        "a obtenir, et elle s'accumule sans seance d'annotation.",
+        f"Pour l'enregistrer : gk retour --consultation "
+        f"{out['consultation_id']} <rang|nom|0>",
+        "Reserve a garder : on tape `/gk` quand on doute, donc ces demandes "
+        "sont plus dures que la moyenne. Le rappel mesure dessus sera "
+        "pessimiste -- c'est le bon sens de l'erreur.",
+    ]
+    _emit(out, args)
+    return 0
+
+
+def cmd_retour(args, cfg: Config) -> int:
+    """Le retour humain sur une consultation : une etiquette."""
+    svc = Service.open(cfg.database, cfg.patterns)
+    try:
+        propositions = None
+        if args.consultation:
+            # Les propositions de cette consultation, pour qu'un rang designe
+            # le bon skill et non le rang d'une autre liste.
+            row = svc.store.one(
+                "SELECT note, session_id FROM reports WHERE id = ? "
+                "AND outcome = 'consultation'",
+                (args.consultation,),
+            )
+            if row is None:
+                _emit({
+                    "ok": False,
+                    "erreur": f"consultation {args.consultation} inconnue",
+                }, args)
+                return 1
+            rejoue = svc.consulter(
+                row["note"] or "", session_id=row["session_id"] or "",
+                limite=args.limite,
+            )
+            propositions = [p["name"] for p in rejoue.get("propositions", [])]
+        out = svc.retour(
+            args.consultation, args.choix, session_id=args.session or "",
+            propositions=propositions,
+        )
+    finally:
+        svc.close()
+    if not out.get("ok"):
+        _emit(out, args)
+        return 1
+    out["lecture"] = [
+        "Etiquette humaine enregistree (`source='human'`), qui ne se melange "
+        "jamais avec les compteurs automatiques.",
+        "`gk etiquettes` les exporte au format de l'echantillon, donc "
+        "`gk confronter` et `gk reetalonner` les lisent sans rien de plus.",
+    ]
+    _emit(out, args)
+    return 0
+
+
+def cmd_etiquettes(args, cfg: Config) -> int:
+    """Exporte les etiquettes humaines au format de l'echantillon.
+
+    Les retours accumules au fil du travail valent un echantillon annote, et
+    sans seance d'annotation. L'export passe par le meme format pour que toute
+    la chaine de mesure les lise sans traitement special.
+    """
+    with Store(cfg.database) as store:
+        lignes = store.query(
+            "SELECT r.id, r.skill_name, r.outcome, r.session_id, c.note "
+            "FROM reports r LEFT JOIN reports c ON c.id = r.brief_id "
+            "WHERE r.source = 'human' AND r.outcome IN "
+            "('bon_skill', 'aucun_ne_convient') ORDER BY r.ts"
+        )
+        if not lignes:
+            _emit({
+                "ok": False,
+                "erreur": "aucune etiquette humaine enregistree",
+                "suite": "gk consulter \"<demande>\" puis gk retour",
+            }, args)
+            return 1
+        sortie = [
+            "# Etiquettes humaines, accumulees au fil du travail",
+            f"ANNOTATEUR: {args.annotateur}",
+            "",
+            "Exportees depuis les retours sur consultations. Les rangs ne sont",
+            "pas inscrits : ce sont `gk reetalonner` et `gk ordonnance` qui les",
+            "recalculent depuis l'index.",
+            "",
+            "---",
+            "",
+        ]
+        n = 0
+        for row in lignes:
+            demande = " ".join((row["note"] or "").split())
+            if not demande:
+                continue
+            n += 1
+            sortie.append(f"## {n}. {demande}")
+            reponse = "0" if row["outcome"] == "aucun_ne_convient" else (
+                row["skill_name"] or "0"
+            )
+            sortie.append(f"REPONSE: {reponse}")
+            sortie.append("")
+        if not n:
+            _emit({
+                "ok": False,
+                "erreur": (
+                    "des retours existent mais aucun ne porte le texte de sa "
+                    "demande : la consultation liee a peut-etre expire"
+                ),
+            }, args)
+            return 1
+        sys.stdout.write("\n".join(sortie) + "\n")
+    return 0
+
+
 def cmd_silence(args, cfg: Config) -> int:
     """Quand GK devrait se taire.
 
@@ -2023,6 +2156,35 @@ def build_parser() -> argparse.ArgumentParser:
         help="ne rendre que les etiquettes reutilisables, sans les re-mesurer",
     )
     re_.set_defaults(func=cmd_reetalonner)
+
+    co = sub.add_parser(
+        "consulter",
+        help="ce que `/gk` rendrait a un collegue, et la trace pour l'etiqueter",
+    )
+    co.add_argument("demande", help="la demande, entre guillemets")
+    co.add_argument("--session", default="", help="identifiant de session")
+    co.add_argument("-n", "--limite", type=int, default=5)
+    co.set_defaults(func=cmd_consulter)
+
+    rt = sub.add_parser(
+        "retour",
+        help="le retour humain sur une consultation : une etiquette",
+    )
+    rt.add_argument("choix", help="un rang, un nom de skill, ou 0")
+    rt.add_argument("--consultation", type=int, default=None)
+    rt.add_argument("--session", default="")
+    rt.add_argument("-n", "--limite", type=int, default=5)
+    rt.set_defaults(func=cmd_retour)
+
+    et = sub.add_parser(
+        "etiquettes",
+        help="exporter les etiquettes humaines au format de l'echantillon",
+    )
+    et.add_argument(
+        "--annotateur", default="retours humains",
+        help="nom porte par le fichier exporte (defaut %(default)s)",
+    )
+    et.set_defaults(func=cmd_etiquettes)
 
     si = sub.add_parser(
         "silence",

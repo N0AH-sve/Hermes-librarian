@@ -219,6 +219,118 @@ class Service:
 
     # -- catalogue ----------------------------------------------------------
 
+    def consulter(
+        self, demande: str, session_id: str = "", limite: int = 5
+    ) -> dict:
+        """Une consultation **demandee par un humain**, et sa trace.
+
+        **Pourquoi ceci ne contredit pas l'etape 2 de la conception.** Le refus
+        d'origine -- « ne pas donner a l'agent un outil qu'il appellerait » --
+        portait sur l'AGENT : une machine qui oublie de verifier oublie aussi de
+        demander. Un humain qui tape `/gk` n'oublie rien, il a decide. Le refus
+        ne s'applique pas, et je l'avais ecrit pour l'autre cas.
+
+        Trois proprietes qu'aucun seuil n'atteindra :
+
+        * **le droit de se taire est resolu**, parce qu'il est delegue a la
+          personne. Elle connait son intention ; aucun signal du score ne la
+          connait ;
+        * **le risque est nul sur les tours ordinaires** : rien n'est injecte
+          nulle part tant que personne ne demande ;
+        * **chaque consultation suivie d'un retour est une etiquette humaine**,
+          produite au fil du travail. C'est la vérité terrain que le projet
+          n'arrive pas a obtenir depuis deux jours, et elle s'accumule sans
+          seance d'annotation.
+
+        Une reserve a garder : on tape `/gk` quand on doute, donc ces demandes
+        sont **plus dures que la moyenne**. Le rappel mesure dessus sera
+        pessimiste, ce qui est le bon sens de l'erreur.
+        """
+        from .recherche import Index, contexte_de_session
+
+        index = Index.construire(self.store)
+        if index.n == 0:
+            return {"v": 1, "ok": False, "erreur": "catalogue_vide"}
+        contexte = contexte_de_session(self.store, session_id) if session_id else []
+        if contexte:
+            resultats = index.chercher_avec_contexte(
+                demande, contexte=contexte, limite=limite
+            )
+        else:
+            resultats = index.chercher(demande, limite=limite)
+        descriptions = {
+            r["name"]: (r["description"] or "")
+            for r in self.store.query(
+                "SELECT name, description FROM skills WHERE missing_since IS NULL"
+            )
+        }
+        propositions = [
+            {
+                "rang": i,
+                "name": r["name"],
+                "description": descriptions.get(r["name"], ""),
+                "score": r["score"],
+            }
+            for i, r in enumerate(resultats, start=1)
+        ]
+        # La consultation est tracee pour qu'un retour puisse s'y rattacher :
+        # sans ce lien, « c'etait le bon » ne designerait rien.
+        consultation_id = self.recorder.record_report(
+            skill_name=(propositions[0]["name"] if propositions else None),
+            outcome="consultation",
+            source="hook",
+            session_id=session_id,
+            note=demande,
+        )
+        return {
+            "v": 1,
+            "ok": True,
+            "consultation_id": consultation_id,
+            "propositions": propositions,
+            "contexte_tours": len(contexte),
+        }
+
+    def retour(
+        self,
+        consultation_id: int | None,
+        choix: str,
+        session_id: str = "",
+        propositions: list[str] | None = None,
+    ) -> dict:
+        """Le retour humain sur une consultation : une etiquette, au fil du travail.
+
+        `choix` est un rang (« 3 »), un nom de skill, ou « 0 » pour « aucun ne
+        convient ». La meme grammaire que l'echantillon annote, pour que les
+        deux corpus se lisent ensemble.
+
+        Enregistre avec `source='human'`, qui ne se melange jamais avec les
+        compteurs automatiques : l'etape 4 fait des uns la mesure et des autres
+        la calibration, et les confondre detruirait la confrontation.
+        """
+        brut = (choix or "").strip()
+        if not brut:
+            return {"v": 1, "ok": False, "erreur": "choix_vide"}
+        nom = None
+        if brut.isdigit():
+            rang = int(brut)
+            if rang == 0:
+                nom = None
+            elif propositions and 1 <= rang <= len(propositions):
+                nom = propositions[rang - 1]
+            else:
+                return {"v": 1, "ok": False, "erreur": "rang_hors_des_propositions"}
+        else:
+            nom = brut
+        report_id = self.recorder.record_report(
+            skill_name=nom,
+            outcome=("aucun_ne_convient" if nom is None else "bon_skill"),
+            source="human",
+            session_id=session_id,
+            note=(f"consultation {consultation_id}" if consultation_id else None),
+            brief_id=consultation_id,
+        )
+        return {"v": 1, "ok": True, "report_id": report_id, "etiquette": nom}
+
     def catalog(self, skills: list[dict], complete: bool = False) -> dict:
         """Recoit le manifeste et rend la liste des tranches voulues.
 

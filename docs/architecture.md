@@ -3438,6 +3438,76 @@ de rang » etaient 58 echecs de **couverture** et 19 de classement. gb l'a
 recalcule lui-meme et corrige. Son 9/87 n'etait pas reproductible non plus : il
 venait d'un script ad hoc, et `gk juger` rendait 0,0 sur ce fichier.
 
+## `/gk` : la consultation demandee, et pourquoi le refus de l'etape 2 ne tient pas
+
+**Proposition de GM le 2026-10-23**, apres avoir annote a la main : une commande
+que l'on declenche quand on en a besoin.
+
+### Le refus d'origine portait sur l'agent, pas sur un humain
+
+L'etape 2 avait ecarte « un outil que l'agent appellerait », avec cet argument :
+« une machine qui oublie de verifier oublie aussi de demander ». Il est juste,
+et **il ne s'applique pas ici** : un humain qui tape `/gk` n'oublie rien, il a
+decide. J'avais ecrit ce refus pour l'autre cas, et il a servi deux jours a
+ecarter une idee qu'il ne visait pas.
+
+### Trois proprietes qu'aucun seuil n'atteindra
+
+**Le droit de se taire est resolu**, parce qu'il est delegue a la personne. Elle
+connait son intention ; aucun signal du score ne la connait. Deux jours ont ete
+passes a chercher un seuil -- la couverture ne transferait pas (7,7 %), le score
+surajustait (1,0 puis 0,333) -- alors que la question etait mal posee.
+
+**Le risque est nul sur les tours ordinaires.** Rien n'est injecte nulle part
+tant que personne ne demande. C'est le deploiement le plus sur possible, et il
+ne depend d'aucune des mesures en suspens.
+
+**Et chaque consultation suivie d'un retour est une etiquette humaine, produite
+au fil du travail.** C'est la verite terrain que le projet n'arrive pas a
+obtenir depuis deux jours, et elle s'accumule **sans seance d'annotation**. Le
+deblocage de la mesure devient un effet secondaire de l'usage.
+
+### Ce que ca ne fait pas
+
+Cela **ne tranche pas** « GK est-il meilleur que gb ». Une commande manuelle ne
+concourt pas avec le chargement automatique de gb : elle le complete. L'objectif
+de GM reste ouvert, et il faudra toujours des etiquettes pour y repondre -- sauf
+que maintenant elles arrivent toutes seules.
+
+Et une reserve a garder dans toute mesure qui en sortira : **on tape `/gk` quand
+on doute**, donc ces demandes sont plus dures que la moyenne. Le rappel mesure
+dessus sera pessimiste, ce qui est le bon sens de l'erreur.
+
+### Ce qui est livre
+
+| Commande | Role |
+|---|---|
+| `gk consulter "<demande>"` | ce que `/gk` rendrait : les skills avec leur description, et une trace |
+| `gk retour <rang\|nom\|0> --consultation N` | l'etiquette humaine, meme grammaire que l'echantillon |
+| `gk etiquettes` | l'export au format de l'echantillon |
+
+L'export passe par le **format de l'echantillon** pour que `gk confronter`,
+`gk reetalonner`, `gk ordonnance` et `gk silence` les lisent sans traitement
+special. La consultation est tracee en `source='hook'`, le retour en
+`source='human'` : les deux ne se melangent jamais, puisque l'etape 4 fait des
+compteurs automatiques la mesure et des notations humaines la calibration.
+
+Un rang hors des propositions est **refuse** plutot qu'enregistre vide, et un
+nom hors de la liste est accepte -- c'est la reponse la plus utile du lot,
+puisque c'est la seule qui ne vienne pas de GK.
+
+### Ce qui reste a decider, et c'est le seul risque
+
+Le branchement dans gb. `pre_llm_call` accole son retour au message de
+l'utilisateur, donc detecter le prefixe `/gk` et y repondre est faisable -- mais
+cela **rompt la propriete « les trois hooks rendent toujours None »**, verrouillee
+par trois tests depuis la phase 1.
+
+La forme a tenir, si GM le decide : injecter **uniquement** quand le message
+commence par le prefixe, rien sinon, et un test par propriete -- comme pour
+l'observation seule. Un drapeau de configuration par defaut a l'arret, pour que
+rien ne s'active par accident lors d'une mise a jour.
+
 ## Points ouverts
 
 Dernière revue : 2026-10-22, après la mise en service partielle de la phase 1
