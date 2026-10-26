@@ -86,7 +86,20 @@ CLES_DEMANDE = (
 #     reponse que le collegue lit ne peut pas etre reecrite ;
 #   * si GK est lent, injoignable ou degrade, retour None : gb repond
 #     normalement et le collegue voit seulement qu'il n'a pas eu d'aide.
-PREFIXES_CONSULTATION = ("/gk", "!gk", "gk:")
+# `/gk` est intercepte par le routeur de commandes de Hermes, qui repond
+# lui-meme « Unknown command `/gk`. [...] or resend without the leading slash to
+# send as a regular message. »
+#
+# **Un collegue qui suit ce conseil envoie `gk ...`, et jusqu'au 2026-10-26
+# aucun prefixe ne le reconnaissait.** Le chemin naturel -- taper `/gk`, lire le
+# message d'erreur, obeir -- ne menait donc nulle part. Trois jours et
+# 1 402 demandes plus tard, zero consultation : c'est l'explication la plus
+# economique.
+#
+# `gk ` nu est garde malgre son risque de faux positif : un message qui commence
+# par ces trois caracteres sans vouloir consulter coute une suggestion inutile,
+# la ou l'absence du prefixe coute l'outil entier.
+PREFIXES_CONSULTATION = ("/gk", "!gk", "gk:", "gk,", "gk")
 # Court : on est sur le chemin critique, et GK repond en ~20 ms.
 TIMEOUT_CONSULTATION = 2.0
 # Par defaut a l'arret, pour que rien ne s'active lors d'une mise a jour.

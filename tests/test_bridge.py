@@ -519,9 +519,22 @@ def test_les_prefixes_reconnus_et_la_casse(tmp_path, monkeypatch):
         ("  /GK les factures  ", "les factures"),
         ("!gk les factures", "les factures"),
         ("gk: les factures", "les factures"),
+        ("gk, les factures", "les factures"),
+        # Le chemin NATUREL : Hermes intercepte `/gk` et repond « resend
+        # without the leading slash ». Un collegue qui obeit envoie ceci, et
+        # jusqu'au 2026-10-26 aucun prefixe ne le reconnaissait -- trois jours
+        # et 1 402 demandes sans une seule consultation.
+        ("gk les factures", "les factures"),
+        ("GK les factures", "les factures"),
         ("/gk", ""),
+        ("gk", ""),
+        # Et ce qui ne doit PAS declencher : un mot qui commence par gk, ou le
+        # mot gk au milieu d'une phrase.
         ("/gkqqchose", None),
+        ("gkqqchose", None),
+        ("gklm test", None),
         ("parle moi de /gk", None),
+        ("parle moi de gk stp", None),
         ("les factures", None),
         (None, None),
     ):
