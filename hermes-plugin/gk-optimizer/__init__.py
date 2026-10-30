@@ -21,8 +21,11 @@ arreter la chaine de mesure, qui est ce qu'on veut garder le plus longtemps.
 Quatre garanties, et ce sont elles qu'il faut relire avant de toucher au fichier
 ----------------------------------------------------------------------------
 
-1. **Le message de l'utilisateur n'est jamais reecrit.** Le bloc est ajoute
-   apres lui. Le texte d'origine reste un prefixe de ce qui part au modele.
+1. **Le message de l'utilisateur n'est jamais reecrit**, et ce n'est meme pas
+   nous qui le garantissons : `pre_llm_call` rend une chaine que Hermes
+   **ajoute** au message (`turn_context.py:453`,
+   `plugin_user_context  # appended to user message`). Nous rendons donc le
+   bloc SEUL. Rendre le message plus le bloc le ferait apparaitre deux fois.
 2. **Jamais plus d'une seconde et demie d'attente.** L'appel part sur un fil et
    on l'abandonne au-dela : GK lent ou mort rend un tour inchange, jamais un
    tour bloque. Le plancher de `call_mcp` chez Hermes est d'une seconde.
@@ -31,19 +34,33 @@ Quatre garanties, et ce sont elles qu'il faut relire avant de toucher au fichier
    timeout a chaque message de la journee.
 4. **Rien ne remonte.** Chaque hook et le chargement sont enveloppes.
 
-Ce qu'il decouvre au lieu de le supposer
-----------------------------------------
+Ce qui est verifie, et ce qui reste a decouvrir
+-----------------------------------------------
 
-Trois inconnues de l'API de Hermes, cherchees parmi les possibilites plausibles
-et consignees au premier appel dans `/opt/data/gk-optimizer.jsonl` :
+Verifie dans la source de Hermes `v2026.9.21`, et consigne a l'etape 6 bis de
+`docs/architecture.md` :
 
-* par ou arrive le `PluginContext` — reconnu a son `call_mcp` ;
-* sous quel nom le message de l'utilisateur est passe a `pre_llm_call`, ou s'il
-  arrive dans une liste `messages` ;
-* ce que Hermes fait de la valeur de retour. Les deux voies plausibles sont
-  essayees : si le message est dans une liste, on le modifie sur place et on
-  renvoie None ; sinon on renvoie la chaine. Le releve dit laquelle a servi, et
-  c'est ce fichier qu'il faudra lire apres le premier message reel.
+* le modele de plugin est « declarer dans `plugin.yaml`, implementer des
+  fonctions de module `on_<hook>(**kwargs)` ». Ni `ctx` ni `register_hook` ;
+* `pre_llm_call` rend une chaine **ajoutee** au message, et les contributions de
+  **plusieurs plugins sont collectees** et non ecrasees. Cohabiter avec
+  `gm-routing` et avec le futur brief ne demande donc aucune coordination ;
+* `pre_llm_call` fournit `session_id` ;
+* un hook qui leve est attrape et journalise, pas fatal. Notre enveloppement
+  est donc une ceinture par-dessus des bretelles, et on le garde : c'est la
+  convention des plugins deja en place ici.
+
+Restent deux inconnues, cherchees parmi les possibilites plausibles et
+consignees au premier appel dans `/opt/data/gk-optimizer.jsonl` :
+
+* **par ou arrive l'objet d'API** qui porte `call_mcp` — derniere inconnue du
+  pont, partagee avec `gk-bridge`, reconnue a ce qu'elle sait faire ;
+* **sous quel nom le message de l'utilisateur est passe**. La charge utile de
+  `pre_llm_call` n'a ete relevee que pour `session_id` et `is_first_turn`. Si
+  le message n'y est pas du tout, l'optimiseur ne peut pas travailler — et la
+  phase 3 non plus, puisque `prepare` a besoin de la tache. Le releve ecrit
+  alors `message_introuvable` avec la liste des kwargs reels, et c'est la ligne
+  a lire apres le premier message.
 """
 
 from __future__ import annotations
@@ -60,8 +77,10 @@ ATTENTE_MAX = 1.5      # au-dela, on abandonne le fil et le tour continue
 ECHECS_AVANT_COUPURE = 3
 COUPURE = 60.0
 
-# Noms sous lesquels le message de l'utilisateur peut arriver. Le premier
-# present gagne, et le releve dit lequel.
+# Noms sous lesquels le message de l'utilisateur peut arriver. La charge utile
+# de `pre_llm_call` n'a ete relevee que pour `session_id` et `is_first_turn`,
+# donc celui-ci se cherche encore. Le premier present gagne, et le releve dit
+# lequel a servi.
 CLES_MESSAGE = (
     "message", "text", "prompt", "user_message", "user_input", "content", "input", "query", "task"
 )
@@ -124,16 +143,16 @@ def _releve_unique(hook: str, kwargs: dict) -> None:
 
 
 def _message(kwargs: dict):
-    """Trouve le message de l'utilisateur. Renvoie (texte, cle, porteur).
+    """Trouve le message de l'utilisateur. Renvoie (texte, cle).
 
-    `porteur` est le dictionnaire du message dans une liste, quand c'est de la
-    qu'il vient : c'est lui qu'on modifiera sur place, puisque dans ce cas la
-    valeur de retour du hook n'a aucune raison d'etre lue.
+    Lecture seule, et de part en part : rien n'est modifie sur place, puisque
+    Hermes ajoute lui-meme ce que le hook rend. Une liste `messages` n'est donc
+    qu'une facon possible de *trouver* le texte, jamais un endroit ou ecrire.
     """
     for cle in CLES_MESSAGE:
         valeur = kwargs.get(cle)
         if isinstance(valeur, str) and valeur.strip():
-            return valeur, cle, None
+            return valeur, cle
     for cle in CLES_LISTE:
         liste = kwargs.get(cle)
         if not isinstance(liste, list):
@@ -145,13 +164,13 @@ def _message(kwargs: dict):
                 continue
             contenu = element.get("content")
             if isinstance(contenu, str) and contenu.strip():
-                return contenu, f"{cle}[-1].content", element
+                return contenu, f"{cle}[-1].content"
             if isinstance(contenu, list):
                 for bloc in reversed(contenu):
                     if isinstance(bloc, dict) and isinstance(bloc.get("text"), str):
                         if bloc["text"].strip():
-                            return bloc["text"], f"{cle}[-1].content[].text", bloc
-    return None, None, None
+                            return bloc["text"], f"{cle}[-1].content[].text"
+    return None, None
 
 
 def _charge(resultat) -> dict:
@@ -299,16 +318,22 @@ def _section(charge: dict) -> None:
 
 
 def on_pre_llm_call(**kwargs):
-    """Ajoute le bloc de GK au message de l'utilisateur, ou ne fait rien.
+    """Rend le bloc de GK, que Hermes ajoutera au message. Ou rien.
 
-    Renvoie None des que quelque chose manque : pas de contexte, pas de message
-    reconnu, GK muet, bloc vide. Un tour inchange est le comportement par
-    defaut, pas le cas d'erreur.
+    **Le bloc SEUL**, et c'est le point a ne pas se tromper : Hermes ajoute
+    cette chaine au message de l'utilisateur
+    (`turn_context.py:453`, `plugin_user_context  # appended to user message`).
+    Rendre le message plus le bloc, comme le ferait un hook qui *remplace*, le
+    ferait apparaitre deux fois dans le prompt.
+
+    Renvoie None des que quelque chose manque : pas d'objet d'API, pas de
+    message reconnu, GK muet, bloc vide. Un tour inchange est le comportement
+    par defaut, pas le cas d'erreur.
     """
     try:
         _retenir_ctx(kwargs)
         _releve_unique("pre_llm_call", kwargs)
-        texte, cle, porteur = _message(kwargs)
+        texte, cle = _message(kwargs)
         if texte is None:
             _noter({"event": "message_introuvable", "cles_kwargs": sorted(kwargs)})
             return None
@@ -316,23 +341,8 @@ def on_pre_llm_call(**kwargs):
         bloc = _demander(str(kwargs.get("session_id") or ""), texte)
         if not bloc:
             return None
-
-        # AJOUT, jamais substitution : le texte d'origine reste un prefixe.
-        nouveau = texte + "\n\n" + bloc
-
-        if porteur is not None:
-            # Le message vient d'une liste : on le modifie sur place, parce que
-            # dans ce cas la valeur de retour du hook n'a aucune raison d'etre
-            # lue, et on renvoie None pour ne pas risquer un double ajout.
-            if isinstance(porteur.get("content"), str):
-                porteur["content"] = nouveau
-            elif isinstance(porteur.get("text"), str):
-                porteur["text"] = nouveau
-            _noter({"event": "ajoute", "voie": "mutation", "cle": cle, "octets": len(bloc)})
-            return None
-
-        _noter({"event": "ajoute", "voie": "retour", "cle": cle, "octets": len(bloc)})
-        return nouveau
+        _noter({"event": "bloc_rendu", "cle": cle, "octets": len(bloc)})
+        return bloc
     except Exception as exc:
         _noter({"event": "erreur_hook", "hook": "pre_llm_call", "erreur": repr(exc)})
         return None

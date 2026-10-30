@@ -5,7 +5,9 @@ il tourne dans l'agent de production **et sur le chemin d'entree du tour**. Ce
 qui est verifie ici est donc exactement ce qui ne doit jamais arriver :
 
 * une exception qui remonte ;
-* le message de l'utilisateur reecrit au lieu d'etre complete ;
+* **le message rendu en plus du bloc**, qui le ferait apparaitre deux fois
+  dans le prompt, puisque Hermes AJOUTE ce que le hook rend
+  (`turn_context.py:453`) ;
 * une attente non bornee quand GK est lent ou mort ;
 * un appel par message quand GK est tombe.
 
@@ -76,12 +78,14 @@ def journal(mod) -> list[dict]:
 # -- la garantie principale ------------------------------------------------
 
 
-def test_ajoute_sans_jamais_reecrire(tmp_path, monkeypatch):
+def test_rend_le_bloc_seul(tmp_path, monkeypatch):
+    """LE test de ce fichier. Hermes ajoute au message ce que le hook rend, donc
+    rendre le message avec le bloc le dupliquerait dans le prompt."""
     mod = charger(tmp_path, monkeypatch)
     message = "deploie le site stp"
     retour = mod.on_pre_llm_call(ctx=FauxCtx(), session_id="s1", message=message)
-    assert retour.startswith(message), "le message de l'utilisateur doit rester un prefixe"
-    assert retour.endswith(BLOC)
+    assert retour == BLOC
+    assert message not in retour, "le message ne doit pas repartir avec le bloc"
 
 
 def test_le_message_part_bien_au_serveur(tmp_path, monkeypatch):
@@ -99,29 +103,32 @@ def test_le_message_part_bien_au_serveur(tmp_path, monkeypatch):
 )
 def test_trouve_le_message_sous_tous_les_noms_plausibles(tmp_path, monkeypatch, cle):
     mod = charger(tmp_path, monkeypatch)
-    retour = mod.on_pre_llm_call(ctx=FauxCtx(), **{cle: "une demande"})
-    assert retour == "une demande\n\n" + BLOC
+    assert mod.on_pre_llm_call(ctx=FauxCtx(), **{cle: "une demande"}) == BLOC
 
 
-def test_un_message_dans_une_liste_est_modifie_sur_place(tmp_path, monkeypatch):
+def test_lit_le_dernier_message_utilisateur_d_une_liste_sans_rien_modifier(tmp_path, monkeypatch):
+    """Une liste `messages` est une facon de TROUVER le texte, jamais un endroit
+    ou ecrire : c'est Hermes qui ajoute, pas nous."""
     mod = charger(tmp_path, monkeypatch)
+    ctx = FauxCtx()
     messages = [
         {"role": "user", "content": "premier"},
         {"role": "assistant", "content": "reponse"},
         {"role": "user", "content": "deploie le site"},
     ]
-    retour = mod.on_pre_llm_call(ctx=FauxCtx(), messages=messages)
-    assert retour is None, "une mutation ne doit pas aussi renvoyer, sinon double ajout"
-    assert messages[2]["content"] == "deploie le site\n\n" + BLOC
-    assert messages[0]["content"] == "premier", "seul le dernier message utilisateur est touche"
-    assert [e["voie"] for e in journal(mod) if e["event"] == "ajoute"] == ["mutation"]
+    avant = [dict(m) for m in messages]
+    assert mod.on_pre_llm_call(ctx=ctx, messages=messages) == BLOC
+    assert messages == avant, "aucune mutation : le hook est en lecture seule"
+    assert ctx.appels[0][2]["text"] == "deploie le site", "c'est le dernier message qui compte"
 
 
-def test_un_contenu_en_blocs_est_modifie_sur_place(tmp_path, monkeypatch):
+def test_lit_un_contenu_en_blocs_sans_rien_modifier(tmp_path, monkeypatch):
     mod = charger(tmp_path, monkeypatch)
+    ctx = FauxCtx()
     messages = [{"role": "user", "content": [{"type": "text", "text": "deploie"}]}]
-    assert mod.on_pre_llm_call(ctx=FauxCtx(), messages=messages) is None
-    assert messages[0]["content"][0]["text"] == "deploie\n\n" + BLOC
+    assert mod.on_pre_llm_call(ctx=ctx, messages=messages) == BLOC
+    assert messages[0]["content"][0]["text"] == "deploie"
+    assert ctx.appels[0][2]["text"] == "deploie"
 
 
 # -- fail open : tout ce qui doit rendre un tour inchange ------------------
@@ -184,15 +191,16 @@ def test_meme_une_baseexception_du_serveur_ne_salit_rien(tmp_path, monkeypatch):
 
 
 def test_une_charge_json_directe_marche_aussi(tmp_path, monkeypatch):
-    """La forme de retour de call_mcp n'est pas confirmee : un dictionnaire nu
-    doit marcher autant que l'enveloppe MCP."""
+    """`call_mcp` rend un dictionnaire produit par `_mcp_envelope`, dont les
+    cles exactes restent une question ouverte : un dictionnaire nu doit marcher
+    autant que l'enveloppe a deux niveaux."""
     mod = charger(tmp_path, monkeypatch)
 
     class Direct:
         def call_mcp(self, *a, **k):
             return {"v": 1, "block": BLOC}
 
-    assert mod.on_pre_llm_call(ctx=Direct(), message="une demande").endswith(BLOC)
+    assert mod.on_pre_llm_call(ctx=Direct(), message="une demande") == BLOC
 
 
 # -- latence et coupe-circuit ----------------------------------------------
@@ -246,14 +254,14 @@ def test_un_point_d_accroche_absent_n_est_pas_une_panne(tmp_path, monkeypatch):
         def call_mcp(self, *a, **k):
             return {"block": BLOC}
 
-    assert mod.on_pre_llm_call(ctx=SansAccroche(), message="une demande").endswith(BLOC)
+    assert mod.on_pre_llm_call(ctx=SansAccroche(), message="une demande") == BLOC
     assert any(e["event"] == "section_impossible" for e in journal(mod))
 
 
 def test_une_section_qui_explose_n_empeche_pas_le_bloc(tmp_path, monkeypatch):
     mod = charger(tmp_path, monkeypatch)
     ctx = FauxCtx(section=False)
-    assert mod.on_pre_llm_call(ctx=ctx, message="une demande").endswith(BLOC)
+    assert mod.on_pre_llm_call(ctx=ctx, message="une demande") == BLOC
     assert any(e["event"] == "section_echouee" for e in journal(mod))
 
 

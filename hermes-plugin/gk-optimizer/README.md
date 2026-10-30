@@ -15,8 +15,12 @@ It does two things for a message written in French, in a hurry, with typos:
 ## It never rewrites the user's message
 
 This is the one difference from the Hermes `prompt-optimizer` plugin that
-inspired it, and it is deliberate. The block is **appended**; the original text
-stays a prefix of what reaches the model.
+inspired it, and the mechanism guarantees it rather than the code: `pre_llm_call`
+returns a string that **Hermes appends** to the user message
+(`turn_context.py:453`, `plugin_user_context  # appended to user message`).
+The plugin therefore returns **the block alone** and has no way to overwrite
+anything. Returning the message together with the block would make it appear
+twice in the prompt.
 
 Three reasons, in order of weight:
 
@@ -37,7 +41,10 @@ you want to keep running longest.
 
 ## What it guarantees
 
-- **The user's message is never rewritten.** Append only.
+- **The user's message is never rewritten.** The hook returns the block alone
+  and Hermes appends it, so overwriting is not something the plugin could do.
+  Several plugins' contributions are collected rather than overwritten, so this
+  coexists with `gm-routing` and with the future brief without coordination.
 - **Never more than 1.5 seconds of waiting.** The call runs on a thread that is
   abandoned past that: a slow or dead GreenKnowledge yields an unchanged turn,
   never a blocked one. Hermes' floor for `call_mcp` is one second.
@@ -48,18 +55,33 @@ you want to keep running longest.
 - **Returning `None` is always safe** and is the default on anything unexpected:
   no context, no recognised message, no block, an unparseable reply.
 
-## What it discovers rather than assumes
+## What is verified, and what is not
 
-Three unknowns of the Hermes plugin API, searched among plausible candidates
-and recorded on the first call to `/opt/data/gk-optimizer.jsonl`:
+Verified against Hermes `v2026.9.21`'s source in an earlier session, and
+recorded in `docs/architecture.md`:
 
-- **Where the `PluginContext` arrives** — recognised by having `call_mcp`.
-- **Under which key the user message is passed** to `pre_llm_call`, or whether
-  it arrives inside a `messages` list.
-- **What Hermes does with the return value.** Both plausible routes are taken:
-  if the message came from a list it is modified in place and the hook returns
-  `None`; otherwise the new string is returned. The log says which one ran, and
-  that is the file to read after the first real message.
+- The plugin model is **declare hooks in `plugin.yaml`, implement module
+  functions `on_<hook>(**kwargs)`**. There is no `ctx` argument and no
+  `register_hook`.
+- `pre_llm_call` **returns a string appended to the user message**, and several
+  plugins' contributions are **collected**, not overwritten.
+- `pre_llm_call` provides `session_id`.
+- A hook that raises is **caught and logged, not fatal**. The wrapping here is
+  therefore a belt over braces, kept because it is the convention of the
+  plugins already installed.
+- `call_mcp(server, tool, arguments, timeout)` returns a dict, denies by
+  default with `PermissionError`, and bounds `timeout` to 1–600 seconds.
+
+Two unknowns remain, searched among plausible candidates and recorded on the
+first call to `/opt/data/gk-optimizer.jsonl`:
+
+- **Where the API object carrying `call_mcp` arrives.** The last unknown of the
+  bridge, shared with `gk-bridge`; it is recognised by what it can do.
+- **Under which key the user message is passed.** `pre_llm_call`'s payload was
+  only read for `session_id` and `is_first_turn`. If the message is not in it at
+  all, the optimizer cannot work — and neither can Phase 3, since `prepare`
+  needs the task. The log then writes `message_introuvable` with the real kwarg
+  names, and that is the line to read after the first message.
 
 ## Install
 

@@ -89,10 +89,11 @@ Four design points carry the weight:
 - **The user's message is never rewritten.** A typo may be a proper noun, and
   the reading has to stay auditable. The original is still a prefix of what
   reaches the model.
-- **The stop is instructed, not enforced.** No known hook lets a plugin cancel
-  a turn, and the rule is to fail open. So the block carries its instruction in
-  plain text, which also means it works when no system prompt section could be
-  registered. Whether the agent obeys is measured, not assumed.
+- **The stop is instructed, not enforced.** `pre_llm_call` contributes context,
+  it does not gate the turn, and the rule is to fail open anyway. So the block
+  carries its instruction in plain text, which also means it works when no
+  system prompt section could be registered. Whether the agent obeys is
+  measured, not assumed.
 - **No LLM here either.** Rules are fast, offline, and tunable without a
   redeployment. The cost is accepted: only explicit contradictions are caught.
 - **Precision over recall.** A suppressor is searched from the start of the
@@ -149,7 +150,7 @@ The agent sees three tools, so GreenKnowledge does not recreate the problem it i
 - **Nothing is copied.** The index stores paths, fingerprints and an FTS index with no stored content. A skill's body is needed only to index it, then discarded.
 - **Fail open.** If the server is down or exceeds its timeout, the message reaches the agent unchanged. GreenKnowledge never blocks the agent. It degrades rather than erroring: a brief it cannot build comes back empty, not as a 500.
 - **Skip trivial messages.** Short acknowledgements bypass the pipeline. The rules live in the server, in one hot-reloadable place.
-- **Append, never rewrite.** Neither the brief nor the optimizer touches the user's message; both add a block after it. They are therefore composable in any order, which matters because the order belongs to Hermes.
+- **Append, never rewrite.** `pre_llm_call` returns a string that Hermes appends to the user message, and several plugins' contributions are collected rather than overwritten. So neither the brief nor the optimizer *can* touch what the user wrote, and the two compose in any order — which matters, because the order belongs to Hermes.
 - **Rules are frozen during a measurement.** The fingerprints of `motifs.yaml` and `optimiseur.yaml` are stored with every correction and every stop, and `gk stats` refuses to compare two periods measured with different ones. Otherwise adding a rule mid-measurement would move the number with nothing having changed in the agent.
 - **A short brief.** A few lines of plain text, to keep the agent's context free for the actual task.
 - **Facts are proposed, then confirmed.** The server extracts candidate facts nightly and presents them weekly; an unconfirmed fact never reaches a brief. So the mechanism is safe when nobody reviews the queue — and it is what stops conversation content from reaching the agent's prompt as a fact.

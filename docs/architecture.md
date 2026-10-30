@@ -1320,8 +1320,17 @@ point de contact avec l'API de Hermes.
 
 1. **Le message de l'utilisateur n'est jamais réécrit.** C'est la différence de
    fond avec un optimiseur classique, qui remplace le prompt. Ici le bloc est
-   **ajouté à côté**, comme le brief. La règle venait déjà du README et de
-   l'étape 5 ; elle n'a pas été rouverte, et trois raisons la tiennent :
+   **ajouté à côté**, comme le brief.
+
+   Ce n'est d'ailleurs pas une politesse de notre part mais le mécanisme
+   lui-même : l'étape 6 bis a relevé dans la source que `pre_llm_call` rend une
+   chaîne que Hermes **ajoute** au message (`turn_context.py:453`). Le hook rend
+   donc **le bloc seul**, et n'a aucun moyen d'écraser quoi que ce soit. Rendre
+   le message avec le bloc le ferait apparaître deux fois dans le prompt — c'est
+   l'erreur qu'un optimiseur qui *remplace* inviterait à faire.
+
+   La règle venait déjà du README et de l'étape 5 ; elle n'a pas été rouverte,
+   et trois raisons la tiennent :
 
    - **une faute de frappe peut être un nom propre.** `ovh`, `nginx`, un nom de
      fichier, une commande. Corriger à l'aveugle dans le message détruirait la
@@ -1451,10 +1460,12 @@ les couvrent, puisqu'elles portent du texte d'utilisateur.
 ### Ce que cette étape ne tranche pas
 
 **L'ordre de composition avec le brief de la phase 3.** Les deux écriront dans
-le même message, et l'ordre appartient à Hermes. Ils sont donc tous les deux
-**purement additifs** : chacun ajoute son bloc après le message, aucun ne lit
-celui de l'autre, donc l'ordre n'a pas d'importance. C'est une contrainte à
-tenir quand `prepare` arrivera, pas une décision à prendre maintenant.
+le même message, et l'ordre appartient à Hermes. L'étape 6 bis l'a déjà réglé
+sans qu'on le sache : `_collect_pre_llm_call_context` **collecte** les
+contributions de plusieurs plugins au lieu de les écraser. Chacun ajoute son
+bloc, aucun ne lit celui de l'autre, et l'ordre n'a donc pas d'importance.
+Reste une contrainte à tenir quand `prepare` arrivera : les deux blocs
+partagent le contexte de l'agent, donc ils doivent rester courts tous les deux.
 
 **La valeur réelle des règles.** Onze contradictions et quatre ambiguïtés sont
 livrées ; aucune n'a été éprouvée sur de vraies conversations. C'est exactement
