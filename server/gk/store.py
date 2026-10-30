@@ -18,7 +18,7 @@ import time
 from pathlib import Path
 from typing import Any, Iterable
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 # Chaque migration est une liste d'instructions, appliquee une fois, dans
 # l'ordre. On n'edite JAMAIS une migration deja publiee : on en ajoute une.
@@ -108,6 +108,50 @@ MIGRATIONS: dict[int, tuple[str, ...]] = {
             value   REAL NOT NULL DEFAULT 0
         )
         """,
+    ),
+    # Migration 2 : l'optimiseur de prompt. Additive, comme l'exige l'etape 7 —
+    # revenir au tag d'image precedent doit rester possible, et un GK d'avant
+    # l'optimiseur ignore simplement ces deux tables.
+    2: (
+        # Les consignes durables d'une conversation. C'est la memoire qui permet
+        # de detecter une demande qui contredit le CONTEXTE et non seulement
+        # elle-meme. Volontairement maigre : la regle, le cote, un extrait
+        # borne. Pas de texte libre de l'utilisateur au-dela.
+        """
+        CREATE TABLE optimizer_constraints (
+            id          INTEGER PRIMARY KEY,
+            ts          REAL NOT NULL,
+            session_id  TEXT NOT NULL,
+            rule        TEXT NOT NULL,
+            side        TEXT NOT NULL,
+            extract     TEXT,
+            rules_digest TEXT NOT NULL,
+            expires_at  REAL NOT NULL
+        )
+        """,
+        "CREATE INDEX idx_contraintes_session ON optimizer_constraints(session_id, ts)",
+        "CREATE INDEX idx_contraintes_expiry ON optimizer_constraints(expires_at)",
+        # Les arrets poses. Deux usages, et c'est pour le second que la table
+        # existe : mesurer, et NE PAS REPOSER deux fois la meme question. Sans
+        # la signature, un utilisateur qui reformule sa demande contradictoire
+        # se verrait arrete a chaque tour.
+        """
+        CREATE TABLE optimizer_stops (
+            id          INTEGER PRIMARY KEY,
+            ts          REAL NOT NULL,
+            session_id  TEXT NOT NULL,
+            kind        TEXT NOT NULL,
+            rule        TEXT NOT NULL DEFAULT '',
+            signature   TEXT NOT NULL,
+            question    TEXT,
+            extract     TEXT,
+            emitted     INTEGER NOT NULL DEFAULT 1,
+            rules_digest TEXT NOT NULL,
+            expires_at  REAL NOT NULL
+        )
+        """,
+        "CREATE INDEX idx_arrets_signature ON optimizer_stops(session_id, signature, ts)",
+        "CREATE INDEX idx_arrets_ts ON optimizer_stops(ts)",
     ),
 }
 

@@ -17,6 +17,14 @@ from pathlib import Path
 DEFAULTS: dict[str, str] = {
     "database": "/var/lib/gk/gk.db",
     "patterns": "/etc/gk/motifs.yaml",
+    "optimizer_rules": "/etc/gk/optimiseur.yaml",
+    "lexicon": "/etc/gk/lexique.yaml",
+    # Part des conversations ou le bloc de l'optimiseur est reellement injecte,
+    # de 0 a 100. ZERO PAR DEFAUT, et ce n'est pas de la timidite : c'est le
+    # seul reglage de ce projet qui ecrit dans le contexte de l'agent, donc
+    # l'installer ne doit rien changer avant une decision explicite. Tout est
+    # mesure pendant ce temps-la, et 50 donne un A/B par conversation.
+    "optimizer_share": "0",
     "skills_root": "/opt/data/skills",
     "host": "127.0.0.1",
     "port": "8765",
@@ -50,6 +58,23 @@ class Config:
     def patterns(self) -> Path | None:
         p = self["patterns"]
         return Path(p) if p else None
+
+    @property
+    def optimizer_rules(self) -> Path | None:
+        p = self["optimizer_rules"]
+        return Path(p) if p else None
+
+    @property
+    def lexicon(self) -> Path | None:
+        p = self["lexicon"]
+        return Path(p) if p else None
+
+    @property
+    def optimizer_share(self) -> int:
+        try:
+            return max(0, min(100, int(self["optimizer_share"])))
+        except ValueError:
+            return 0
 
     @property
     def port(self) -> int:

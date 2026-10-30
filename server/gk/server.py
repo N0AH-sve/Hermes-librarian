@@ -11,10 +11,15 @@ Deux releves d'environnement ont corrige la conception ici :
 * l'agent tourne en `network_mode: host`, donc aucun nom de service bridge n'est
   resoluble. On publie sur la boucle locale et le plugin vise `127.0.0.1`.
 
-Un seul point d'entree en phase 1, `/mcp/bridge`, avec `observe` seul. Le
-second (`/mcp/agent`, qui exposera `recall`, `remember` et `report` a l'agent)
-viendra avec les phases suivantes : un `MCPServer` sert un chemin, donc deux
-points d'entree seront deux instances montees dans la meme application.
+Un seul point d'entree pour l'instant, `/mcp/bridge`, appele par le pont seul.
+Le second (`/mcp/agent`, qui exposera `recall`, `remember` et `report` a
+l'agent) viendra avec les phases suivantes : un `MCPServer` sert un chemin,
+donc deux points d'entree seront deux instances montees dans la meme
+application.
+
+`optimize` est declare ici et **jamais** sur le point d'entree de l'agent :
+l'agent n'a aucune raison d'optimiser un prompt, et l'etape 5 tient a ce qu'il
+ne voie que les trois outils qui le concernent.
 """
 
 from __future__ import annotations
@@ -49,6 +54,24 @@ def build(service: Service, config: Config):
             # ligne de mesure ; une exception remontee coute un tour a l'agent.
             logger.warning("observe a echoue: %r", exc)
             return {"v": 1, "correction": False, "degrade": True, "besoins": []}
+
+    @server.tool(
+        name="optimize",
+        description=(
+            "Lit une demande en francais et rend le bloc a accoler au message. Le bloc est "
+            "AJOUTE, jamais substitue : le message de l'utilisateur n'est pas reecrit. Il peut "
+            "porter un arret, quand la demande se contredit ou contredit le contexte."
+        ),
+    )
+    def optimize(session_id: str = "", text: str = "") -> dict:
+        try:
+            return service.optimize(session_id, text)
+        except Exception as exc:
+            # Fail open, et c'est ici que ca compte le plus : cet outil est sur
+            # le chemin d'ENTREE d'un tour. Un bloc perdu coute une ligne de
+            # mesure, une exception remontee coute le tour.
+            logger.warning("optimize a echoue: %r", exc)
+            return {"v": 1, "block": "", "degrade": True, "besoins": []}
 
     @server.tool(
         name="report",
@@ -144,7 +167,14 @@ def run(config: Config | None = None) -> None:
         level=getattr(logging, cfg["log_level"].upper(), logging.INFO),
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
-    service = Service.open(cfg.database, cfg.patterns, require_token=bool(cfg["bridge_token"]))
+    service = Service.open(
+        cfg.database,
+        cfg.patterns,
+        require_token=bool(cfg["bridge_token"]),
+        rules_path=cfg.optimizer_rules,
+        lexicon_path=cfg.lexicon,
+        share=cfg.optimizer_share,
+    )
     server = build(service, cfg)
     app = server.streamable_http_app(streamable_http_path=cfg["bridge_path"])
 
@@ -165,6 +195,16 @@ def run(config: Config | None = None) -> None:
         cfg["host"], cfg.port, cfg["bridge_path"],
         len(service.detector.raw_patterns), service.detector.digest,
         "exige" if jeton else "ABSENT",
+    )
+    logger.info(
+        "optimiseur : part injectee %d%% (%s), %d regles de contradiction (empreinte %s), "
+        "lexique %s (empreinte %s)",
+        service.share,
+        "ACTIF" if service.share else "inactif, rien n'est injecte",
+        len(service.coherence._paires) if service.coherence else 0,
+        service.coherence.digest if service.coherence else "-",
+        service.optimiseur.lexique.source if service.optimiseur else "-",
+        service.optimiseur.lexique.digest if service.optimiseur else "-",
     )
     try:
         import uvicorn

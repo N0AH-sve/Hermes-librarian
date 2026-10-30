@@ -1,0 +1,7 @@
+name: gk-optimizer
+version: 0.1.0
+description: "Optimiseur de prompt pour GreenKnowledge. Lit la demande en francais, ajoute une lecture corrigee a cote du message, et arrete le tour quand la demande se contredit ou contredit le contexte. N'ECRIT JAMAIS par-dessus le message de l'utilisateur. Si GK ne repond pas sous une seconde, le message passe inchange. Toute exception est avalee."
+author: "GreenKnowledge"
+kind: standalone
+hooks:
+  - pre_llm_call

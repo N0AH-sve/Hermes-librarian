@@ -1,0 +1,355 @@
+# Lexique francais de l'optimiseur. Rechargeable a chaud.
+#
+# Son role n'est PAS de corriger l'orthographe de l'utilisateur pour la beaute
+# du geste : c'est de rendre une demande mal tapee comparable au vocabulaire
+# des skills, pour que la recherche de la phase 2 trouve « récapitulatif »
+# quand le message dit « recapitulatif ». Le message de l'utilisateur n'est
+# jamais reecrit : la lecture corrigee est ajoutee a cote.
+#
+# Quatre sections :
+#
+#   abreviations  raccourcis et SMS, remplaces par leur forme longue. C'est la
+#                 section qui rapporte le plus : « maj », « bdd », « pb » ne
+#                 ressemblent a rien dans un index plein texte.
+#   fautes        fautes frequentes a correction unique et sure.
+#   proteges      mots que l'optimiseur ne touche jamais, meme s'ils ressemblent
+#                 a une faute : noms propres, outils, jargon maison.
+#   mots          le vocabulaire de reference, accentue. Il sert a deux choses :
+#                 restaurer les accents manquants (la faute n'1 en francais
+#                 tape vite), et fournir les candidats a distance 1.
+#
+# Ce lexique est court a dessein, et c'est une limite assumee : le vocabulaire
+# qui compte vraiment est celui des 537 skills, et il arrivera avec l'index de
+# la phase 2 (`Lexique.ajouter_vocabulaire`). D'ici la, les sections
+# `abreviations` et `fautes` font l'essentiel du travail, parce qu'elles ne
+# dependent d'aucun corpus.
+#
+# Regles de prudence cablees dans le code, pas ici : aucun mot contenant un
+# chiffre, un underscore, une majuscule interne, ni rien entre backticks,
+# guillemets, dans une URL ou dans un chemin n'est jamais corrige. Une
+# correction ambigue (deux candidats a distance 1) est abandonnee plutot que
+# devinee.
+
+abreviations:
+  stp: s'il te plait
+  svp: s'il vous plait
+  pk: pourquoi
+  pq: pourquoi
+  qd: quand
+  qqch: quelque chose
+  qqn: quelqu'un
+  bcp: beaucoup
+  tjrs: toujours
+  tjs: toujours
+  jms: jamais
+  mtn: maintenant
+  auj: aujourd'hui
+  dsl: desole
+  jsp: je ne sais pas
+  cad: c'est-a-dire
+  rdv: rendez-vous
+  maj: mise a jour
+  bdd: base de donnees
+  pb: probleme
+  pbs: problemes
+  pblm: probleme
+  config: configuration
+  conf: configuration
+  env: environnement
+  doc: documentation
+  docs: documentation
+  fct: fonction
+  fonct: fonction
+  param: parametre
+  params: parametres
+  var: variable
+  vars: variables
+  req: requete
+  reqs: requetes
+  nb: nombre
+  bkp: sauvegarde
+  backup: sauvegarde
+  recap: recapitulatif
+  cr: compte rendu
+  perf: performance
+  perfs: performances
+  archi: architecture
+  modif: modification
+  modifs: modifications
+  verif: verification
+  verifs: verifications
+  install: installation
+  rep: repertoire
+  dossier: repertoire
+
+fautes:
+  parcontre: par contre
+  malgres: malgre
+  quelquechose: quelque chose
+  biensur: bien sur
+  entout: en tout
+  yaka: il n'y a qu'a
+  jaimerai: j'aimerais
+  jaimerais: j'aimerais
+  jai: j'ai
+  jsuis: je suis
+  cest: c'est
+  daccord: d'accord
+  jusqua: jusqu'a
+  aujourdhui: aujourd'hui
+  developement: developpement
+  developpment: developpement
+  devellopement: developpement
+  conexion: connexion
+  connection: connexion
+  language: langage
+  example: exemple
+  erreure: erreur
+  addresse: adresse
+  adress: adresse
+  recommendation: recommandation
+  dependence: dependance
+  perfomance: performance
+  performence: performance
+  envirronement: environnement
+  environement: environnement
+  parrametre: parametre
+  paramatre: parametre
+  ficher: fichier
+  fichers: fichiers
+  suprimer: supprimer
+  suprime: supprime
+  supprimmer: supprimer
+  deployement: deploiement
+  deploiment: deploiement
+  sauvgarde: sauvegarde
+  savegarde: sauvegarde
+  facure: facture
+  fature: facture
+  factur: facture
+  skil: skill
+  skils: skills
+  reponce: reponse
+  demmande: demande
+  demmander: demander
+  verfier: verifier
+  verifer: verifier
+  modfier: modifier
+  modifer: modifier
+  creeer: creer
+  ajoutter: ajouter
+  instaler: installer
+  instalation: installation
+  compte-rendu: compte rendu
+  resumer: resume
+  optimizeur: optimiseur
+
+proteges:
+  - ovh
+  - nginx
+  - apache
+  - docker
+  - compose
+  - sqlite
+  - postgres
+  - mysql
+  - redis
+  - python
+  - bash
+  - git
+  - github
+  - gitlab
+  - hermes
+  - greenknowledge
+  - gk
+  - gb
+  - mcp
+  - fts5
+  - bm25
+  - yaml
+  - json
+  - csv
+  - api
+  - http
+  - https
+  - url
+  - cli
+  - ssh
+  - dns
+  - vps
+  - cpu
+  - ram
+  - wal
+  - uvicorn
+  - pytest
+  - pip
+  - npm
+  - node
+  - deepseek
+  - discord
+  - slack
+  - skill
+  - skills
+  - prompt
+  - token
+  - webhook
+  - curl
+  - cron
+  - systemd
+  - linux
+  - debian
+  - ubuntu
+  - sudo
+  - root
+  - localhost
+  - staging
+  - preprod
+  - commit
+  - rebase
+  - merge
+  - push
+  - pull
+  - branch
+  - diff
+  - log
+  - logs
+
+mots:
+  - récapitulatif
+  - résumé
+  - référence
+  - référencé
+  - répertoire
+  - réponse
+  - requête
+  - requêtes
+  - résultat
+  - résultats
+  - rédiger
+  - réécrire
+  - régler
+  - réglage
+  - réparer
+  - démarrer
+  - déployer
+  - déploiement
+  - développement
+  - développeur
+  - dépendance
+  - dépendances
+  - dépôt
+  - détail
+  - détails
+  - données
+  - défaut
+  - début
+  - délai
+  - créer
+  - créé
+  - créée
+  - créés
+  - clé
+  - clés
+  - côté
+  - coût
+  - contrôle
+  - contrôler
+  - vérifier
+  - vérification
+  - vérifié
+  - vérité
+  - mémoire
+  - méthode
+  - mètre
+  - modèle
+  - modèles
+  - problème
+  - problèmes
+  - système
+  - systèmes
+  - paramètre
+  - paramètres
+  - périmètre
+  - période
+  - précédent
+  - précis
+  - préparer
+  - présent
+  - priorité
+  - procédure
+  - état
+  - étape
+  - étapes
+  - être
+  - événement
+  - événements
+  - éviter
+  - écrire
+  - écrit
+  - échec
+  - échouer
+  - éditer
+  - élément
+  - éléments
+  - exécuter
+  - exécution
+  - extérieur
+  - facture
+  - factures
+  - facturé
+  - fichier
+  - fichiers
+  - français
+  - fenêtre
+  - générer
+  - général
+  - géré
+  - gérer
+  - intégrer
+  - intégrité
+  - intérêt
+  - journalisé
+  - libellé
+  - mise
+  - numéro
+  - opéré
+  - opérateur
+  - ordonné
+  - où
+  - pièce
+  - plutôt
+  - pôle
+  - qualité
+  - quantité
+  - réseau
+  - sécurité
+  - séparé
+  - série
+  - sélection
+  - sélectionner
+  - stocké
+  - stratégie
+  - succès
+  - supprimé
+  - sûr
+  - tâche
+  - tâches
+  - téléchargement
+  - télécharger
+  - vérifiable
+  - versionné
+  - très
+  - à
+  - ça
+  - déjà
+  - dès
+  - après
+  - avant
+  - bientôt
+  - cependant
+  - première
+  - dernière
+  - entière
+  - manière
+  - matière
+  - sévère
