@@ -1,14 +1,19 @@
 """La commande `gk`. Elle tourne dans le conteneur, aucun port n'etant publie
 au-dela de la boucle locale.
 
-Quatre commandes en phase 1 :
+Les commandes :
 
-* `stats`  — l'indicateur, coupe en deux comme l'etape 2 l'exige, et qui
-             **refuse de comparer** deux periodes mesurees avec des motifs
-             differents ;
-* `check`  — l'etat, pour le rituel de mise a jour en trois temps ;
-* `forget` — effacer le texte sans perdre la mesure ;
-* `export` — les quatre tables irremplacables, et elles seules.
+* `stats`    — l'indicateur, coupe en deux comme l'etape 2 l'exige, et qui
+               **refuse de comparer** deux periodes mesurees avec des motifs
+               differents ;
+* `check`    — l'etat, pour le rituel de mise a jour en trois temps ;
+* `forget`   — effacer le texte sans perdre la mesure ;
+* `export`   — les quatre tables irremplacables, et elles seules ;
+* `patterns` — les motifs charges et leur empreinte ;
+* `optimize` — passer une demande dans l'optimiseur SANS rien injecter, pour
+               regler les regles et le lexique sans faire un aller-retour par
+               l'agent. C'est la commande qu'on utilise pour decider si une
+               regle merite d'exister.
 """
 
 from __future__ import annotations
@@ -26,6 +31,7 @@ from .corrections import (
     retire_testcases,
     tidy,
 )
+from .optimizer import Lexique, Optimiseur, appliquer_retention, rendre
 from .patterns import Detector
 from .service import Service
 from .store import Store, now
@@ -65,6 +71,41 @@ def cmd_stats(args, cfg: Config) -> int:
             out["corrections_pour_100_messages"] = round(
                 sum(g["n"] for g in groups) * 100 / observes, 2
             )
+        arrets = store.query(
+            "SELECT rules_digest, kind, COUNT(*) n, SUM(emitted) emis, "
+            "MIN(ts) debut, MAX(ts) fin FROM optimizer_stops "
+            "GROUP BY rules_digest, kind ORDER BY debut",
+        )
+        if arrets:
+            empreintes = {a["rules_digest"] for a in arrets}
+            out["optimiseur"] = {
+                "lectures": int(store.counter("optimize_calls")),
+                "triviales": int(store.counter("optimize_triviaux")),
+                "lectures_corrigees": int(store.counter("optimize_lectures_corrigees")),
+                "arrets_emis": int(store.counter("optimize_arrets")),
+                "arrets_etouffes": int(store.counter("optimize_arrets_etouffes")),
+                "etouffes_question_deja_posee": int(store.counter("optimize_etouffes_deja_pose")),
+                "etouffes_plafond_atteint": int(store.counter("optimize_etouffes_plafond")),
+                "ambiguites": int(store.counter("optimize_ambiguites")),
+                "par_genre": {
+                    a["kind"]: {"total": a["n"], "emis": int(a["emis"] or 0)} for a in arrets
+                },
+                # Meme refus que pour les motifs, et pour la meme raison :
+                # ajouter une regle de contradiction au milieu d'une mesure
+                # ferait monter le nombre d'arrets sans que rien n'ait change
+                # dans les demandes.
+                "comparaison": (
+                    f"REFUSEE — {len(empreintes)} jeux de regles differents"
+                    if len(empreintes) > 1
+                    else "possible, un seul jeu de regles"
+                ),
+            }
+        elif store.counter("optimize_calls"):
+            out["optimiseur"] = {
+                "lectures": int(store.counter("optimize_calls")),
+                "arrets_emis": 0,
+                "note": "aucune contradiction detectee a ce jour",
+            }
         if len(groups) > 1:
             # Le refus est le point de la commande, pas une precaution : un
             # motif ajoute au milieu d'une mesure fait monter le chiffre sans
@@ -85,7 +126,14 @@ def cmd_check(args, cfg: Config) -> int:
     problemes: list[str] = []
     detail: dict[str, object] = {}
     try:
-        svc = Service.open(cfg.database, cfg.patterns, require_token=bool(cfg["bridge_token"]))
+        svc = Service.open(
+            cfg.database,
+            cfg.patterns,
+            require_token=bool(cfg["bridge_token"]),
+            rules_path=cfg.optimizer_rules,
+            lexicon_path=cfg.lexicon,
+            share=cfg.optimizer_share,
+        )
     except Exception as exc:
         _emit({"ok": False, "problemes": [f"base inutilisable: {exc!r}"]}, args)
         return 1
@@ -104,6 +152,30 @@ def cmd_check(args, cfg: Config) -> int:
             )
         if cfg.patterns and not Path(cfg.patterns).is_file():
             problemes.append(f"motifs absents ({cfg.patterns}), les valeurs par defaut sont utilisees")
+        if cfg.optimizer_rules and not Path(cfg.optimizer_rules).is_file():
+            problemes.append(
+                f"regles de l'optimiseur absentes ({cfg.optimizer_rules}) : seules deux "
+                "contradictions par defaut sont detectees"
+            )
+        if cfg.lexicon and not Path(cfg.lexicon).is_file():
+            problemes.append(
+                f"lexique absent ({cfg.lexicon}) : aucune correction du francais, la detection "
+                "des contradictions continue"
+            )
+        if cfg.optimizer_share and svc.optimiseur is not None:
+            # Un optimiseur actif dont le canari est muet est plus inquietant
+            # qu'un optimiseur inactif : il est sur le chemin d'entree.
+            depuis_lecture = sante.get("optimiseur", {}).get("derniere_lecture_il_y_a_s")
+            if depuis_lecture is None:
+                problemes.append(
+                    "l'optimiseur est actif mais n'a jamais rien lu : le plugin gk-optimizer "
+                    "est-il installe, et `mcp_allowlist` lui donne-t-il acces ?"
+                )
+            elif depuis_lecture > 86400:
+                problemes.append(
+                    f"aucune lecture depuis {round(depuis_lecture / 3600)} h alors que "
+                    "l'optimiseur est actif — canari : le hook pre_llm_call a-t-il ete renomme ?"
+                )
         if not cfg["bridge_token"]:
             problemes.append(
                 "aucun jeton : tout appel sur /mcp/bridge est accepte, la seule protection "
@@ -135,6 +207,11 @@ def cmd_forget(args, cfg: Config) -> int:
                 "WHERE extract IS NOT NULL"
             )
             done["preuves_effacees"] = cur.rowcount or 0
+            cur = store.execute(
+                "UPDATE optimizer_stops SET extract = NULL, question = NULL "
+                "WHERE extract IS NOT NULL OR question IS NOT NULL"
+            )
+            done["arrets_anonymises"] = cur.rowcount or 0
         if args.before:
             cutoff = _parse_date(args.before)
             cur = store.execute(
@@ -146,6 +223,13 @@ def cmd_forget(args, cfg: Config) -> int:
             done["corrections_anonymisees"] = cur.rowcount or 0
             cur = store.execute("DELETE FROM briefs WHERE ts < ?", (cutoff,))
             done["briefs_supprimes"] = cur.rowcount or 0
+            cur = store.execute("DELETE FROM optimizer_constraints WHERE ts < ?", (cutoff,))
+            done["consignes_supprimees"] = cur.rowcount or 0
+            cur = store.execute(
+                "UPDATE optimizer_stops SET extract = NULL, question = NULL WHERE ts < ?",
+                (cutoff,),
+            )
+            done["arrets_anonymises"] = cur.rowcount or 0
         if args.conv:
             cur = store.execute(
                 "UPDATE corrections SET extract = NULL, extract_expires_at = NULL, "
@@ -157,6 +241,15 @@ def cmd_forget(args, cfg: Config) -> int:
             )
             cur = store.execute("DELETE FROM briefs WHERE session_id = ?", (args.conv,))
             done["briefs_supprimes"] = done.get("briefs_supprimes", 0) + (cur.rowcount or 0)
+            cur = store.execute(
+                "DELETE FROM optimizer_constraints WHERE session_id = ?", (args.conv,)
+            )
+            done["consignes_supprimees"] = done.get("consignes_supprimees", 0) + (cur.rowcount or 0)
+            cur = store.execute(
+                "UPDATE optimizer_stops SET extract = NULL, question = NULL WHERE session_id = ?",
+                (args.conv,),
+            )
+            done["arrets_anonymises"] = done.get("arrets_anonymises", 0) + (cur.rowcount or 0)
         if not done:
             _emit({"ok": False, "erreur": "precisez --extracts, --before ou --conv"}, args)
             return 2
@@ -187,6 +280,7 @@ def cmd_export(args, cfg: Config) -> int:
 def cmd_tidy(args, cfg: Config) -> int:
     with Store(cfg.database) as store:
         result = tidy(store)
+        result.update(appliquer_retention(store))
         root = Path(cfg["skills_root"])
         if root.is_dir():
             live = {p.parent.name for p in root.rglob("SKILL.md")}
@@ -214,6 +308,69 @@ def cmd_patterns(args, cfg: Config) -> int:
             "motifs": len(d.raw_patterns),
             "empreinte": d.digest,
             "liste": d.raw_patterns if args.verbose else None,
+        },
+        args,
+    )
+    return 0
+
+
+def cmd_optimize(args, cfg: Config) -> int:
+    """Passe une demande dans l'optimiseur sans rien injecter ni rien ecrire.
+
+    Elle existe parce qu'une regle de contradiction ne se juge pas dans
+    l'abstrait : on lui donne la phrase qui a pose probleme, et on regarde si
+    elle mord. C'est aussi le seul moyen d'exercer l'optimiseur avec
+    `optimizer_share` a zero, donc sur l'installation par defaut.
+    """
+    from .coherence import Consigne, charger_coherence
+    from .regles import charger
+
+    sections, source_regles = charger(cfg.optimizer_rules)
+    triviaux = sections.get("triviaux") if isinstance(sections.get("triviaux"), list) else []
+    lexique = Lexique.load(cfg.lexicon)
+    optimiseur = Optimiseur(lexique, [m for m in triviaux if isinstance(m, str)])
+    coherence = charger_coherence(cfg.optimizer_rules)
+
+    lecture = optimiseur.lire(args.texte)
+    consignes: list[Consigne] = []
+    if args.contexte:
+        # Le contexte se simule en ligne de commande : les consignes du tour
+        # anterieur sont extraites du message passe en --contexte, exactement
+        # comme le service les aurait retenues.
+        consignes = coherence.consignes(optimiseur.lire(args.contexte).texte)
+    verdict = coherence.examiner(lecture.texte, consignes)
+    _emit(
+        {
+            "regles": source_regles,
+            "regles_empreinte": coherence.digest,
+            "lexique": lexique.source,
+            "lexique_empreinte": lexique.digest,
+            "distance_1_active": lexique.distance_1_active,
+            "trivial": lecture.trivial,
+            "lecture": lecture.texte,
+            "corrections": [
+                {"avant": c.avant, "apres": c.apres, "raison": c.raison}
+                for c in lecture.corrections
+            ],
+            "mots_inconnus": lecture.inconnus or None,
+            "consignes_du_contexte": [
+                {"regle": c.regle, "cote": c.cote, "extrait": c.extrait} for c in consignes
+            ]
+            or None,
+            "arret": verdict.arret,
+            "signaux": [
+                {"genre": s.genre, "regle": s.regle, "libelle": s.libelle} for s in verdict.signaux
+            ]
+            or None,
+            "question": verdict.question,
+            "bloc": rendre(lecture, verdict) or "(aucun bloc : rien a dire)",
+            "part_injectee": cfg.optimizer_share,
+            "note": (
+                "simulation : rien n'a ete injecte ni enregistre"
+                if cfg.optimizer_share
+                else "simulation ; de plus optimizer_share vaut 0, donc rien n'est injecte en "
+                "production non plus"
+            ),
         },
         args,
     )
@@ -276,6 +433,15 @@ def build_parser() -> argparse.ArgumentParser:
     e = sub.add_parser("export", help="sauvegarder les quatre tables irremplacables")
     e.add_argument("-o", "--output", help="fichier de sortie")
     e.set_defaults(func=cmd_export)
+
+    o = sub.add_parser("optimize", help="passer une demande dans l'optimiseur, sans rien injecter")
+    o.add_argument("texte", help="la demande a lire")
+    o.add_argument(
+        "--contexte",
+        help="un message anterieur de la meme conversation, pour eprouver la detection des "
+        "contradictions avec le contexte",
+    )
+    o.set_defaults(func=cmd_optimize)
 
     pa = sub.add_parser("patterns", help="les motifs charges et leur empreinte")
     pa.add_argument("-v", "--verbose", action="store_true")

@@ -11,6 +11,8 @@ COPY server/ ./server/
 RUN pip install --no-cache-dir .
 
 COPY motifs.yaml /etc/gk/motifs.yaml
+COPY optimiseur.yaml /etc/gk/optimiseur.yaml
+COPY lexique.yaml /etc/gk/lexique.yaml
 COPY config.example.yaml /etc/gk/config.yaml
 
 USER gk

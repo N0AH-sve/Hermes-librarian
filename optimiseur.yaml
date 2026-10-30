@@ -1,0 +1,184 @@
+# Regles de l'optimiseur de prompt. Rechargeable a chaud, comme motifs.yaml.
+#
+# GELE PENDANT UNE MESURE : l'empreinte de ce fichier est enregistree avec
+# chaque arret, et `gk stats` refuse de comparer deux periodes dont les
+# empreintes diffèrent. Ajouter une regle au milieu d'une mesure ferait monter
+# le nombre d'arrets sans que rien n'ait change dans les demandes.
+#
+# TOUT EST ECRIT SANS ACCENTS ET EN MINUSCULES. Le texte est replie avant
+# comparaison, donc « modifié » et « modifie » se detectent pareil. Les valeurs
+# sont des expressions regulieres Python ; les prefixes y valent mieux que les
+# conjugaisons (« supprim » attrape supprime, supprimer, supprimez, supprimant).
+#
+# Sept sections :
+#
+#   contradictions     deux demandes qui s'excluent dans le meme message.
+#                      ARRET : l'agent doit poser la question avant d'agir.
+#   exclusifs          valeurs mutuellement exclusives pour un meme choix.
+#                      Deux valeurs distinctes dans un message : ARRET.
+#   ambiguites         une demande a laquelle il manque une information.
+#                      La question est posee, mais sans arreter : le brief de
+#                      la phase 3 a une ligne « Demander d'abord » pour cela.
+#   suppresseurs       ce qui resout une opposition apparente. Cherche ENTRE
+#                      les deux occurrences, pas n'importe ou dans le message.
+#                      C'est cette section qui empeche l'optimiseur de devenir
+#                      insupportable : « supprime tout sauf septembre » n'est
+#                      pas une contradiction.
+#   changement_d_avis  ce qui autorise a contredire une consigne anterieure.
+#                      Sans elle, revenir sur une consigne declencherait un
+#                      arret a chaque tour.
+#   consignes_durables ce qui fait d'une phrase une consigne a retenir pour la
+#                      suite de la conversation, et non une demande du moment.
+#   triviaux           messages qui ne passent pas du tout dans l'optimiseur.
+
+contradictions:
+  - id: supprimer-vs-garder
+    a: "\b(?:supprim|efface|effac|retir|desinstall|vire|vider|purge|jette)"
+    b: "\b(?:garde|gard(?:er|ons)|conserv|preserv|laisse (?:tel|intact|en place)|touche pas|n'y touche)"
+    question: "Faut-il supprimer, ou conserver ? Les deux sont demandes dans le meme message."
+
+  - id: tout-vs-aucun
+    a: "\b(?:tout|tous|toute|toutes|l'ensemble|integralite)\b"
+    b: "\b(?:aucun|aucune|rien|pas un seul|nulle part)\b"
+    question: "« tout » ou « aucun » ? Le message porte les deux."
+
+  - id: commiter-vs-pas-commiter
+    a: "\b(?:commit|committe|pousse|push|publie|merge|fusionne)"
+    b: "(?:ne (?:rien )?(?:commit|pousse|push)|sans (?:commit|pousser|push)|pas de commit|ne pousse pas|aucun commit)"
+    question: "Faut-il commiter et pousser, ou laisser le travail local ?"
+
+  - id: deployer-vs-pas-deployer
+    a: "\b(?:deploi|mets? en (?:prod|ligne)|mise en prod|livre en prod)"
+    b: "(?:ne deploi\w* pas|sans deployer|pas de deploiement|ne mets? rien en prod)"
+    question: "Faut-il deployer, ou s'arreter avant le deploiement ?"
+
+  - id: modifier-vs-lecture-seule
+    a: "\b(?:modifi|corrig|change|remplace|reecri|refactor|renomme|ajoute|ecri[st])"
+    b: "(?:ne (?:touche|modifie|change)\w* (?:a )?rien|sans (?:rien )?(?:modifier|toucher|changer)|lecture seule|read.?only|ne modifie aucun|juste (?:lire|regarder|analyser)|analyse seulement)"
+    question: "Faut-il modifier des fichiers, ou seulement lire et rapporter ?"
+
+  - id: installer-vs-rien-installer
+    a: "\b(?:installe|installer|ajoute la (?:dependance|lib)|pip install|npm i(?:nstall)?\b|apt (?:install|get))"
+    b: "(?:sans (?:rien )?installer|n'installe rien|aucune (?:nouvelle )?dependance|pas de (?:nouvelle )?dependance|sans ajouter de dependance)"
+    question: "Une nouvelle dependance est-elle autorisee, ou non ?"
+
+  - id: tests-vs-sans-tests
+    a: "\b(?:ajoute des tests|ecris? des tests|couvre par des tests|teste\w* (?:le|la|les|ca))"
+    b: "(?:sans tests?|pas de tests?|ne (?:fais|ecris|ajoute) pas de tests?|ne teste pas)"
+    question: "Faut-il des tests, ou non ?"
+
+  - id: minimal-vs-exhaustif
+    a: "(?:le plus (?:court|simple|petit)|minimal|strict minimum|juste l'essentiel|en deux lignes|tres bref)"
+    b: "(?:exhaustif|complet|detaille|en detail|tous les details|le plus complet|n'oublie rien|tout expliquer)"
+    question: "Reponse minimale ou exhaustive ? Le message demande les deux."
+
+  - id: demander-vs-ne-pas-demander
+    a: "(?:demande(?:-moi)?|confirme avant|valide avec moi|previens-moi avant|pose(?:-moi)? la question)"
+    b: "(?:sans (?:me )?(?:demander|rien demander)|ne me demande (?:rien|pas)|pas besoin de (?:me )?demander|fais(?:-le)? sans moi|n'attends pas ma reponse)"
+    question: "Faut-il confirmer avant d'agir, ou avancer sans confirmation ?"
+
+  - id: vite-vs-soigne
+    a: "(?:tout de suite|urgent|le plus vite|vite|rapidement|depeche)"
+    b: "(?:prends ton temps|pas presse|pas d'urgence|soigneusement|minutieu)"
+    question: "Est-ce urgent, ou faut-il prendre le temps de bien faire ?"
+
+  - id: garder-historique-vs-reecrire
+    a: "(?:reecri\w* l'historique|rebase|squash|force.?push|amend)"
+    b: "(?:garde l'historique|ne reecris pas l'historique|sans toucher a l'historique|historique intact)"
+    question: "L'historique git peut-il etre reecrit, ou doit-il rester intact ?"
+
+exclusifs:
+  - "\bproduction\b | \bprod\b | \bstaging\b | \bpreprod\b | \brecette\b | \bdev\b"
+  - "en francais | en anglais | in english"
+  - "\bsqlite\b | \bpostgres\w* | \bmysql\b"
+
+ambiguites:
+  - id: deploiement-sans-environnement
+    a: "\b(?:deploi|mets? en ligne|mise en (?:prod|ligne)|livre)"
+    sauf: "\b(?:production|prod|staging|preprod|recette|local|dev)\b"
+    question: "Sur quel environnement : production ou staging ?"
+
+  - id: restauration-sans-version
+    a: "\b(?:restaure|rollback|reviens? (?:a|en) arriere|annule le deploiement)"
+    sauf: "(?:version|tag|commit|\d{4}-\d{2}-\d{2}|hier|avant-hier|v\d)"
+    question: "Revenir a quelle version precisement ?"
+
+  - id: suppression-sans-portee
+    a: "\b(?:supprim|efface|purge|vide)\w* (?:tout|tous|toutes|la base|les donnees)"
+    sauf: "(?:sauf|excepte|a part|seulement|uniquement|depuis|avant|apres|\d)"
+    question: "Supprimer quoi exactement, et sur quelle periode ? Rien n'est exclu par la demande."
+
+  - id: envoi-sans-destinataire
+    a: "\b(?:envoie|transmets|partage|expedie)\w*\b"
+    sauf: "(?:a |@|par mail a|sur discord|sur slack|au client|a l'equipe|destinataire)"
+    question: "A qui faut-il l'envoyer ?"
+
+suppresseurs:
+  - "\bsauf\b"
+  - "\bexcepte"
+  - "\ba part\b"
+  - "\bhormis\b"
+  - "\bmais pas\b"
+  - "\bd'abord\b"
+  - "\bpuis\b"
+  - "\bensuite\b"
+  - "\bapres avoir\b"
+  - "\bavant de\b"
+  - "\bune fois\b"
+  - "\bau lieu de\b"
+  - "\bplutot que\b"
+  - "\bplutot qu'\b"
+  - "\bvers\b"
+  - "\ben .{0,12}(?:puis|ensuite)\b"
+  - "\bcompare"
+  - "\bdifference"
+  - "\bsi\b.{0,40}\bsinon\b"
+  - "\bsoit\b.{0,40}\bsoit\b"
+  - "->"
+  - "=>"
+  - "\bde\b.{0,20}\ba\b"
+  - "\bseulement si\b"
+  - "\bdans ce cas\b"
+  - "\bsur la branche\b"
+
+changement_d_avis:
+  - "\bfinalement\b"
+  - "\ben fait\b"
+  - "\boublie\b"
+  - "\bannule\b"
+  - "\blaisse tomber\b"
+  - "j'ai change d'avis"
+  - "\bplutot\b"
+  - "\bau lieu de\b"
+  - "\ba la place\b"
+  - "^non[,. ]"
+  - "\bje me suis trompe"
+  - "\berreur de ma part\b"
+  - "nouvelle consigne"
+  - "\bcorrection\b"
+  - "\bnon finalement\b"
+  - "\bmaintenant tu peux\b"
+  - "\bexceptionnellement\b"
+  - "\bcette fois\b"
+  - "\bpour une fois\b"
+
+consignes_durables:
+  - "\btoujours\b"
+  - "\bjamais\b"
+  - "\bsystematiquement\b"
+  - "\bpar defaut\b"
+  - "\bdesormais\b"
+  - "\ba partir de maintenant\b"
+  - "\bdorenavant\b"
+  - "\ben regle generale\b"
+  - "\ben aucun cas\b"
+  - "\bsurtout pas\b"
+  - "\bpour toute la suite\b"
+  - "\bpour tout le projet\b"
+  - "\bregle\b"
+
+triviaux:
+  - "^(?:ok|oui|non|si|merci|parfait|nickel|super|genial|bien|tres bien|d'accord|ca marche|c'est bon|top|cool|yes|ya?p|go|vas?-?y|continue|suivant|encore|stp|svp|please)[ !.?,;:)*-]*$"
+  - "^(?:re|salut|bonjour|bonsoir|hello|hey|coucou|yo)[ !.?,;:)*-]*$"
+  - "^(?:\?+|\.+|!+|\.\.\.)$"
+  - "^(?:et (?:apres|donc|alors|ensuite))[ !.?,;:)*-]*$"

@@ -18,6 +18,7 @@ Langue de travail : français. Le README reste en anglais.
 | 6 | Choix techniques | close |
 | 7 | Qualités | close |
 | 8 | Validation | close |
+| 9 | Optimiseur de prompt | close |
 
 ## Étape 1 : besoins (close)
 
@@ -1299,6 +1300,179 @@ matérielle. Deux conséquences de conception :
 (`_add.sh`, `_corr.py`, `_fd.py`, `_inv.py`), `__pycache__`, fichiers d'état
 divers, 97 entrées. Conséquence : `gk check` ne doit pas supposer un volume
 pristine, et le plugin doit vivre dans un sous-dossier clairement nommé.
+
+## Étape 9 : l'optimiseur de prompt (close)
+
+Demande : un optimiseur de prompt comparable au plugin `prompt-optimizer` de
+Hermes, mais adapté à notre usage — **on écrit en français, et on fait des
+fautes** — et qui **s'arrête pour demander confirmation quand la question se
+contredit elle-même ou contredit le contexte**.
+
+Précision d'emblée : `hermes-agent.nousresearch.com` ne résout toujours pas
+depuis cet environnement (point ouvert déjà consigné), donc la documentation du
+plugin de référence n'a pas pu être lue. Ce qui suit est conçu depuis les
+besoins exprimés et depuis les conventions déjà vérifiées dans ce dépôt, pas
+depuis une copie. **Si cette page devient accessible, la seule chose à
+revérifier est le nom et la charge utile du hook d'entrée**, qui est le seul
+point de contact avec l'API de Hermes.
+
+### Décisions
+
+1. **Le message de l'utilisateur n'est jamais réécrit.** C'est la différence de
+   fond avec un optimiseur classique, qui remplace le prompt. Ici le bloc est
+   **ajouté à côté**, comme le brief.
+
+   Ce n'est d'ailleurs pas une politesse de notre part mais le mécanisme
+   lui-même : l'étape 6 bis a relevé dans la source que `pre_llm_call` rend une
+   chaîne que Hermes **ajoute** au message (`turn_context.py:453`). Le hook rend
+   donc **le bloc seul**, et n'a aucun moyen d'écraser quoi que ce soit. Rendre
+   le message avec le bloc le ferait apparaître deux fois dans le prompt — c'est
+   l'erreur qu'un optimiseur qui *remplace* inviterait à faire.
+
+   La règle venait déjà du README et de l'étape 5 ; elle n'a pas été rouverte,
+   et trois raisons la tiennent :
+
+   - **une faute de frappe peut être un nom propre.** `ovh`, `nginx`, un nom de
+     fichier, une commande. Corriger à l'aveugle dans le message détruirait la
+     demande ; à côté, le pire cas est une ligne inutile ;
+   - **la lecture est vérifiable.** L'utilisateur voit ce que GK a compris. Une
+     réécriture silencieuse ne se constate qu'après coup ;
+   - **le vrai bénéficiaire est l'index**, pas la prose : la lecture corrigée
+     est ce que la recherche de la phase 2 comparera au vocabulaire des
+     537 skills, et c'est là que « recapitulatif » doit rencontrer
+     « récapitulatif ».
+
+2. **L'arrêt est instruit, pas imposé.** Aucun hook connu ne permet à un plugin
+   d'annuler un tour, et la règle du projet est de ne jamais bloquer l'agent
+   (*fail open*). Le bloc porte donc son instruction en clair — « n'exécute
+   aucune action, pose cette question » — ce qui a trois conséquences :
+
+   - il fonctionne même si la section de prompt système n'a jamais pu être
+     enregistrée, donc il ne dépend pas d'un second point d'accroche incertain ;
+   - il est mesuré et non supposé : `gk stats` compte les arrêts posés, et
+     l'aveu détecté par `observe` dira si l'agent a obéi ;
+   - c'est une donnée pour l'agent, jamais une autorisation d'agir — la règle de
+     sécurité du README s'applique telle quelle à ce bloc.
+
+3. **Aucun LLM sur le chemin de service, ici non plus.** Un appel de modèle à
+   l'entrée d'un tour ajouterait sa latence à chaque message, il faudrait
+   l'attendre pour décider, et une panne du fournisseur bloquerait l'entrée de
+   l'agent. Les motifs sont rapides, hors ligne et **réglables sans
+   redéploiement**. Contrepartie assumée : on n'attrape que les contradictions
+   explicites.
+
+4. **Un plugin séparé, et non un hook de plus dans `gk-bridge`.** Les deux
+   risques ne se ressemblent pas : `gk-optimizer` est sur le chemin d'**entrée**
+   du tour, `gk-bridge` sur celui de la réponse. Les séparer permet de couper
+   celui-ci seul, en renommant son manifeste, **sans arrêter la chaîne de
+   mesure**, qui est ce qu'on veut garder le plus longtemps. Coût accepté : une
+   seconde entrée `mcp_allowlist` dans le `config.yaml` de Hermes, déjà
+   couverte par `gk check`.
+
+5. **La part injectée vaut zéro par défaut** (`optimizer_share`). Installer
+   l'optimiseur ne change donc rien jusqu'à une décision explicite, alors que
+   tout est déjà mesuré pendant ce temps-là. C'est la même discipline que pour
+   le reste du projet : la mesure avant l'aide.
+
+   **Le tirage se fait par conversation, pas par tour**, contrairement au brief
+   de l'étape 8. Arrêter une demande contradictoire un tour sur deux ne serait
+   pas un bras de mesure, ce serait une incohérence. Le tirage vient d'une
+   empreinte de l'identifiant de session, donc il est stable sans rien stocker.
+
+6. **La correction du français reste à correspondance exacte tant que le
+   lexique est petit.** Trois mécanismes sans faux positif possible — les
+   abréviations (`maj`, `bdd`, `pb`), les fautes fréquentes listées une à une,
+   et la restauration des accents. La correction par distance 1 reste
+   **inactive sous 2 000 mots de référence** : avec 138 mots, « facteur »
+   deviendrait « facture ». Elle s'allumera avec le vocabulaire des skills, que
+   la phase 2 fournira (`Lexique.ajouter_vocabulaire`). Dire « inactif » est
+   plus utile qu'une correction qui devine.
+
+   Deux planchers tiennent le reste : **aucun mot de moins de quatre lettres
+   n'est accentué** — sinon « sur » devient « sûr » et « des » devient « dès » —
+   et **aucun participe en -é n'entre dans l'index des accents**, parce que sa
+   forme nue est presque toujours un autre mot français valide : « supprime les
+   logs » ne doit pas devenir « supprimé les logs », ni « facture » devenir
+   « facturé ».
+
+7. **Les règles de prudence comptent autant que les signaux.** Un détecteur qui
+   attrape peu mais ne se trompe pas se laisse utiliser ; un détecteur bavard se
+   fait désactiver la première semaine. D'où :
+
+   - **les suppresseurs sont cherchés du début de la phrase jusqu'à la seconde
+     occurrence, et pas au-delà.** « supprime tout **sauf** septembre »,
+     « **d'abord** supprime **puis** garde une copie », « **compare**
+     production et staging », « **au lieu de** supprimer, garde les logs » ne
+     sont pas des contradictions. Les deux bornes ont été apprises sur des faux
+     positifs : à gauche parce qu'un suppresseur gouverne ce qui le suit, à
+     droite parce qu'un « sauf » d'une phrase suivante ne dit rien de cette
+     paire-là ;
+   - **un changement d'avis explicite annule le signal de contexte.**
+     « finalement, commit » après « ne commit jamais » n'est pas une
+     contradiction : c'est un utilisateur qui change d'avis ;
+   - **la même question n'est pas reposée** dans les dix minutes, à signature
+     égale, et **trois arrêts par conversation et par heure** au maximum. Sans
+     ces deux bornes, une demande contradictoire reformulée arrêterait l'agent à
+     chaque tour, et une règle trop large coûterait une conversation entière au
+     lieu d'un peu de bruit.
+
+8. **La polarité indécidable ne produit aucune consigne.** Une consigne durable
+   n'est retenue que si elle porte à la fois un côté d'une règle et un marqueur
+   de durée (« toujours », « jamais », « par défaut »). Mais le français
+   empile les négations : dans « ne commit **jamais sans** me demander », le
+   membre « sans me demander » veut dire exactement le contraire de ce qu'il
+   dit seul. Quand une négation précède l'occurrence, **on ne retient rien** :
+   une consigne mal signée produirait un arrêt à contresens trois tours plus
+   tard, ce qui est pire que de ne rien détecter.
+
+9. **Les règles et le lexique sont gelés pendant une mesure**, exactement comme
+   `motifs.yaml` à l'étape 4. Les deux empreintes sont enregistrées avec chaque
+   arrêt, et `gk stats` refuse de comparer deux périodes dont les empreintes
+   diffèrent. Sans cette règle, ajouter une contradiction au milieu d'une mesure
+   ferait monter le nombre d'arrêts sans que rien n'ait changé dans les demandes.
+
+10. **Deux sévérités, et une seule arrête.** Une contradiction, deux valeurs
+    exclusives, une portée violée ou une consigne contredite arrêtent. Une
+    **ambiguïté** — « déploie » sans environnement, « restaure » sans version —
+    se contente de poser la question, parce que « il manque une information »
+    est le cas courant et qu'arrêter dessus rendrait l'agent inutilisable. Cela
+    rejoint la contrainte « poser la question quand c'est ambigu » de l'étape 1
+    et la ligne « Demander d'abord » du brief.
+
+### Ce qui est ajouté
+
+| Pièce | Rôle |
+|---|---|
+| `optimiseur.yaml` | Les règles : contradictions, valeurs exclusives, ambiguïtés, suppresseurs, changements d'avis, consignes durables, messages triviaux. Rechargeable à chaud |
+| `lexique.yaml` | Le français : abréviations, fautes fréquentes, mots protégés, vocabulaire accentué |
+| `server/gk/regles.py` | Lecture des fichiers de règles et leurs empreintes, sans PyYAML |
+| `server/gk/optimizer.py` | Normalisation, correction, rendu du bloc, rétention |
+| `server/gk/coherence.py` | Les cinq signaux, les suppresseurs, les consignes durables |
+| `optimize` sur `/mcp/bridge` | L'outil, exposé au pont seul et **jamais** à l'agent |
+| `gk optimize "<demande>"` | Réglage à sec : lit les règles vivantes, n'injecte et n'écrit rien |
+| `hermes-plugin/gk-optimizer/` | Le plugin : un hook, borné à 1,5 s, coupe-circuit, fail open |
+
+Deux tables s'ajoutent par la migration 2, additive : `optimizer_constraints`
+(les consignes d'une conversation, 7 jours) et `optimizer_stops` (les arrêts, et
+ce qui empêche de reposer deux fois la même question). `gk forget` et `gk tidy`
+les couvrent, puisqu'elles portent du texte d'utilisateur.
+
+### Ce que cette étape ne tranche pas
+
+**L'ordre de composition avec le brief de la phase 3.** Les deux écriront dans
+le même message, et l'ordre appartient à Hermes. L'étape 6 bis l'a déjà réglé
+sans qu'on le sache : `_collect_pre_llm_call_context` **collecte** les
+contributions de plusieurs plugins au lieu de les écraser. Chacun ajoute son
+bloc, aucun ne lit celui de l'autre, et l'ordre n'a donc pas d'importance.
+Reste une contrainte à tenir quand `prepare` arrivera : les deux blocs
+partagent le contexte de l'agent, donc ils doivent rester courts tous les deux.
+
+**La valeur réelle des règles.** Onze contradictions et quatre ambiguïtés sont
+livrées ; aucune n'a été éprouvée sur de vraies conversations. C'est exactement
+le même aveu qu'à l'étape 6 pour la recherche : ce sont des paramètres à régler
+au banc d'essai, pas à deviner. `gk optimize` existe pour cela, et le compteur
+d'arrêts étouffés dira si une règle est trop large avant qu'elle ne coûte une
+conversation.
 
 ## Points ouverts
 

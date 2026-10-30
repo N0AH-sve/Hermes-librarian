@@ -293,6 +293,139 @@ docker compose -f deploy/compose.gk.yaml exec gk gk stats
 
 ---
 
+## 9 (optionnel, et plus tard). L'optimiseur de prompt
+
+**À ne pas faire le même jour que le reste.** Tout ce qui précède est sans
+risque pour gb, parce que rien n'est injecté. L'optimiseur, lui, écrit dans le
+message qui part au modèle : c'est le premier changement visible du
+comportement de l'agent, et il mérite sa propre journée et son propre retour en
+arrière.
+
+Il fait deux choses : il ajoute une **lecture corrigée** de la demande à côté
+du message (abréviations développées, accents remis), et il **arrête le tour**
+quand la demande se contredit elle-même ou contredit une consigne posée plus
+tôt dans la conversation, en donnant à l'agent la question à poser.
+
+### 9.1 Régler les règles avant d'injecter quoi que ce soit
+
+Le serveur est déjà livré avec les règles : rien à installer pour les essayer.
+Prends trois ou quatre demandes réelles, dont une qui t'a posé problème :
+
+```bash
+docker compose exec gk gk optimize "suprime tous les logs mais garde ceux de septembre"
+```
+
+```bash
+docker compose exec gk gk optimize "commit et pousse" --contexte "ne commit jamais sans me demander"
+```
+
+**Vérifier** trois choses, dans cet ordre d'importance :
+
+1. **Aucune de tes demandes normales ne déclenche `arret: true`.** C'est le seul
+   critère qui compte. Une règle qui arrête une demande légitime se fait
+   désactiver en une semaine, et emporte le reste avec elle.
+2. La lecture corrigée ne change pas le sens de ce que tu as écrit.
+3. Les contradictions que tu voulais voir attrapées le sont.
+
+Si une règle est trop large, édite `optimiseur.yaml` sur l'hôte et redémarre le
+conteneur. Si un mot est corrigé à tort, ajoute-le à la section `proteges` de
+`lexique.yaml`.
+
+### 9.2 Installer le plugin
+
+```bash
+cp -r ~/greenknowledge/hermes-plugin/gk-optimizer /opt/data/plugins/
+ls /opt/data/plugins/gk-optimizer
+```
+
+Puis l'autoriser à appeler le serveur, à côté de `gk-bridge` :
+
+```yaml
+plugins:
+  entries:
+    gk-bridge:
+      mcp_allowlist: ["gk"]
+    gk-optimizer:
+      mcp_allowlist: ["gk"]
+```
+
+Redémarre l'agent, envoie un message, et lis le relevé du premier appel — c'est
+lui qui dit ce que l'API de Hermes a réellement passé :
+
+```bash
+cat /opt/data/gk-optimizer.jsonl
+```
+
+**Vérifier** : une ligne `premier_appel` avec la liste des `cles_kwargs`, et une
+ligne `ctx_trouve`. **À ce stade, rien n'est encore injecté** —
+`optimizer_share` vaut zéro, donc le plugin appelle, GK mesure, et le message
+part inchangé. C'est exactement ce qu'on veut constater avant d'allumer.
+
+Si tu vois `message_introuvable`, envoie-moi la ligne : le nom du kwarg qui
+porte le message n'était pas dans la liste des candidats, et c'est une ligne à
+ajouter dans le plugin.
+
+### 9.3 Allumer
+
+Une fois les deux vérifications passées, et pas avant :
+
+```bash
+# dans deploy/.env, ou dans l'environnement du service gk
+GK_OPTIMIZER_SHARE=100
+```
+
+```bash
+docker compose up -d gk
+docker compose logs gk | grep optimiseur
+```
+
+**Vérifier** : la ligne de démarrage dit `part injectee 100% (ACTIF)`. Envoie
+une demande volontairement contradictoire et regarde si gb pose la question au
+lieu d'agir.
+
+Mets `50` plutôt que `100` si tu veux la mesure avant la conviction : une
+conversation sur deux reçoit le bloc, et `gk stats` compare les deux moitiés.
+Le tirage est fait **par conversation** et non par tour, sans quoi l'agent
+s'arrêterait un tour sur deux dans la même discussion.
+
+### 9.4 Revenir en arrière
+
+Trois niveaux, du plus doux au plus franc :
+
+```bash
+# 1. Ne plus rien injecter, tout en continuant de mesurer
+GK_OPTIMIZER_SHARE=0 && docker compose up -d gk
+```
+
+```bash
+# 2. Couper le plugin, en gardant la chaine de mesure de la phase 1
+mv /opt/data/plugins/gk-optimizer/plugin.yaml /opt/data/plugins/gk-optimizer/plugin.yaml.inactif
+```
+
+```bash
+# 3. Le retirer
+rm -rf /opt/data/plugins/gk-optimizer
+```
+
+Le premier niveau suffit presque toujours, et c'est pour cela que l'optimiseur
+est un plugin distinct : le couper n'arrête pas `gk-bridge`, donc la mesure
+continue pendant qu'on règle les règles.
+
+### Ce qu'il faut savoir avant de l'allumer
+
+- **L'arrêt est demandé, pas imposé.** Aucun hook ne permet d'annuler un tour,
+  donc le bloc porte son instruction en clair et l'agent peut l'ignorer.
+  `gk stats` compte les arrêts posés ; c'est en les comparant aux aveux détectés
+  qu'on saura s'il obéit.
+- **Il n'attend jamais plus d'une seconde et demie.** GK lent ou arrêté rend un
+  tour inchangé, et après trois échecs d'affilée le plugin cesse d'appeler
+  pendant une minute.
+- **Le message n'est jamais réécrit.** Le bloc est ajouté après lui.
+- **Les onze règles livrées n'ont jamais tourné sur de vraies conversations.**
+  C'est pour cela que 9.1 passe avant 9.2.
+
+---
+
 ## Ce que la phase 1 ne fait pas encore
 
 - **Aucun brief n'est injecté.** C'est la phase 3.
@@ -301,6 +434,8 @@ docker compose -f deploy/compose.gk.yaml exec gk gk stats
   est monté depuis l'hôte et modifiable, mais il faut redémarrer le conteneur de
   GK pour qu'il soit relu. `gk patterns` dit ce qui est réellement chargé.
 - **Aucune synthèse Discord**, aucun travail nocturne. Phase 4.
+- **L'optimiseur de prompt n'est pas allumé** par l'étape 8 : il s'installe
+  séparément, plus tard, et la section 9 dit dans quel ordre.
 
 Pendant les semaines qui viennent, GK accumule la mesure de référence et le
 corpus du banc d'essai. C'est tout ce qu'on lui demande.

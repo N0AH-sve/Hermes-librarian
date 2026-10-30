@@ -19,14 +19,21 @@ services:
       - "127.0.0.1:8765:8765"
     volumes:
       - gk-data:/var/lib/gk
-      # Les motifs sont montes depuis l'hote pour etre modifiables sans
-      # reconstruire l'image. Un redemarrage du conteneur est necessaire pour
-      # qu'ils soient relus ; `gk patterns` dit ce qui est charge.
+      # Les trois fichiers de regles sont montes depuis l'hote pour etre
+      # modifiables sans reconstruire l'image. Un redemarrage du conteneur est
+      # necessaire pour qu'ils soient relus ; `gk patterns` dit quels motifs
+      # sont charges, et `gk optimize "<demande>"` quelles regles mordent.
       - ../motifs.yaml:/etc/gk/motifs.yaml:ro
+      - ../optimiseur.yaml:/etc/gk/optimiseur.yaml:ro
+      - ../lexique.yaml:/etc/gk/lexique.yaml:ro
     environment:
       GK_BRIDGE_TOKEN: ${GK_BRIDGE_TOKEN:?jeton requis}
       GK_AGENT_TOKEN: ${GK_AGENT_TOKEN:-}
       GK_SKILLS_ROOT: /opt/data/skills
+      # L'optimiseur n'injecte rien tant que cette part vaut zero, ce qui est
+      # voulu : c'est le seul reglage qui ecrive dans le contexte de l'agent.
+      # 50 donne un A/B par conversation, 100 l'active partout.
+      GK_OPTIMIZER_SHARE: "0"
       GK_LOG_LEVEL: INFO
     # 256 Mo : les 512 du handoff supposaient des vecteurs et peut-etre un
     # modele local. Sans eux, GK c'est Python, SQLite et un petit index. Ce

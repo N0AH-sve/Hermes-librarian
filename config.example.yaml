@@ -6,6 +6,21 @@
 database: /var/lib/gk/gk.db
 patterns: /etc/gk/motifs.yaml
 
+# Regles de l'optimiseur de prompt, et lexique francais. Rechargeables a chaud,
+# et GELES PENDANT UNE MESURE : leurs empreintes sont enregistrees avec chaque
+# arret, et `gk stats` refuse de comparer deux periodes qui n'ont pas les memes.
+optimizer_rules: /etc/gk/optimiseur.yaml
+lexicon: /etc/gk/lexique.yaml
+
+# Part des conversations ou le bloc de l'optimiseur est reellement injecte, de 0
+# a 100. ZERO PAR DEFAUT, et ce n'est pas de la timidite : c'est le seul reglage
+# qui ecrive dans le contexte de l'agent, donc installer le plugin ne doit rien
+# changer avant une decision explicite. Tout est mesure pendant ce temps-la, et
+# `gk optimize "<demande>"` permet de regler les regles sans rien injecter.
+# 50 donne un A/B par conversation — par conversation et non par tour : arreter
+# une demande contradictoire un tour sur deux ne serait pas un bras de mesure.
+optimizer_share: 0
+
 # Racine d'indexation, nommee explicitement et jamais decouverte recursivement.
 # Le volume contient 866 SKILL.md pour une bibliotheque de 537 : une decouverte
 # large indexerait les doublons et produirait des recommandations ambigues.
